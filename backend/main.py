@@ -1,16 +1,22 @@
 import os
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from api.github_api import fetch_repo_content, fetch_repo_metadata
 from api.langchain_integration import get_jamba_response
 from api.ast_parser import parse_code_to_ast
 from api.data_storage import store_repo_data, store_parsed_data
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI()
 
-# Ensure AI21 API key is set
+# Ensure AI21 API key and GitHub token are set
 if not os.getenv("AI21_API_KEY"):
     raise RuntimeError("AI21_API_KEY environment variable is not set")
+if not os.getenv("GITHUB_AUTH_TOKEN"):
+    raise RuntimeError("GITHUB_AUTH_TOKEN environment variable is not set")
 
 class RepoLink(BaseModel):
     repo_url: str
@@ -23,7 +29,7 @@ class QueryRequest(BaseModel):
 async def upload_repo(link: RepoLink):
     try:
         repo_url = link.repo_url
-        auth_token = os.getenv("GITHUB_AUTH_TOKEN")  # Make sure to set this environment variable
+        auth_token = os.getenv("GITHUB_AUTH_TOKEN")
         
         # Fetch repository content and metadata
         repo_content = fetch_repo_content(repo_url, auth_token)

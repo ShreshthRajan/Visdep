@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+langchain-ai21
+python-dotenv
+pydantic
+pytest
+requests-mock
+fastapi[test]
