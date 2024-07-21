@@ -2,8 +2,11 @@ fastapi
 uvicorn
 requests
 langchain-ai21
+langchain-core
 python-dotenv
 pydantic
 pytest
 requests-mock
 fastapi[test]
+bs4
+clang

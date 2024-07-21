@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from api.github_api import fetch_repo_content, fetch_repo_metadata
 from api.langchain_integration import get_jamba_response
 from api.ast_parser import parse_code_to_ast
-from api.data_storage import store_repo_data, store_parsed_data
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -39,10 +38,10 @@ async def upload_repo(link: RepoLink):
         parsed_data = parse_code_to_ast(repo_content)
         
         # Store repository metadata and parsed AST data
-        store_repo_data(repo_metadata)
-        store_parsed_data(parsed_data)
+        # store_repo_data(repo_metadata)
+        # store_parsed_data(parsed_data)
         
-        return {"message": "Repository data successfully uploaded and parsed."}
+        return {"message": "Repository data successfully uploaded and parsed.", "parsed_data": parsed_data}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")

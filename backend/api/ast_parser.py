@@ -4,6 +4,8 @@ import subprocess
 from typing import Dict, Any
 from bs4 import BeautifulSoup  # For HTML parsing
 import clang.cindex  # For C/C++ parsing
+import tempfile
+import base64
 
 # Python AST Parsing
 def parse_python_file(file_path: str) -> ast.AST:
@@ -131,29 +133,32 @@ def handle_non_code_file(file_path: str) -> Dict[str, Any]:
 # Generic file parser
 def parse_code_file(file_path: str) -> Dict[str, Any]:
     file_extension = file_path.split('.')[-1]
-    if file_extension == 'py':
-        tree = parse_python_file(file_path)
-        return extract_python_info(tree)
-    elif file_extension in ['js', 'jsx']:
-        parsed_data = parse_javascript_file(file_path)
-        return extract_javascript_info(parsed_data)
-    elif file_extension == 'java':
-        parsed_data = parse_java_file(file_path)
-        return extract_java_info(parsed_data)
-    elif file_extension == 'go':
-        parsed_data = parse_go_file(file_path)
-        return extract_go_info(parsed_data)
-    elif file_extension in ['c', 'cpp', 'h', 'hpp']:
-        tu = parse_cpp_file(file_path)
-        return extract_cpp_info(tu)
-    elif file_extension == 'html':
-        soup = parse_html_file(file_path)
-        return extract_html_info(soup)
-    elif file_extension == 'sql':
-        sql_content = parse_sql_file(file_path)
-        return extract_sql_info(sql_content)
-    else:
-        return handle_non_code_file(file_path)
+    try:
+        if file_extension == 'py':
+            tree = parse_python_file(file_path)
+            return extract_python_info(tree)
+        elif file_extension in ['js', 'jsx']:
+            parsed_data = parse_javascript_file(file_path)
+            return extract_javascript_info(parsed_data)
+        elif file_extension == 'java':
+            parsed_data = parse_java_file(file_path)
+            return extract_java_info(parsed_data)
+        elif file_extension == 'go':
+            parsed_data = parse_go_file(file_path)
+            return extract_go_info(parsed_data)
+        elif file_extension in ['c', 'cpp', 'h', 'hpp']:
+            tu = parse_cpp_file(file_path)
+            return extract_cpp_info(tu)
+        elif file_extension == 'html':
+            soup = parse_html_file(file_path)
+            return extract_html_info(soup)
+        elif file_extension == 'sql':
+            sql_content = parse_sql_file(file_path)
+            return extract_sql_info(sql_content)
+        else:
+            return handle_non_code_file(file_path)
+    except Exception as e:
+        return {"error": str(e)}
 
 def traverse_directory(directory_path: str) -> Dict[str, Any]:
     ast_data = {}
@@ -169,20 +174,28 @@ def traverse_directory(directory_path: str) -> Dict[str, Any]:
 def parse_code_to_ast(repo_content: Dict[str, Any]) -> Dict[str, Any]:
     repo_path = download_repo_content(repo_content)
     ast_data = traverse_directory(repo_path)
-    return ast_data
+    
+    # Update the paths to be relative to the temporary repo_path
+    updated_ast_data = {}
+    for file_path, info in ast_data.items():
+        relative_path = os.path.relpath(file_path, repo_path)
+        updated_ast_data[relative_path] = info
+
+    return updated_ast_data
 
 def download_repo_content(repo_content: Dict[str, Any]) -> str:
     """
     Download the repository content to a local directory.
     This function assumes repo_content is a list of files with 'path' and 'content' keys.
     """
-    repo_path = "/path/to/local/repo"  # Set the path to download the repository content
+    repo_path = tempfile.mkdtemp()  # Use a temporary directory for testing
     os.makedirs(repo_path, exist_ok=True)
 
     for file in repo_content:
         file_path = os.path.join(repo_path, file['path'])
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w') as f:
-            f.write(file['content'])
+        with open(file_path, 'wb') as f:  # Use 'wb' mode to write binary content
+            file_content = base64.b64decode(file['content'])  # Decode the base64 content
+            f.write(file_content)  # Write decoded content as binary
     
     return repo_path
