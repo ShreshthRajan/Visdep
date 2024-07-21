@@ -1,11 +1,22 @@
 import os
-from langchain.llms import OpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.document_loaders import TextLoader
-from langchain.chains import RetrievalQA
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
 from dotenv import load_dotenv
+
+# Ensure FAISS can be imported
+try:
+    import faiss
+    print("Faiss imported successfully in langchain_integration!")
+except ImportError as e:
+    print(f"Error importing faiss in langchain_integration: {e}")
+    raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
+
+from langchain_ai21 import AI21LLM, AI21Embeddings
+from langchain.prompts import ChatPromptTemplate
+from langchain_community.document_loaders import TextLoader
+from langchain_community.vectorstores import FAISS
+from langchain.schema import SystemMessage, HumanMessage
+from langchain_core.runnables import RunnableSequence
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,14 +38,30 @@ def initialize_retrieval_qa(context):
             doc_content += f"Imports: {', '.join(info['imports'])}\n"
         documents.append(doc_content)
 
-    # Initialize the vector store (FAISS) and embeddings (OpenAI)
-    embeddings = OpenAIEmbeddings()
+    # Initialize the vector store (FAISS) and embeddings (AI21)
+    embeddings = AI21Embeddings(api_key=os.getenv("AI21_API_KEY"))  # AI21 embeddings
     vector_store = FAISS.from_texts(documents, embeddings)
 
-    # Create the retrieval QA chain
-    retrieval_qa = RetrievalQA(
+    # Create a ChatPromptTemplate with the correct input variable
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant."),
+        ("human", "{context}")
+    ])
+
+    # Create an AI21LLM instance
+    ai21_llm = AI21LLM(model="j2-jumbo-instruct")  # Provide the correct model name
+
+    # Create a StuffDocumentsChain (combine_docs_chain)
+    combine_docs_chain = create_stuff_documents_chain(
+        llm=ai21_llm,
+        prompt=prompt_template,
+        document_variable_name="context"
+    )
+
+    # Create the retrieval chain with the correct parameters
+    retrieval_qa = create_retrieval_chain(
         retriever=vector_store.as_retriever(),
-        llm=OpenAI(api_key=os.getenv("AI21_API_KEY"))
+        combine_docs_chain=combine_docs_chain
     )
     
     return retrieval_qa
@@ -42,21 +69,5 @@ def initialize_retrieval_qa(context):
 def get_jamba_response(query, context):
     # Initialize the RetrievalQA chain with context
     retrieval_qa = initialize_retrieval_qa(context)
-    response = retrieval_qa({"query": query})
+    response = retrieval_qa.invoke({"question": query, "context": context})
     return response['result']
-
-# Test the integration
-if __name__ == "__main__":
-    query = "Where does data flow through the gateway?"
-    context = {
-        "example.py": {
-            "functions": ["main", "gateway_function"],
-            "classes": ["Gateway"],
-            "imports": ["os", "sys"]
-        }
-    }
-    response = get_jamba_response(query, context)
-    if response:
-        print(response)
-    else:
-        print("Failed to get a response from the model.")

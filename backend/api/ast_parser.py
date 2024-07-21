@@ -5,7 +5,6 @@ from typing import Dict, Any
 from bs4 import BeautifulSoup  # For HTML parsing
 import clang.cindex  # For C/C++ parsing
 import tempfile
-import base64
 
 # Python AST Parsing
 def parse_python_file(file_path: str) -> ast.AST:
@@ -194,8 +193,7 @@ def download_repo_content(repo_content: Dict[str, Any]) -> str:
     for file in repo_content:
         file_path = os.path.join(repo_path, file['path'])
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'wb') as f:  # Use 'wb' mode to write binary content
-            file_content = base64.b64decode(file['content'])  # Decode the base64 content
-            f.write(file_content)  # Write decoded content as binary
+        with open(file_path, 'w', encoding='utf-8') as f:  # Use 'w' mode to write text content
+            f.write(file['content'])  # Write decoded content as text
     
     return repo_path

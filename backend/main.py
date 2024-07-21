@@ -24,6 +24,14 @@ class QueryRequest(BaseModel):
     query: str
     context: str
 
+def store_repo_data(repo_metadata):
+    # Stub function to simulate storing repository metadata
+    pass
+
+def store_parsed_data(parsed_data):
+    # Stub function to simulate storing parsed AST data
+    pass
+
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
     try:
@@ -52,8 +60,11 @@ async def query_jamba(request: QueryRequest):
         query = request.query
         context = request.context
         
+        # Assuming context is a string, we need to convert it to a dictionary
+        context_dict = eval(context) if isinstance(context, str) else context
+        
         # Get response from Jamba model
-        response = get_jamba_response(query, context)
+        response = get_jamba_response(query, context_dict)
         
         if response:
             return {"response": response}

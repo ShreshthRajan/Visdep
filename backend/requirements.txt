@@ -10,3 +10,4 @@ fastapi[test]
 bs4
 clang
 langchain-community
+faiss-cpu
