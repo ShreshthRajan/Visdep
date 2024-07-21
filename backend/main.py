@@ -38,10 +38,10 @@ async def upload_repo(link: RepoLink):
         parsed_data = parse_code_to_ast(repo_content)
         
         # Store repository metadata and parsed AST data
-        # store_repo_data(repo_metadata)
-        # store_parsed_data(parsed_data)
+        store_repo_data(repo_metadata)
+        store_parsed_data(parsed_data)
         
-        return {"message": "Repository data successfully uploaded and parsed.", "parsed_data": parsed_data}
+        return {"message": "Repository data successfully uploaded and parsed."}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")

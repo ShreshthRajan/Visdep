@@ -1,11 +1,10 @@
 import os
-from langchain_ai21 import ChatAI21
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.document_loaders import TextLoader
-from langchain_core.chains import RetrievalQA
-from langchain_core.vectorstores import FAISS
-from langchain_core.embeddings import OpenAIEmbeddings
-from langchain_core.llms import OpenAI
+from langchain.llms import OpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.document_loaders import TextLoader
+from langchain.chains import RetrievalQA
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -30,10 +29,7 @@ def initialize_retrieval_qa(context):
 
     # Initialize the vector store (FAISS) and embeddings (OpenAI)
     embeddings = OpenAIEmbeddings()
-    vector_store = FAISS(embeddings)
-
-    # Index the documents
-    vector_store.add_documents(documents)
+    vector_store = FAISS.from_texts(documents, embeddings)
 
     # Create the retrieval QA chain
     retrieval_qa = RetrievalQA(
@@ -46,7 +42,7 @@ def initialize_retrieval_qa(context):
 def get_jamba_response(query, context):
     # Initialize the RetrievalQA chain with context
     retrieval_qa = initialize_retrieval_qa(context)
-    response = retrieval_qa({"question": query})
+    response = retrieval_qa({"query": query})
     return response['result']
 
 # Test the integration
