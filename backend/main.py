@@ -1,4 +1,5 @@
 import os
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from api.github_api import fetch_repo_content, fetch_repo_metadata
@@ -25,12 +26,12 @@ class QueryRequest(BaseModel):
     context: str
 
 def store_repo_data(repo_metadata):
-    # Stub function to simulate storing repository metadata
-    pass
+    # Log the storage action for debugging
+    print(f"Storing repository metadata: {repo_metadata}")
 
 def store_parsed_data(parsed_data):
-    # Stub function to simulate storing parsed AST data
-    pass
+    # Log the storage action for debugging
+    print(f"Storing parsed AST data: {parsed_data}")
 
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
@@ -60,8 +61,8 @@ async def query_jamba(request: QueryRequest):
         query = request.query
         context = request.context
         
-        # Assuming context is a string, we need to convert it to a dictionary
-        context_dict = eval(context) if isinstance(context, str) else context
+        # Convert context string to a dictionary safely
+        context_dict = json.loads(context) if isinstance(context, str) else context
         
         # Get response from Jamba model
         response = get_jamba_response(query, context_dict)

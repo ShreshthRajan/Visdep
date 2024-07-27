@@ -193,7 +193,7 @@ def download_repo_content(repo_content: Dict[str, Any]) -> str:
     for file in repo_content:
         file_path = os.path.join(repo_path, file['path'])
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:  # Use 'w' mode to write text content
-            f.write(file['content'])  # Write decoded content as text
+        with open(file_path, 'w', encoding='utf-8') as f:  
+            f.write(file['content'])  
     
     return repo_path

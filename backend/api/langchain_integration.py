@@ -1,12 +1,17 @@
 import os
 from dotenv import load_dotenv
+import logging
+import requests
+
+# Setup logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Ensure FAISS can be imported
 try:
     import faiss
-    print("Faiss imported successfully in langchain_integration!")
+    logging.info("Faiss imported successfully in langchain_integration!")
 except ImportError as e:
-    print(f"Error importing faiss in langchain_integration: {e}")
+    logging.error(f"Error importing faiss in langchain_integration: {e}")
     raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
 
 from langchain_ai21 import AI21LLM, AI21Embeddings
@@ -38,6 +43,8 @@ def initialize_retrieval_qa(context):
             doc_content += f"Imports: {', '.join(info['imports'])}\n"
         documents.append(doc_content)
 
+    logging.debug(f"Documents for vector store: {documents}")
+
     # Initialize the vector store (FAISS) and embeddings (AI21)
     embeddings = AI21Embeddings(api_key=os.getenv("AI21_API_KEY"))  # AI21 embeddings
     vector_store = FAISS.from_texts(documents, embeddings)
@@ -49,7 +56,7 @@ def initialize_retrieval_qa(context):
     ])
 
     # Create an AI21LLM instance
-    ai21_llm = AI21LLM(model="j2-jumbo-instruct")  # Provide the correct model name
+    ai21_llm = AI21LLM(model="jamba-instruct-preview")  # Provide the correct model name
 
     # Create a StuffDocumentsChain (combine_docs_chain)
     combine_docs_chain = create_stuff_documents_chain(
@@ -67,7 +74,48 @@ def initialize_retrieval_qa(context):
     return retrieval_qa
 
 def get_jamba_response(query, context):
-    # Initialize the RetrievalQA chain with context
-    retrieval_qa = initialize_retrieval_qa(context)
-    response = retrieval_qa.invoke({"question": query, "context": context})
-    return response['result']
+    try:
+        # Initialize the RetrievalQA chain with context
+        retrieval_qa = initialize_retrieval_qa(context)
+        # Diagnostic print to check the structure
+        logging.info(f"Invoking with query: {query} and context: {context}")
+
+        # Construct the messages as expected by the AI21 model
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": f"Context: {context}"},
+            {"role": "user", "content": query}
+        ]
+
+        # Log the constructed messages
+        logging.debug(f"Constructed messages for AI21 model: {messages}")
+        
+        # Ensure the input format aligns with the expected structure
+        input_data = {
+            "model": "jamba-instruct-preview",
+            "messages": messages
+        }
+
+        # Log the input data
+        logging.debug(f"Input data for AI21 model: {input_data}")
+
+        # Correct the endpoint URL
+        endpoint_url = "https://api.ai21.com/studio/v1/chat/completions"
+        
+        # Make the POST request to the AI21 API
+        headers = {
+            "Authorization": f"Bearer {os.getenv('AI21_API_KEY')}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(endpoint_url, headers=headers, json=input_data)
+        
+        # Log the response
+        logging.debug(f"Response from AI21 model: {response.json()}")
+
+        if response.status_code == 200 and 'choices' in response.json() and len(response.json()['choices']) > 0:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            raise ValueError(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        logging.error(f"Error in get_jamba_response: {e}")
+        raise
