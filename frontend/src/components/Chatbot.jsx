@@ -7,10 +7,11 @@ const Chatbot = () => {
 
   const handleQuery = async () => {
     try {
-      const res = await axios.post('/api/chat', { query, context: '{}' });
+      const res = await axios.post('http://localhost:8000/api/query', { query, context: '{}' });
       setResponse(res.data.response);
     } catch (error) {
       setResponse('Error querying Jamba');
+      console.error('Error querying Jamba:', error);
     }
   };
 
