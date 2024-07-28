@@ -161,27 +161,26 @@ def parse_code_file(file_path: str) -> Dict[str, Any]:
 
 def traverse_directory(directory_path: str) -> Dict[str, Any]:
     ast_data = {}
-    
+
     for root, _, files in os.walk(directory_path):
         for file in files:
             file_path = os.path.join(root, file)
             file_info = parse_code_file(file_path)
             ast_data[file_path] = file_info
-    
-    return ast_data
 
+    return ast_data
 
 def parse_code_to_ast(repo_content: Dict[str, Any]) -> Dict[str, Any]:
     repo_path = download_repo_content(repo_content)
     ast_data = traverse_directory(repo_path)
-    
-    # Update the paths to be relative to the temporary repo_path
+
     updated_ast_data = {}
     for file_path, info in ast_data.items():
         relative_path = os.path.relpath(file_path, repo_path)
         updated_ast_data[relative_path] = info
 
     return updated_ast_data
+
 
 def download_repo_content(repo_content: Dict[str, Any]) -> str:
     """

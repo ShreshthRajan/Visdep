@@ -8,7 +8,8 @@ from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import store_repository_metadata, store_ast_data
 from backend.api.chatbot import router as chatbot_router
-from backend.api.graph_generator import create_dependency_graph, save_graph_as_json
+from backend.api.graph_generator import create_dependency_graph, save_graph_as_json, load_graph_from_json
+from networkx.readwrite import json_graph
 from dotenv import load_dotenv
 import logging
 
@@ -66,9 +67,14 @@ async def upload_repo(link: RepoLink):
         logging.debug(f"Parsed AST data: {parsed_data}")
         
         # Store repository metadata and parsed AST data
-        store_repo_data(repo_metadata)
-        store_parsed_data(parsed_data)
+        repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
+        for file_path, ast_info in parsed_data.items():
+            store_ast_data(repo_id, file_path, ast_info)
 
+        # Save parsed data as context
+        with open("context.json", "w") as context_file:
+            json.dump(parsed_data, context_file)
+        
         # Create and save the dependency graph
         graph = create_dependency_graph(parsed_data)
         save_graph_as_json(graph, "dependency_graph.json")
@@ -79,14 +85,27 @@ async def upload_repo(link: RepoLink):
         logging.error(f"Error in upload_repo: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
+
+
+@app.get("/api/dependency_graph")
+async def get_dependency_graph():
+    try:
+        graph = load_graph_from_json("dependency_graph.json")
+        data = json_graph.node_link_data(graph)
+        return {"nodes": data["nodes"], "edges": data["links"]}
+    except Exception as e:
+        logging.error(f"Error in get_dependency_graph: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
 @app.post("/api/query")
 async def query_jamba(request: QueryRequest):
     try:
         query = request.query
-        context = request.context
+        repo_name = request.context  # Use repo_name as context
         
-        # Convert context string to a dictionary safely
-        context_dict = json.loads(context) if isinstance(context, str) else context
+        # Load the context from the file
+        with open("context.json", "r") as context_file:
+            context_dict = json.load(context_file)
         
         # Get response from Jamba model
         response = get_jamba_response(query, context_dict)
@@ -105,3 +124,13 @@ app.include_router(chatbot_router, prefix="/api")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+@app.get("/api/context")
+async def get_context():
+    try:
+        with open("context.json", "r") as context_file:
+            context = json.load(context_file)
+        return context
+    except Exception as e:
+        logging.error(f"Error in get_context: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
