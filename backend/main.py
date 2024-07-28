@@ -5,7 +5,9 @@ from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
-from backend.api.chatbot import router as chatbot_router  # Import the chatbot router
+from backend.api.data_storage import store_repository_metadata, store_ast_data
+from backend.api.chatbot import router as chatbot_router
+from backend.api.graph_generator import create_dependency_graph, save_graph_as_json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -50,8 +52,12 @@ async def upload_repo(link: RepoLink):
         # Store repository metadata and parsed AST data
         store_repo_data(repo_metadata)
         store_parsed_data(parsed_data)
+
+        # Create and save the dependency graph
+        graph = create_dependency_graph(parsed_data)
+        save_graph_as_json(graph, "dependency_graph.json")
         
-        return {"message": "Repository data successfully uploaded and parsed."}
+        return {"message": "Repository data successfully uploaded, parsed, and graph generated."}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
