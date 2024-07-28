@@ -2,9 +2,10 @@ import os
 import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from api.github_api import fetch_repo_content, fetch_repo_metadata
-from api.langchain_integration import get_jamba_response
-from api.ast_parser import parse_code_to_ast
+from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
+from backend.api.langchain_integration import get_jamba_response
+from backend.api.ast_parser import parse_code_to_ast
+from backend.api.chatbot import router as chatbot_router  # Import the chatbot router
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -74,6 +75,9 @@ async def query_jamba(request: QueryRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+# Include the chatbot router
+app.include_router(chatbot_router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn

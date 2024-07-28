@@ -3,6 +3,14 @@ from dotenv import load_dotenv
 import logging
 import requests
 
+# Adjust the import path for data_storage
+from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data
+from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
+from backend.api.ast_parser import parse_code_to_ast
+
+# Initialize the database
+initialize_database()
+
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -29,6 +37,29 @@ load_dotenv()
 # Ensure AI21 API key is set
 if not os.getenv("AI21_API_KEY"):
     raise RuntimeError("AI21_API_KEY environment variable is not set")
+
+def fetch_parse_store_repo(repo_url, auth_token):
+    try:
+        # Fetch repository content and metadata
+        repo_content = fetch_repo_content(repo_url, auth_token)
+        repo_metadata = fetch_repo_metadata(repo_url, auth_token)
+
+        # Store repository metadata
+        repo_name = repo_metadata.get('full_name')
+        repo_id = store_repository_metadata(repo_name, repo_metadata)
+
+        # Parse repository content to AST
+        ast_data = parse_code_to_ast(repo_content)
+
+        # Store parsed AST data
+        for file_path, ast_info in ast_data.items():
+            store_ast_data(repo_id, file_path, ast_info)
+
+        return repo_id, ast_data
+
+    except Exception as e:
+        logging.error(f"Error in fetch_parse_store_repo: {e}")
+        raise
 
 def initialize_retrieval_qa(context):
     # Prepare documents from context
