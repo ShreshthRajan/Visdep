@@ -170,6 +170,7 @@ def traverse_directory(directory_path: str) -> Dict[str, Any]:
     
     return ast_data
 
+
 def parse_code_to_ast(repo_content: Dict[str, Any]) -> Dict[str, Any]:
     repo_path = download_repo_content(repo_content)
     ast_data = traverse_directory(repo_path)

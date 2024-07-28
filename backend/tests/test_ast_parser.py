@@ -1,5 +1,5 @@
 import unittest
-from api.ast_parser import parse_code_file, extract_python_info, parse_python_file
+from backend.api.ast_parser import parse_code_file, extract_python_info, parse_python_file
 import os
 
 class TestASTParser(unittest.TestCase):
