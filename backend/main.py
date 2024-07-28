@@ -1,6 +1,7 @@
 import os
 import json
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
@@ -9,11 +10,21 @@ from backend.api.data_storage import store_repository_metadata, store_ast_data
 from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import create_dependency_graph, save_graph_as_json
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = FastAPI()
+
+# Add CORS middleware to allow requests from the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this to your frontend's origin in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Ensure AI21 API key and GitHub token are set
 if not os.getenv("AI21_API_KEY"):
@@ -43,11 +54,16 @@ async def upload_repo(link: RepoLink):
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
         
         # Fetch repository content and metadata
+        logging.debug(f"Fetching content for repo: {repo_url}")
         repo_content = fetch_repo_content(repo_url, auth_token)
+        logging.debug(f"Fetched repo content: {repo_content}")
+        
         repo_metadata = fetch_repo_metadata(repo_url, auth_token)
+        logging.debug(f"Fetched repo metadata: {repo_metadata}")
         
         # Parse the repository content to AST
         parsed_data = parse_code_to_ast(repo_content)
+        logging.debug(f"Parsed AST data: {parsed_data}")
         
         # Store repository metadata and parsed AST data
         store_repo_data(repo_metadata)
@@ -60,6 +76,7 @@ async def upload_repo(link: RepoLink):
         return {"message": "Repository data successfully uploaded, parsed, and graph generated."}
     
     except Exception as e:
+        logging.error(f"Error in upload_repo: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.post("/api/query")
