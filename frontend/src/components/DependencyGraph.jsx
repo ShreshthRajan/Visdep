@@ -1,6 +1,5 @@
-// frontend/src/components/DependencyGraph.jsx
 import React, { useEffect, useState } from 'react';
-import { Network } from 'vis-network/standalone';
+import { DataSet, Network } from 'vis-network/standalone';
 import axios from 'axios';
 
 const DependencyGraph = () => {
@@ -8,8 +7,12 @@ const DependencyGraph = () => {
 
   useEffect(() => {
     const fetchGraphData = async () => {
-      const response = await axios.get('/path/to/graph/data');
-      setGraphData(response.data);
+      try {
+        const response = await axios.get('http://localhost:8000/api/dependency_graph');
+        setGraphData(response.data);
+      } catch (error) {
+        console.error('Error fetching graph data:', error);
+      }
     };
     fetchGraphData();
   }, []);

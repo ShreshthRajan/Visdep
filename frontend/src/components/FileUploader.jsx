@@ -1,4 +1,3 @@
-// frontend/src/components/FileUploader.jsx
 import React, { useState } from 'react';
 import axios from 'axios';
 
@@ -8,7 +7,7 @@ const FileUploader = () => {
 
   const handleUpload = async () => {
     try {
-      const response = await axios.post('/api/upload_repo', { repo_url: repoUrl });
+      const response = await axios.post('http://localhost:8000/api/upload_repo', { repo_url: repoUrl });
       setMessage(response.data.message);
     } catch (error) {
       setMessage('Error uploading repository');
