@@ -21,7 +21,7 @@ app = FastAPI()
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this to your frontend's origin in production
+    allow_origins=["http://localhost:3000"],  # Adjust this to your frontend's origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,7 +38,7 @@ class RepoLink(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
-    context: str
+    context: dict  # Adjust to accept dictionary context
 
 def store_repo_data(repo_metadata):
     # Log the storage action for debugging
@@ -85,8 +85,6 @@ async def upload_repo(link: RepoLink):
         logging.error(f"Error in upload_repo: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
-
-
 @app.get("/api/dependency_graph")
 async def get_dependency_graph():
     try:
@@ -101,14 +99,10 @@ async def get_dependency_graph():
 async def query_jamba(request: QueryRequest):
     try:
         query = request.query
-        repo_name = request.context  # Use repo_name as context
-        
-        # Load the context from the file
-        with open("context.json", "r") as context_file:
-            context_dict = json.load(context_file)
+        context = request.context
         
         # Get response from Jamba model
-        response = get_jamba_response(query, context_dict)
+        response = get_jamba_response(query, context)
         
         if response:
             return {"response": response}
@@ -117,13 +111,6 @@ async def query_jamba(request: QueryRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
-
-# Include the chatbot router
-app.include_router(chatbot_router, prefix="/api")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 @app.get("/api/context")
 async def get_context():
@@ -134,3 +121,10 @@ async def get_context():
     except Exception as e:
         logging.error(f"Error in get_context: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+# Include the chatbot router
+app.include_router(chatbot_router, prefix="/api")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
