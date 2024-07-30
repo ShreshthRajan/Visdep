@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import patch
-from api.github_api import fetch_repo_content, fetch_repo_metadata
+from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 
 class TestGitHubAPI(unittest.TestCase):
     
-    @patch('api.github_api.requests.get')
+    @patch('backend.api.github_api.requests.get')
     def test_fetch_repo_content(self, mock_get):
         mock_response = {
             'path': 'test_file.py',
@@ -19,7 +19,7 @@ class TestGitHubAPI(unittest.TestCase):
         
         self.assertEqual(content, [mock_response])
     
-    @patch('api.github_api.requests.get')
+    @patch('backend.api.github_api.requests.get')
     def test_fetch_repo_metadata(self, mock_get):
         mock_response = {
             'name': 'test_repo',

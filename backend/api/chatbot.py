@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Define the request model
 class QueryRequest(BaseModel):
     query: str
-    repo_name: str  # Include the repository name
+    context: dict  # Adjust to accept dictionary context
 
 # Define the response model
 class QueryResponse(BaseModel):
@@ -23,10 +23,10 @@ class QueryResponse(BaseModel):
 async def chat_with_jamba(request: QueryRequest):
     try:
         query = request.query
-        repo_name = request.repo_name
+        context = request.context  # Use context directly as a dictionary
         
         # Get response from Jamba model
-        response = get_jamba_response(query, repo_name)
+        response = get_jamba_response(query, context)
         
         if response:
             return QueryResponse(response=response)

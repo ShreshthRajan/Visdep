@@ -108,22 +108,6 @@ def initialize_retrieval_qa(context):
     
     return retrieval_qa
 
-def get_jamba_response(query, context):
-    try:
-        # Initialize the RetrievalQA chain with context
-        retrieval_qa = initialize_retrieval_qa(context)
-        # Diagnostic print to check the structure
-        logging.info(f"Invoking with query: {query} and context: {context}")
-
-        # Get the response from the chain
-        result = retrieval_qa.run(query)
-        
-        return result
-    
-    except Exception as e:
-        logging.error(f"Error in get_jamba_response: {e}")
-        raise
-
 # def get_jamba_response(query, context):
 #     try:
 #         # Initialize the RetrievalQA chain with context
@@ -131,42 +115,49 @@ def get_jamba_response(query, context):
 #         # Diagnostic print to check the structure
 #         logging.info(f"Invoking with query: {query} and context: {context}")
 
-#         # Construct the messages as expected by the AI21 model
-#         messages = [
-#             {"role": "system", "content": "You are a helpful assistant."},
-#             {"role": "user", "content": f"Context: {context}"},
-#             {"role": "user", "content": query}
-#         ]
-
-#         # Log the constructed messages
-#         logging.debug(f"Constructed messages for AI21 model: {messages}")
+#         # Get the response from the chain
+#         result = retrieval_qa.run(query)
         
-#         # Ensure the input format aligns with the expected structure
-#         input_data = {
-#             "model": "jamba-instruct-preview",
-#             "messages": messages
-#         }
-
-#         # Log the input data
-#         logging.debug(f"Input data for AI21 model: {input_data}")
-
-#         # Correct the endpoint URL
-#         endpoint_url = "https://api.ai21.com/studio/v1/chat/completions"
-        
-#         # Make the POST request to the AI21 API
-#         headers = {
-#             "Authorization": f"Bearer {os.getenv('AI21_API_KEY')}",
-#             "Content-Type": "application/json"
-#         }
-#         response = requests.post(endpoint_url, headers=headers, json=input_data)
-        
-#         # Log the response
-#         logging.debug(f"Response from AI21 model: {response.json()}")
-
-#         if response.status_code == 200 and 'choices' in response.json() and len(response.json()['choices']) > 0:
-#             return response.json()['choices'][0]['message']['content']
-#         else:
-#             raise ValueError(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")
+#         return result
+    
 #     except Exception as e:
 #         logging.error(f"Error in get_jamba_response: {e}")
 #         raise
+
+def get_jamba_response(query, context):
+    try:
+        logging.debug(f"Initializing RetrievalQA with context: {context}")
+        retrieval_qa = initialize_retrieval_qa(context)
+        logging.info(f"Invoking with query: {query} and context: {context}")
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": f"Context: {context}"},
+            {"role": "user", "content": query}
+        ]
+
+        logging.debug(f"Constructed messages for AI21 model: {messages}")
+
+        input_data = {
+            "model": "jamba-instruct-preview",
+            "messages": messages
+        }
+
+        logging.debug(f"Input data for AI21 model: {input_data}")
+
+        endpoint_url = "https://api.ai21.com/studio/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {os.getenv('AI21_API_KEY')}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(endpoint_url, headers=headers, json=input_data)
+        logging.debug(f"Response from AI21 model: {response.json()}")
+
+        if response.status_code == 200 and 'choices' in response.json() and len(response.json()['choices']) > 0:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            logging.error(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")
+            raise ValueError(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        logging.error(f"Error in get_jamba_response: {e}")
+        raise

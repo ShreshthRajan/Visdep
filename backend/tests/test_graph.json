@@ -1,0 +1,1 @@
+{"directed": true, "multigraph": false, "graph": {}, "nodes": [{"type": "file", "label": "file1.py", "id": "file1.py"}, {"id": "file1.py::func1"}], "links": [{"relation": "contains", "source": "file1.py", "target": "file1.py::func1"}]}
