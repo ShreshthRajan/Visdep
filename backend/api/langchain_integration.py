@@ -1,3 +1,4 @@
+# dependency_extraction/backend/api/langchain_integration.py
 import os
 from dotenv import load_dotenv
 import logging
@@ -108,21 +109,6 @@ def initialize_retrieval_qa(context):
     
     return retrieval_qa
 
-# def get_jamba_response(query, context):
-#     try:
-#         # Initialize the RetrievalQA chain with context
-#         retrieval_qa = initialize_retrieval_qa(context)
-#         # Diagnostic print to check the structure
-#         logging.info(f"Invoking with query: {query} and context: {context}")
-
-#         # Get the response from the chain
-#         result = retrieval_qa.run(query)
-        
-#         return result
-    
-#     except Exception as e:
-#         logging.error(f"Error in get_jamba_response: {e}")
-#         raise
 
 def get_jamba_response(query, context):
     try:
