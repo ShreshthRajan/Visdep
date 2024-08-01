@@ -11,14 +11,21 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     directories = set()
     files = set()
     methods = {}
-    package_imports = set()
 
+    # First pass: collect all files and methods
+    for file_path, file_info in ast_data.items():
+        files.add(file_path)
+        for func in file_info.get("functions", []):
+            methods[func] = file_path
+        for cls in file_info.get("classes", []):
+            methods[cls] = file_path
+
+    # Second pass: create nodes and edges
     for file_path, file_info in ast_data.items():
         dir_path = os.path.dirname(file_path)
         while dir_path:
             directories.add(dir_path)
             dir_path = os.path.dirname(dir_path)
-        files.add(file_path)
 
         functions = file_info.get("functions", [])
         classes = file_info.get("classes", [])
@@ -27,30 +34,36 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
         file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(functions)}\nClasses: {', '.join(classes)}"
         G.add_node(file_path, type="file", label=file_label, shape="ellipse")
 
-        for func in functions:
-            methods[func] = file_path
-
         for imp in imports:
-            if '.' in imp:  # Assuming package imports contain a dot
-                package_imports.add(imp)
-                G.add_node(imp, type="package", label=imp, shape="star")
-                G.add_edge(imp, file_path, relation="imports")
+            if '.' in imp:
+                module_path, method = imp.rsplit('.', 1)
+                source_file = next((file for file in files if file.endswith(module_path.replace('.', '/') + '.py')), None)
+                if source_file:
+                    # This is an import from within the project
+                    mid_point = f"{source_file}::{file_path}::{method}"
+                    G.add_node(mid_point, type="import", label=method, shape="box")
+                    G.add_edge(source_file, mid_point, relation="exports")
+                    G.add_edge(mid_point, file_path, relation="imports")
+                else:
+                    # This is a package import
+                    G.add_node(module_path, type="package", label=module_path, shape="star")
+                    G.add_edge(module_path, file_path, relation="imports", label=method)
             elif imp in methods:
+                # This is a direct import of a method or class from another file
                 source_file = methods[imp]
                 if source_file != file_path:
                     mid_point = f"{source_file}::{file_path}::{imp}"
-                    G.add_node(mid_point, type="import", label=imp, shape="diamond")
+                    G.add_node(mid_point, type="import", label=imp, shape="box")
                     G.add_edge(source_file, mid_point, relation="exports")
                     G.add_edge(mid_point, file_path, relation="imports")
             else:
-                # Handle unknown imports (could be built-in modules)
-                G.add_node(imp, type="unknown", label=imp, shape="triangle")
+                # This is likely a built-in or unknown import
+                G.add_node(imp, type="package", label=imp, shape="star")
                 G.add_edge(imp, file_path, relation="imports")
 
+    # Add directory nodes and edges
     for directory in directories:
         G.add_node(directory, type="directory", label=os.path.basename(directory), shape="box")
-
-    for directory in directories:
         for file in files:
             if os.path.dirname(file) == directory:
                 G.add_edge(directory, file, relation="contains")
