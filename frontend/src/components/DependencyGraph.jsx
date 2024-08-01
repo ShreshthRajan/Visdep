@@ -5,81 +5,23 @@ import axios from 'axios';
 const DependencyGraph = () => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
+  const [graphData, setGraphData] = useState(null);
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
     import: true,
     package: true,
-    unknown: true,
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const fetchGraphData = async () => {
       try {
         const response = await axios.get('http://localhost:8000/api/dependency_graph');
-        const graphData = response.data;
-        
-        const nodes = new DataSet(graphData.nodes.map(node => ({
-          ...node,
-          shape: getNodeShape(node.type),
-          color: getNodeColor(node.type),
-          font: { size: 14, face: 'Arial', color: '#000000' },
-          size: getNodeSize(node.type),
-          title: getNodeTooltip(node),
-          widthConstraint: { minimum: 100, maximum: 200 },
-          heightConstraint: { minimum: 50 },
-        })));
-
-        const edges = new DataSet(graphData.edges.map(edge => ({
-          from: edge.source,
-          to: edge.target,
-          arrows: getEdgeArrows(edge.relation),
-          color: getEdgeColor(edge.relation),
-          width: 2,
-          smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
-          font: { size: 10, align: 'middle' },
-          label: edge.relation,
-        })));
-
-        const container = networkRef.current;
-        const data = { nodes, edges };
-        const options = {
-          layout: {
-            hierarchical: {
-              enabled: true,
-              direction: 'UD',
-              sortMethod: 'directed',
-              levelSeparation: 250,
-              nodeSpacing: 200,
-              treeSpacing: 200,
-            },
-          },
-          physics: false,
-          interaction: {
-            dragNodes: true,
-            dragView: true,
-            zoomView: true,
-            hover: true,
-          },
-          nodes: {
-            scaling: {
-              min: 20,
-              max: 60,
-            },
-            margin: 10,
-          },
-          edges: {
-            width: 2,
-          },
-        };
-
-        const newNetwork = new Network(container, data, options);
-        setNetwork(newNetwork);
-
-        newNetwork.once('stabilizationIterationsDone', () => {
-          newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
-        });
+        const data = response.data;
+        setGraphData(data);
+        renderGraph(data);
       } catch (error) {
         console.error('Error fetching graph data:', error);
       }
@@ -88,32 +30,109 @@ const DependencyGraph = () => {
     fetchGraphData();
   }, []);
 
+  const renderGraph = (data) => {
+    const nodes = new DataSet(data.nodes.map(node => ({
+      ...node,
+      shape: getNodeShape(node.type),
+      color: getNodeColor(node.type),
+      font: { size: 14, face: 'Arial', color: '#000000' },
+      size: getNodeSize(node.type),
+      title: getNodeTooltip(node),
+      widthConstraint: { minimum: 100, maximum: 200 },
+      heightConstraint: { minimum: 50 },
+    })));
+  
+    const edges = new DataSet(data.edges.map(edge => ({
+      from: edge.source,
+      to: edge.target,
+      arrows: edge.relation === 'imports' ? 'to' : '',
+      color: getEdgeColor(edge.relation),
+      width: 2,
+      smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+      font: { size: 10, align: 'middle', background: '#90EE90', strokeWidth: 0 },
+      label: edge.label || '',
+    })));
+
+    const container = networkRef.current;
+    const graphData = { nodes, edges };
+    const options = {
+      layout: {
+        hierarchical: {
+          enabled: true,
+          direction: 'UD',
+          sortMethod: 'directed',
+          levelSeparation: 250,
+          nodeSpacing: 200,
+          treeSpacing: 200,
+        },
+      },
+      physics: false,
+      interaction: {
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+      },
+      nodes: {
+        scaling: {
+          min: 20,
+          max: 60,
+        },
+        margin: 10,
+      },
+      edges: {
+        width: 2,
+        arrows: {
+          to: { enabled: true, scaleFactor: 1, type: 'arrow' }
+        },
+      },
+    };
+
+    const newNetwork = new Network(container, graphData, options);
+    setNetwork(newNetwork);
+
+    newNetwork.once('stabilizationIterationsDone', () => {
+      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
+    });
+  };
+
   useEffect(() => {
-    if (network) {
-      network.setData({
-        nodes: network.body.data.nodes.get().filter(node => selectedNodeTypes[node.type]),
-        edges: network.body.data.edges,
-      });
-      network.fit();
+    if (graphData) {
+      const filteredNodes = graphData.nodes.filter(node => 
+        selectedNodeTypes[node.type] &&
+        (searchTerm === '' || node.label.toLowerCase().includes(searchTerm.toLowerCase()))
+      );
+      const filteredNodeIds = new Set(filteredNodes.map(node => node.id));
+      const filteredEdges = graphData.edges.filter(edge => 
+        filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target)
+      );
+
+      renderGraph({ nodes: filteredNodes, edges: filteredEdges });
     }
-  }, [selectedNodeTypes, network]);
+  }, [selectedNodeTypes, searchTerm, graphData]);
 
   const handleNodeTypeToggle = (type) => {
     setSelectedNodeTypes(prev => ({ ...prev, [type]: !prev[type] }));
+  };
+
+  const handleSearch = (event) => {
+    setSearchTerm(event.target.value);
   };
 
   const getNodeShape = (type) => {
     switch (type) {
       case 'directory': return 'box';
       case 'file': return 'ellipse';
-      case 'import': return 'diamond';
+      case 'import': return 'box';
       case 'package': return 'star';
-      case 'unknown': return 'triangle';
       default: return 'ellipse';
     }
   };
-
+  
   const getNodeColor = (type) => {
+    if (type === 'import') {
+      return { border: '#32CD32', background: '#90EE90' };
+    }
     return nodeTypes[type] || nodeTypes.default;
   };
 
@@ -123,7 +142,6 @@ const DependencyGraph = () => {
       case 'file': return 25;
       case 'import': return 15;
       case 'package': return 20;
-      case 'unknown': return 15;
       default: return 20;
     }
   };
@@ -145,12 +163,7 @@ const DependencyGraph = () => {
   };
 
   const getEdgeArrows = (relation) => {
-    switch (relation) {
-      case 'imports': return 'to';
-      case 'exports': return 'from';
-      case 'contains': return '';
-      default: return 'to';
-    }
+    return relation === 'imports' ? 'to' : '';
   };
 
   const handleFitGraph = () => {
@@ -177,10 +190,18 @@ const DependencyGraph = () => {
     setIsLegendMinimized(!isLegendMinimized);
   };
 
+
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
       <div ref={networkRef} style={{ height: '100%', width: '100%' }} />
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000 }}>
+        <input
+          type="text"
+          placeholder="Search nodes..."
+          value={searchTerm}
+          onChange={handleSearch}
+          style={searchInputStyle}
+        />
         <button onClick={handleFitGraph} style={smallButtonStyle} title="Fit Graph">
           <i className="fas fa-expand-arrows-alt"></i>
         </button>
@@ -216,14 +237,13 @@ const DependencyGraph = () => {
       </div>
     </div>
   );
-};
+}
 
 const nodeTypes = {
   directory: { border: '#FF4500', background: '#FFA07A' },
   file: { border: '#4169E1', background: '#87CEFA' },
   import: { border: '#32CD32', background: '#90EE90' },
   package: { border: '#FFD700', background: '#FFFACD' },
-  unknown: { border: '#A9A9A9', background: '#D3D3D3' },
   default: { border: '#A9A9A9', background: '#D3D3D3' },
 };
 
@@ -235,6 +255,14 @@ const smallButtonStyle = {
   border: 'none',
   borderRadius: '4px',
   cursor: 'pointer',
+  fontSize: '14px',
+};
+
+const searchInputStyle = {
+  padding: '5px 10px',
+  marginRight: '10px',
+  borderRadius: '4px',
+  border: '1px solid #ccc',
   fontSize: '14px',
 };
 

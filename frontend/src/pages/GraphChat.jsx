@@ -1,3 +1,4 @@
+// frontend/src/pages/GraphChat.jsx
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
