@@ -1,3 +1,4 @@
+# dependency_extraction/backend/api/graph_generator.py
 import os
 import networkx as nx
 from typing import Dict, Any
@@ -10,6 +11,7 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     directories = set()
     files = set()
     methods = {}
+    package_imports = set()
 
     for file_path, file_info in ast_data.items():
         dir_path = os.path.dirname(file_path)
@@ -22,36 +24,39 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
         classes = file_info.get("classes", [])
         imports = file_info.get("imports", [])
 
-        file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(functions)}" if functions else os.path.basename(file_path)
+        file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(functions)}\nClasses: {', '.join(classes)}"
         G.add_node(file_path, type="file", label=file_label, shape="ellipse")
 
         for func in functions:
-            func_node = f"{file_path}::{func}"
-            G.add_node(func_node, type="function", label=func, shape="ellipse")
-            G.add_edge(file_path, func_node, relation="contains")
             methods[func] = file_path
 
-        for cls in classes:
-            class_node = f"{file_path}::{cls}"
-            G.add_node(class_node, type="class", label=cls, shape="ellipse")
-            G.add_edge(file_path, class_node, relation="contains")
-
         for imp in imports:
-            if imp in methods:
-                import_node = f"import::{imp}"
-                G.add_node(import_node, type="import", label=imp, shape="star", style="dotted")
-                G.add_edge(file_path, methods[imp], relation="imports")
+            if '.' in imp:  # Assuming package imports contain a dot
+                package_imports.add(imp)
+                G.add_node(imp, type="package", label=imp, shape="star")
+                G.add_edge(imp, file_path, relation="imports")
+            elif imp in methods:
+                source_file = methods[imp]
+                if source_file != file_path:
+                    mid_point = f"{source_file}::{file_path}::{imp}"
+                    G.add_node(mid_point, type="import", label=imp, shape="diamond")
+                    G.add_edge(source_file, mid_point, relation="exports")
+                    G.add_edge(mid_point, file_path, relation="imports")
+            else:
+                # Handle unknown imports (could be built-in modules)
+                G.add_node(imp, type="unknown", label=imp, shape="triangle")
+                G.add_edge(imp, file_path, relation="imports")
 
     for directory in directories:
-        G.add_node(directory, type="directory", label=os.path.basename(directory), shape="box", color="red")
+        G.add_node(directory, type="directory", label=os.path.basename(directory), shape="box")
 
     for directory in directories:
         for file in files:
             if os.path.dirname(file) == directory:
-                G.add_edge(directory, file, relation="contains", arrows="none")
+                G.add_edge(directory, file, relation="contains")
         subdirs = [d for d in directories if os.path.dirname(d) == directory]
         for subdir in subdirs:
-            G.add_edge(directory, subdir, relation="contains", arrows="none")
+            G.add_edge(directory, subdir, relation="contains")
 
     return G
 
