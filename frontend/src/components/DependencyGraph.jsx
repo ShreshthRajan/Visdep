@@ -35,20 +35,20 @@ const DependencyGraph = () => {
       ...node,
       shape: getNodeShape(node.type),
       color: getNodeColor(node.type),
-      font: { size: 16, face: 'Arial', color: '#000000', multi: true },
+      font: { size: 14, face: 'Arial', color: '#000000', multi: true },
       size: getNodeSize(node.type),
       title: getNodeTooltip(node),
-      widthConstraint: { minimum: 150, maximum: 300 },
-      heightConstraint: { minimum: 60 },
+      widthConstraint: { minimum: 100, maximum: 200 },
+      heightConstraint: { minimum: 50 },
     })));
-  
+
     const edges = new DataSet(data.edges.map(edge => ({
       from: edge.source,
       to: edge.target,
       arrows: edge.relation === 'imports' ? 'to' : '',
       color: getEdgeColor(edge.relation),
       width: 2,
-      smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+      smooth: { type: 'continuous', roundness: 0.2 },
       font: { size: 12, align: 'middle', background: '#FFFFFF' },
       label: edge.label || '',
     })));
@@ -58,12 +58,12 @@ const DependencyGraph = () => {
     const options = {
       layout: {
         improvedLayout: true,
-        hierarchical: false,
+        randomSeed: 42,
       },
       physics: {
         enabled: true,
         barnesHut: {
-          gravitationalConstant: -2000,
+          gravitationalConstant: -5000,
           centralGravity: 0.3,
           springLength: 200,
           springConstant: 0.04,
@@ -71,11 +71,8 @@ const DependencyGraph = () => {
           avoidOverlap: 1,
         },
         stabilization: {
-          enabled: true,
           iterations: 1000,
           updateInterval: 25,
-          onlyDynamicEdges: false,
-          fit: true
         },
       },
       interaction: {
@@ -89,12 +86,13 @@ const DependencyGraph = () => {
           min: 20,
           max: 60,
         },
-        margin: 10,
+        margin: 20,
       },
       edges: {
         smooth: {
           type: 'continuous',
           forceDirection: 'none',
+          roundness: 0.2,
         },
       },
     };
@@ -105,36 +103,104 @@ const DependencyGraph = () => {
     newNetwork.once('stabilizationIterationsDone', () => {
       newNetwork.setOptions({ physics: false });
       newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
-      
-      // Position imported method nodes close to their source files
-      const importNodes = nodes.get({
-        filter: node => node.type === 'import'
-      });
-
-      importNodes.forEach(importNode => {
-        const [sourceFile] = importNode.id.split('::');
-        const sourceNode = nodes.get(sourceFile);
-        if (sourceNode) {
-          const sourceNodePosition = newNetwork.getPositions([sourceNode.id])[sourceNode.id];
-          const offset = Math.random() * 100 - 50; // Random offset to avoid overlapping
-          newNetwork.moveNode(importNode.id, sourceNodePosition.x + offset, sourceNodePosition.y + offset);
-        }
-      });
     });
+
+    newNetwork.on('selectNode', (params) => {
+      if (params.nodes.length > 0) {
+        const selectedNodeId = params.nodes[0];
+        highlightConnectedNodes(selectedNodeId, nodes, edges, newNetwork);
+      }
+    });
+
+    newNetwork.on('deselectNode', () => {
+      resetNodeStyles(nodes, edges, newNetwork);
+    });
+  };
+
+  const highlightConnectedNodes = (nodeId, nodes, edges, network) => {
+    const connectedNodeIds = new Set();
+    edges.get().forEach(edge => {
+      if (edge.from === nodeId) connectedNodeIds.add(edge.to);
+      if (edge.to === nodeId) connectedNodeIds.add(edge.from);
+    });
+
+    nodes.update(nodes.get().map(node => ({
+      ...node,
+      color: connectedNodeIds.has(node.id) || node.id === nodeId
+        ? getNodeColor(node.type)
+        : { background: '#D3D3D3', border: '#A9A9A9' },
+      font: { ...node.font, color: connectedNodeIds.has(node.id) || node.id === nodeId ? '#000000' : '#999999' },
+    })));
+
+    edges.update(edges.get().map(edge => ({
+      ...edge,
+      color: edge.from === nodeId || edge.to === nodeId ? getEdgeColor(edge.relation) : '#D3D3D3',
+    })));
+  };
+
+  const resetNodeStyles = (nodes, edges, network) => {
+    nodes.update(nodes.get().map(node => ({
+      ...node,
+      color: getNodeColor(node.type),
+      font: { ...node.font, color: '#000000' },
+    })));
+
+    edges.update(edges.get().map(edge => ({
+      ...edge,
+      color: getEdgeColor(edge.relation),
+    })));
   };
 
   useEffect(() => {
     if (graphData) {
-      const filteredNodes = graphData.nodes.filter(node => 
-        selectedNodeTypes[node.type] &&
-        (searchTerm === '' || node.label.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-      const filteredNodeIds = new Set(filteredNodes.map(node => node.id));
+      const filteredNodes = new Set();
+      const queue = [];
+
+      const addNodeAndRelated = (nodeId) => {
+        if (!filteredNodes.has(nodeId)) {
+          filteredNodes.add(nodeId);
+          queue.push(nodeId);
+        }
+      };
+
+      if (searchTerm) {
+        graphData.nodes.forEach(node => {
+          if (node.label.toLowerCase().includes(searchTerm.toLowerCase())) {
+            addNodeAndRelated(node.id);
+          }
+        });
+      } else {
+        graphData.nodes.forEach(node => addNodeAndRelated(node.id));
+      }
+
+      while (queue.length > 0) {
+        const currentNodeId = queue.shift();
+        const currentNode = graphData.nodes.find(node => node.id === currentNodeId);
+
+        if (currentNode.type === 'file') {
+          let dirPath = currentNodeId.split('/').slice(0, -1).join('/');
+          while (dirPath) {
+            addNodeAndRelated(dirPath);
+            dirPath = dirPath.split('/').slice(0, -1).join('/');
+          }
+        }
+
+        graphData.edges.forEach(edge => {
+          if (edge.target === currentNodeId && edge.relation === 'imports') {
+            addNodeAndRelated(edge.source);
+          }
+          if (edge.source === currentNodeId && edge.relation === 'exports') {
+            addNodeAndRelated(edge.target);
+          }
+        });
+      }
+
+      const filteredNodesArray = graphData.nodes.filter(node => filteredNodes.has(node.id));
       const filteredEdges = graphData.edges.filter(edge => 
-        filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target)
+        filteredNodes.has(edge.source) && filteredNodes.has(edge.target)
       );
 
-      renderGraph({ nodes: filteredNodes, edges: filteredEdges });
+      renderGraph({ nodes: filteredNodesArray, edges: filteredEdges });
     }
   }, [selectedNodeTypes, searchTerm, graphData]);
 
@@ -150,7 +216,7 @@ const DependencyGraph = () => {
     switch (type) {
       case 'directory': return 'box';
       case 'file': return 'ellipse';
-      case 'import': return 'box';
+      case 'import': return 'diamond';
       case 'package': return 'star';
       default: return 'ellipse';
     }
@@ -165,11 +231,11 @@ const DependencyGraph = () => {
 
   const getNodeSize = (type) => {
     switch (type) {
-      case 'directory': return 30;
-      case 'file': return 25;
-      case 'import': return 15;
+      case 'directory': return 50;
+      case 'file': return 50;
+      case 'import': return 20;
       case 'package': return 20;
-      default: return 20;
+      default: return 30;
     }
   };
 
@@ -187,10 +253,6 @@ const DependencyGraph = () => {
       case 'exports': return '#32CD32';
       default: return '#000000';
     }
-  };
-
-  const getEdgeArrows = (relation) => {
-    return relation === 'imports' ? 'to' : '';
   };
 
   const handleFitGraph = () => {
@@ -216,7 +278,6 @@ const DependencyGraph = () => {
   const toggleLegend = () => {
     setIsLegendMinimized(!isLegendMinimized);
   };
-
 
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
