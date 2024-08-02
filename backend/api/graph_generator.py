@@ -11,6 +11,7 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     directories = set()
     files = set()
     methods = {}
+    imported_methods = {}
 
     # First pass: collect all files and methods
     for file_path, file_info in ast_data.items():
@@ -40,10 +41,12 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
                 source_file = next((file for file in files if file.endswith(module_path.replace('.', '/') + '.py')), None)
                 if source_file:
                     # This is an import from within the project
-                    mid_point = f"{source_file}::{file_path}::{method}"
-                    G.add_node(mid_point, type="import", label=method, shape="box")
-                    G.add_edge(source_file, mid_point, relation="exports")
-                    G.add_edge(mid_point, file_path, relation="imports")
+                    if method not in imported_methods:
+                        mid_point = f"{source_file}::{method}"
+                        G.add_node(mid_point, type="import", label=method, shape="box")
+                        G.add_edge(source_file, mid_point, relation="exports")
+                        imported_methods[method] = mid_point
+                    G.add_edge(imported_methods[method], file_path, relation="imports")
                 else:
                     # This is a package import
                     G.add_node(module_path, type="package", label=module_path, shape="star")
@@ -52,10 +55,12 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
                 # This is a direct import of a method or class from another file
                 source_file = methods[imp]
                 if source_file != file_path:
-                    mid_point = f"{source_file}::{file_path}::{imp}"
-                    G.add_node(mid_point, type="import", label=imp, shape="box")
-                    G.add_edge(source_file, mid_point, relation="exports")
-                    G.add_edge(mid_point, file_path, relation="imports")
+                    if imp not in imported_methods:
+                        mid_point = f"{source_file}::{imp}"
+                        G.add_node(mid_point, type="import", label=imp, shape="box")
+                        G.add_edge(source_file, mid_point, relation="exports")
+                        imported_methods[imp] = mid_point
+                    G.add_edge(imported_methods[imp], file_path, relation="imports")
             else:
                 # This is likely a built-in or unknown import
                 G.add_node(imp, type="package", label=imp, shape="star")
