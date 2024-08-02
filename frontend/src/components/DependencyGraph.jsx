@@ -35,11 +35,11 @@ const DependencyGraph = () => {
       ...node,
       shape: getNodeShape(node.type),
       color: getNodeColor(node.type),
-      font: { size: 14, face: 'Arial', color: '#000000' },
+      font: { size: 16, face: 'Arial', color: '#000000', multi: true },
       size: getNodeSize(node.type),
       title: getNodeTooltip(node),
-      widthConstraint: { minimum: 100, maximum: 200 },
-      heightConstraint: { minimum: 50 },
+      widthConstraint: { minimum: 150, maximum: 300 },
+      heightConstraint: { minimum: 60 },
     })));
   
     const edges = new DataSet(data.edges.map(edge => ({
@@ -49,7 +49,7 @@ const DependencyGraph = () => {
       color: getEdgeColor(edge.relation),
       width: 2,
       smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
-      font: { size: 10, align: 'middle', background: '#90EE90', strokeWidth: 0 },
+      font: { size: 12, align: 'middle', background: '#FFFFFF' },
       label: edge.label || '',
     })));
 
@@ -57,16 +57,27 @@ const DependencyGraph = () => {
     const graphData = { nodes, edges };
     const options = {
       layout: {
-        hierarchical: {
+        improvedLayout: true,
+        hierarchical: false,
+      },
+      physics: {
+        enabled: true,
+        barnesHut: {
+          gravitationalConstant: -2000,
+          centralGravity: 0.3,
+          springLength: 200,
+          springConstant: 0.04,
+          damping: 0.09,
+          avoidOverlap: 1,
+        },
+        stabilization: {
           enabled: true,
-          direction: 'UD',
-          sortMethod: 'directed',
-          levelSeparation: 250,
-          nodeSpacing: 200,
-          treeSpacing: 200,
+          iterations: 1000,
+          updateInterval: 25,
+          onlyDynamicEdges: false,
+          fit: true
         },
       },
-      physics: false,
       interaction: {
         dragNodes: true,
         dragView: true,
@@ -81,9 +92,9 @@ const DependencyGraph = () => {
         margin: 10,
       },
       edges: {
-        width: 2,
-        arrows: {
-          to: { enabled: true, scaleFactor: 1, type: 'arrow' }
+        smooth: {
+          type: 'continuous',
+          forceDirection: 'none',
         },
       },
     };
@@ -92,7 +103,23 @@ const DependencyGraph = () => {
     setNetwork(newNetwork);
 
     newNetwork.once('stabilizationIterationsDone', () => {
+      newNetwork.setOptions({ physics: false });
       newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
+      
+      // Position imported method nodes close to their source files
+      const importNodes = nodes.get({
+        filter: node => node.type === 'import'
+      });
+
+      importNodes.forEach(importNode => {
+        const [sourceFile] = importNode.id.split('::');
+        const sourceNode = nodes.get(sourceFile);
+        if (sourceNode) {
+          const sourceNodePosition = newNetwork.getPositions([sourceNode.id])[sourceNode.id];
+          const offset = Math.random() * 100 - 50; // Random offset to avoid overlapping
+          newNetwork.moveNode(importNode.id, sourceNodePosition.x + offset, sourceNodePosition.y + offset);
+        }
+      });
     });
   };
 
