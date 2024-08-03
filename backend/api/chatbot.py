@@ -1,4 +1,4 @@
-# dependency_extraction/backend/api/chatbot.py
+# backend/api/chatbot.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import logging
@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Define the request model
 class QueryRequest(BaseModel):
     query: str
-    context: dict  # Adjust to accept dictionary context
+    context: dict
 
 # Define the response model
 class QueryResponse(BaseModel):
@@ -35,4 +35,4 @@ async def chat_with_jamba(request: QueryRequest):
     
     except Exception as e:
         logging.error(f"Error in chat_with_jamba: {e}")
-        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")

@@ -1,3 +1,4 @@
+# backend/main.py
 import os
 import json
 from fastapi import FastAPI, HTTPException
@@ -101,8 +102,8 @@ async def query_jamba(request: QueryRequest):
         query = request.query
         context = request.context
         
-        # Get response from Jamba model
-        response = get_jamba_response(query, context)
+        # Get response from Jamba model (now awaited)
+        response = await get_jamba_response(query, context)
         
         if response:
             return {"response": response}
@@ -127,4 +128,4 @@ app.include_router(chatbot_router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
