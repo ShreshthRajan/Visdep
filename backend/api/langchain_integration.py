@@ -1,4 +1,4 @@
-# dependency_extraction/backend/api/langchain_integration.py
+# dependency_extraction/backend/api/langchain_integration.py (old) 
 import os
 from dotenv import load_dotenv
 import logging
@@ -8,6 +8,7 @@ import requests
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.ast_parser import parse_code_to_ast
+import hashlib
 
 # Initialize the database
 initialize_database()
@@ -23,6 +24,7 @@ except ImportError as e:
     logging.error(f"Error importing faiss in langchain_integration: {e}")
     raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
 
+import json
 from langchain_ai21 import AI21LLM, AI21Embeddings
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
@@ -31,6 +33,8 @@ from langchain.schema import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableSequence
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationChain
 
 # Load environment variables from .env file
 load_dotenv()
@@ -109,38 +113,139 @@ def initialize_retrieval_qa(context):
     
     return retrieval_qa
 
+class ChatSession:
+    def __init__(self):
+        self.memory = ConversationBufferMemory(return_messages=True)
+        self.conversation_chain = None
+
+    def initialize_conversation_chain(self, context):
+        llm = AI21LLM(model="jamba-instruct-preview")
+        
+        few_shot_examples = """
+        Example 1:
+        Human: What are the main functions in the ast_parser.py file?
+        AI: To answer this question, I'll analyze the ast_parser.py file in the context provided. Here's my step-by-step reasoning:
+
+        1. First, I'll look for the 'ast_parser.py' entry in the context.
+        2. I'll examine the 'functions' key in the file's information.
+        3. I'll list out the main functions found.
+
+        Based on the context provided, the main functions in ast_parser.py are:
+        1. parse_python_file
+        2. extract_python_info
+        3. parse_javascript_file
+        4. extract_javascript_info
+        5. parse_java_file
+        6. extract_java_info
+        7. parse_go_file
+        8. extract_go_info
+        9. parse_cpp_file
+        10. extract_cpp_info
+        11. parse_html_file
+        12. extract_html_info
+        13. parse_sql_file
+        14. extract_sql_info
+        15. handle_non_code_file
+        16. parse_code_file
+        17. traverse_directory
+        18. parse_code_to_ast
+        19. download_repo_content
+
+        These functions seem to be responsible for parsing different types of files and extracting relevant information from them.
+
+        Example 2:
+        Human: How does the chatbot handle user queries?
+        AI: To answer this question, I'll analyze the relevant files in the context, particularly focusing on the chatbot implementation. Here's my step-by-step reasoning:
+
+        1. I'll look for files related to the chatbot, such as 'chatbot.py' or similar.
+        2. I'll examine the functions and classes defined in these files.
+        3. I'll trace the flow of how a user query is processed.
+
+        Based on the context provided, here's how the chatbot handles user queries:
+
+        1. The chatbot uses a FastAPI endpoint '/chat' that accepts POST requests.
+        2. The endpoint expects a QueryRequest object containing the user's query and context.
+        3. It calls the `get_jamba_response` function from the langchain_integration module.
+        4. The `get_jamba_response` function does the following:
+           a. Initializes a retrieval QA system using the provided context.
+           b. Constructs a series of messages including system instructions, context, and the user's query.
+           c. Sends these messages to the AI21 Jamba model via an API call.
+           d. Extracts the response from the model.
+        5. The response is then returned to the user.
+        6. If successful, it returns a QueryResponse object with the model's response.
+        7. In case of errors, it raises an HTTPException with an appropriate error message.
+
+        This process allows the chatbot to understand the context of the repository and provide relevant answers to user queries about the codebase.
+
+        Human: Now, how can I assist you with your question about the repository?
+        """
+
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", f"You are an AI assistant specialized in analyzing GitHub repositories. Your responses should be clear, concise, and directly related to the repository content provided in the context. Here are some guidelines and examples of how to respond:\n\n{few_shot_examples}\n\nWhen answering, please follow these steps:\n1. Analyze the relevant parts of the repository context.\n2. If the information is not directly available, state that clearly.\n3. Provide a step-by-step explanation of your reasoning.\n4. Summarize your findings in a concise answer.\n5. If asked about previous responses, refer to your conversation history."),
+            ("human", "Repository context:\n{context}\n\nConversation history:\n{history}\n\nUser question: {input}"),
+            ("ai", "{response}")
+        ])
+
+        self.conversation_chain = ConversationChain(
+            llm=llm,
+            memory=self.memory,
+            prompt=prompt_template,
+            verbose=True
+        )
+
+    async def chat(self, query, context):
+        if not self.conversation_chain:
+            self.initialize_conversation_chain(context)
+
+        response = await self.conversation_chain.arun(input=query, context=json.dumps(context, indent=2))
+        return response
+
+chat_sessions = {}
 
 def get_jamba_response(query, context):
     try:
-        logging.debug(f"Initializing RetrievalQA with context: {context}")
-        retrieval_qa = initialize_retrieval_qa(context)
-        logging.info(f"Invoking with query: {query} and context: {context}")
+        logging.debug(f"Processing query: {query}")
+        logging.debug(f"Context: {json.dumps(context, indent=2)}")
 
+        # Initialize retrieval QA
+        retrieval_qa = initialize_retrieval_qa(context)
+
+        # Construct messages for AI21 model
         messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": f"Context: {context}"},
+            {"role": "system", "content": "You are a helpful assistant specialized in analyzing GitHub repositories."},
+            {"role": "user", "content": f"Repository context: {json.dumps(context, indent=2)}"},
             {"role": "user", "content": query}
         ]
 
-        logging.debug(f"Constructed messages for AI21 model: {messages}")
-
-        input_data = {
-            "model": "jamba-instruct-preview",
-            "messages": messages
-        }
-
-        logging.debug(f"Input data for AI21 model: {input_data}")
-
+        # Make API call to AI21 Jamba model
         endpoint_url = "https://api.ai21.com/studio/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {os.getenv('AI21_API_KEY')}",
             "Content-Type": "application/json"
         }
+        input_data = {
+            "model": "jamba-instruct-preview",
+            "messages": messages
+        }
         response = requests.post(endpoint_url, headers=headers, json=input_data)
         logging.debug(f"Response from AI21 model: {response.json()}")
 
         if response.status_code == 200 and 'choices' in response.json() and len(response.json()['choices']) > 0:
-            return response.json()['choices'][0]['message']['content']
+            ai21_response = response.json()['choices'][0]['message']['content']
+
+            # Use ChatSession for improved conversation
+            context_string = json.dumps(context, sort_keys=True)
+            session_id = hashlib.md5(context_string.encode()).hexdigest()
+
+            if session_id not in chat_sessions:
+                chat_sessions[session_id] = ChatSession()
+
+            chat_session = chat_sessions[session_id]
+            improved_response = chat_session.chat(query, context)
+
+            # Combine the original response with the improved response
+            final_response = f"{ai21_response}\n\nImproved Response: {improved_response}"
+            return final_response
         else:
             logging.error(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")
             raise ValueError(f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}")

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import axios from 'axios';
 
@@ -15,22 +15,7 @@ const DependencyGraph = () => {
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
-    const fetchGraphData = async () => {
-      try {
-        const response = await axios.get('http://localhost:8000/api/dependency_graph');
-        const data = response.data;
-        setGraphData(data);
-        renderGraph(data);
-      } catch (error) {
-        console.error('Error fetching graph data:', error);
-      }
-    };
-
-    fetchGraphData();
-  }, []);
-
-  const renderGraph = (data) => {
+  const renderGraph = useCallback((data) => {
     const nodes = new DataSet(data.nodes.map(node => ({
       ...node,
       shape: getNodeShape(node.type),
@@ -115,7 +100,22 @@ const DependencyGraph = () => {
     newNetwork.on('deselectNode', () => {
       resetNodeStyles(nodes, edges, newNetwork);
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    const fetchGraphData = async () => {
+      try {
+        const response = await axios.get('http://localhost:8000/api/dependency_graph');
+        const data = response.data;
+        setGraphData(data);
+        renderGraph(data);
+      } catch (error) {
+        console.error('Error fetching graph data:', error);
+      }
+    };
+
+    fetchGraphData();
+  }, [renderGraph]);
 
   const highlightConnectedNodes = (nodeId, nodes, edges, network) => {
     const connectedNodeIds = new Set();
@@ -202,7 +202,7 @@ const DependencyGraph = () => {
 
       renderGraph({ nodes: filteredNodesArray, edges: filteredEdges });
     }
-  }, [selectedNodeTypes, searchTerm, graphData]);
+  }, [selectedNodeTypes, searchTerm, graphData, renderGraph]);
 
   const handleNodeTypeToggle = (type) => {
     setSelectedNodeTypes(prev => ({ ...prev, [type]: !prev[type] }));
@@ -397,5 +397,6 @@ const legendColorStyle = {
   border: '2px solid',
   borderRadius: '4px',
 };
+
 
 export default DependencyGraph;
