@@ -1,4 +1,4 @@
-// src/components/Chatbot.jsx
+// frontend/src/components/Chatbot.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 

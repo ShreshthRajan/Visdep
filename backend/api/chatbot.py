@@ -1,3 +1,4 @@
+# dependency_extraction/backend/api/chatbot.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import logging
@@ -23,10 +24,9 @@ class QueryResponse(BaseModel):
 async def chat_with_jamba(request: QueryRequest):
     try:
         query = request.query
-        context = request.context  # Use context directly as a dictionary
+        context = request.context
         
-        # Get response from Jamba model
-        response = get_jamba_response(query, context)
+        response = await get_jamba_response(query, context)
         
         if response:
             return QueryResponse(response=response)
