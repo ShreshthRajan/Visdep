@@ -1,3 +1,4 @@
+# backend/api/langchain_integration.py
 import os
 from dotenv import load_dotenv
 import logging
@@ -39,6 +40,8 @@ from langchain.chains import create_retrieval_chain
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain.schema.runnable import RunnablePassthrough
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 from langchain.schema.runnable.history import RunnableWithMessageHistory
 from langchain.memory.chat_message_histories import ChatMessageHistory
 from langchain.schema import BaseMemory, BaseChatMessageHistory
@@ -47,7 +50,8 @@ from langchain.schema.messages import BaseMessage
 from langchain.chains import LLMChain
 from langchain.llms.base import LLM
 from langchain.callbacks.manager import CallbackManagerForLLMRun
-from typing import Any, List, Mapping, Optional
+from typing import Dict, Any, List, Mapping, Optional
+from langchain.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate
 
 # Load environment variables from .env file
 load_dotenv()
@@ -173,13 +177,15 @@ class CustomAI21ChatLLM(LLM):
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
         return {"model": self.model, "api_base": self.api_base}
-    
-chat_sessions = {} 
+
+chat_sessions = {}
 
 class ChatSession:
     def __init__(self):
         self.memory = ConversationBufferMemory(return_messages=True, memory_key="history")
         self.conversation_chain = None
+        self.vector_store = None
+        self.full_context = None
 
     async def initialize_conversation_chain(self, context):
         try:
@@ -187,40 +193,16 @@ class ChatSession:
             llm = CustomAI21ChatLLM(api_key=os.getenv("AI21_API_KEY"))
             logging.debug(f"CustomAI21ChatLLM initialized with model: {llm.model}")
             
-            few_shot_examples = """
-            Example 1:
-            Human: What are the main functions in the ast_parser.py file?
-            AI: To answer this question, I'll analyze the ast_parser.py file in the context provided. Here's my step-by-step reasoning:
+            self.full_context = context
+            self.vector_store = await self.initialize_vector_store(context)
 
-            1. First, I'll look for the 'ast_parser.py' entry in the context.
-            2. I'll examine the 'functions' key in the file's information.
-            3. I'll list out the main functions found.
-
-            Based on the context provided, the main functions in ast_parser.py are:
-            [List of functions]
-
-            These functions seem to be responsible for parsing different types of files and extracting relevant information from them.
-
-            Example 2:
-            Human: How does the chatbot handle user queries?
-            AI: To answer this question, I'll analyze the relevant files in the context, particularly focusing on the chatbot implementation. Here's my step-by-step reasoning:
-
-            1. I'll look for files related to the chatbot, such as 'chatbot.py' or similar.
-            2. I'll examine the functions and classes defined in these files.
-            3. I'll trace the flow of how a user query is processed.
-
-            Based on the context provided, here's how the chatbot handles user queries:
-            [Detailed explanation of the process]
-
-            This process allows the chatbot to understand the context of the repository and provide relevant answers to user queries about the codebase.
-            """
-
-            prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content=f"You are an AI assistant specialized in analyzing GitHub repositories. Your responses should be clear, concise, and directly related to the repository content provided in the context. Here are some examples of how to respond:\n\n{few_shot_examples}\n\nWhen answering, please follow these steps:\n1. Analyze the relevant parts of the repository context.\n2. If the information is not directly available, state that clearly.\n3. Provide a step-by-step explanation of your reasoning.\n4. Summarize your findings in a concise answer.\n5. Maintain context from previous messages in the conversation."),
-                MessagesPlaceholder(variable_name="history"),
-                HumanMessage(content="{input}"),
-                AIMessage(content="{output}")
-            ])
+            prompt = ChatPromptTemplate(
+                messages=[
+                    SystemMessagePromptTemplate.from_template(self.get_system_message()),
+                    MessagesPlaceholder(variable_name="history"),
+                    HumanMessagePromptTemplate.from_template("{input}")
+                ]
+            )
 
             self.conversation_chain = LLMChain(
                 llm=llm,
@@ -233,41 +215,108 @@ class ChatSession:
             logging.error(f"Error initializing conversation chain: {e}", exc_info=True)
             raise
 
-    async def chat(self, query, context):
+    async def initialize_vector_store(self, context):
+        documents = []
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        
+        for file_path, file_info in context.items():
+            content = f"File: {file_path}\n"
+            if isinstance(file_info, dict):
+                for key, value in file_info.items():
+                    if isinstance(value, list):
+                        content += f"{key}: {', '.join(value)}\n"
+                    else:
+                        content += f"{key}: {value}\n"
+            else:
+                content += str(file_info)
+            
+            chunks = text_splitter.split_text(content)
+            documents.extend(chunks)
+
+        embeddings = AI21Embeddings(api_key=os.getenv("AI21_API_KEY"))
+        return await FAISS.afrom_texts(documents, embeddings)
+
+    def get_system_message(self):
+        return """You are an AI assistant specialized in analyzing GitHub repositories. Your task is to provide clear, concise, and accurate information about the repository's content and structure. When answering:
+1. Always base your responses on the repository context provided.
+2. Be confident and affirmative in your responses. Your tone should be a 10 year veteran L6 engineering manager. 
+3. Provide step-by-step reasoning for complex queries.
+4. If asked about a specific file, function, or feature, focus on that in your response.
+5. If the information is not directly available, say so and provide the most relevant information you can find or make an educated guess based on the context.
+6. Maintain context from previous messages in the conversation.
+7. Infer the purpose and functionality of code based on file names, functions, and imports. Do not state how you deduce your inference. 
+8. Provide code snippets or examples when relevant.
+9. Consider the overall structure of the repository, including directories and file organization.
+10. If asked about dependencies or requirements, look for relevant files like requirements.txt or package.json.
+11. When discussing the purpose of the repository, review the entire codebase and the readme.md file and provide a concise, specific outline of the codebase. 
+"""
+
+    def get_relevant_context(self, query: str) -> str:
+        relevant_docs = self.vector_store.similarity_search(query, k=5)
+        return "\n".join([doc.page_content for doc in relevant_docs])
+
+    def get_full_context_summary(self) -> str:
+        summary = "Repository Overview:\n"
+        for file_path, file_info in self.full_context.items():
+            summary += f"- {file_path}\n"
+            if isinstance(file_info, dict):
+                if 'type' in file_info:
+                    summary += f"  Type: {file_info['type']}\n"
+                if 'functions' in file_info:
+                    summary += f"  Functions: {', '.join(file_info['functions'])}\n"
+                if 'classes' in file_info:
+                    summary += f"  Classes: {', '.join(file_info['classes'])}\n"
+        return summary
+
+    async def chat(self, query: str) -> str:
         try:
             logging.debug(f"Entering ChatSession.chat with query: {query}")
             
             if not self.conversation_chain:
-                logging.debug("Initializing conversation chain")
-                await self.initialize_conversation_chain(context)
+                raise ValueError("Conversation chain not initialized. Please call initialize_conversation_chain first.")
             
+            full_context_summary = self.get_full_context_summary()
+            relevant_context = self.get_relevant_context(query)
+           
+            input_text = f"""Full Repository Context:
+{full_context_summary}
+
+Relevant Information:
+{relevant_context}
+
+User question: {query}
+
+Please follow these steps in your response:
+1. Analyze the question and identify the key points to address.
+2. Review the relevant information and full context summary.
+3. Break down your reasoning process step-by-step.
+4. Specifically review the files being discussed and gain an intuition for the purpose of the code in context of the codebase
+5. Provide a clear and concise answer based on your analysis. Do not state the steps for your process, and provide a contextual answer. 
+6. Answer only the question being asked. 
+"""
+
             logging.debug("Running conversation chain")
-            response = await self.conversation_chain.ainvoke({"input": f"Repository context:\n{json.dumps(context, indent=2)}\n\nUser question: {query}"})
-            
-            logging.debug(f"Chat response: {response}")
+            response = await self.conversation_chain.ainvoke({"input": input_text})
+            logging.debug(f"Raw chat response: {response}")
             return response['text']
         except Exception as e:
             logging.error(f"Error in ChatSession.chat: {e}", exc_info=True)
             raise
 
-async def get_jamba_response(query, context):
+async def get_jamba_response(query: str, context: Dict[str, Any]) -> str:
     try:
         logging.debug(f"Entering get_jamba_response with query: {query}")
         logging.debug(f"API Key: {os.getenv('AI21_API_KEY')[:5]}...")
 
-        # Initialize retrieval QA
-        retrieval_qa = await initialize_retrieval_qa(context)
-        logging.debug("Retrieval QA initialized successfully")
-
-        # Use ChatSession for conversation
         context_string = json.dumps(context, sort_keys=True)
         session_id = hashlib.md5(context_string.encode()).hexdigest()
 
         if session_id not in chat_sessions:
             chat_sessions[session_id] = ChatSession()
+            await chat_sessions[session_id].initialize_conversation_chain(context)
 
         chat_session = chat_sessions[session_id]
-        response = await chat_session.chat(query, context)
+        response = await chat_session.chat(query)
         logging.debug(f"Final response: {response}")
 
         return response
