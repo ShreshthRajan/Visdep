@@ -20,18 +20,27 @@ const Home = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-white">
-      <h1 className="text-5xl font-bold mb-8">Visdep</h1>
-      <input
-        type="text"
-        value={repoUrl}
-        onChange={(e) => setRepoUrl(e.target.value)}
-        placeholder="Enter GitHub repository URL"
-        className="w-1/3 p-2 border border-gray-300 rounded mb-4"
-      />
-      <button onClick={handleUpload} className="bg-blue-600 text-white p-2 rounded">Upload Repository</button>
-      <p className="mt-4 text-center text-gray-500">{message}</p>
-      <p className="absolute bottom-5 left-5 text-gray-500">Visdep is a tool to visualize and interact with the dependencies in your codebase.</p>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
+      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h1 className="text-4xl font-bold mb-6 text-center text-blue-600">Visdep</h1>
+        <input
+          type="text"
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+          placeholder="Enter GitHub repository URL"
+          className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button 
+          onClick={handleUpload} 
+          className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200"
+        >
+          Upload Repository
+        </button>
+        {message && <p className="mt-4 text-center text-red-500">{message}</p>}
+      </div>
+      <p className="mt-8 text-center text-gray-600">
+        Visdep is a tool to visualize and interact with the dependencies in your codebase.
+      </p>
     </div>
   );
 };

@@ -232,10 +232,10 @@ const DependencyGraph = () => {
 
   const getNodeSize = (type) => {
     switch (type) {
-      case 'directory': return 50;
-      case 'file': return 50;
-      case 'import': return 20;
-      case 'package': return 20;
+      case 'directory': return 40;
+      case 'file': return 35;
+      case 'import': return 25;
+      case 'package': return 30;
       default: return 30;
     }
   };
@@ -329,11 +329,11 @@ const DependencyGraph = () => {
 }
 
 const nodeTypes = {
-  directory: { border: '#FF4500', background: '#FFA07A' },
-  file: { border: '#4169E1', background: '#87CEFA' },
-  import: { border: '#32CD32', background: '#90EE90' },
-  package: { border: '#FFD700', background: '#FFFACD' },
-  default: { border: '#A9A9A9', background: '#D3D3D3' },
+  directory: { border: '#FF6347', background: '#FFA07A' },
+  file: { border: '#4682B4', background: '#87CEFA' },
+  import: { border: '#228B22', background: '#90EE90' },
+  package: { border: '#DAA520', background: '#F0E68C' },
+  default: { border: '#708090', background: '#D3D3D3' },
 };
 
 const smallButtonStyle = {
@@ -367,8 +367,9 @@ const legendStyle = (isMinimized) => ({
   boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
   cursor: 'pointer',
   width: isMinimized ? 'auto' : '150px',
-  fontSize: '0.875rem' // Adjusted for a smaller legend
+  fontSize: '0.875rem'
 });
+
 
 const legendHeaderStyle = {
   display: 'flex',
