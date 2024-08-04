@@ -1,22 +1,29 @@
-// frontend/src/pages/Home.jsx
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
-
 const Home = () => {
   const [repoUrl, setRepoUrl] = useState('');
   const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleUpload = async () => {
     try {
+      setIsLoading(true);
       const response = await axios.post('http://localhost:8000/api/upload_repo', { repo_url: repoUrl });
       setMessage(response.data.message);
+      setIsLoading(false);
       navigate('/graph-chat');
     } catch (error) {
       setMessage('Error uploading repository');
+      setIsLoading(false);
     }
+  };
+
+  const getRepoName = (url) => {
+    const parts = url.split('/');
+    return parts[parts.length - 1] || parts[parts.length - 2] || 'repository';
   };
 
   return (
@@ -33,8 +40,9 @@ const Home = () => {
         <button 
           onClick={handleUpload} 
           className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200"
+          disabled={isLoading}
         >
-          Upload Repository
+          {isLoading ? `Loading ${getRepoName(repoUrl)}...` : 'Upload Repository'}
         </button>
         {message && <p className="mt-4 text-center text-red-500">{message}</p>}
       </div>
