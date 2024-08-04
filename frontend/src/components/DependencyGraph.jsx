@@ -1,3 +1,4 @@
+// frontend/src/components/DependencyGraph.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import axios from 'axios';
@@ -294,10 +295,10 @@ const DependencyGraph = () => {
           <i className="fas fa-expand-arrows-alt"></i>
         </button>
         <button onClick={handleZoomIn} style={smallButtonStyle} title="Zoom In">
-          <i className="fas fa-search-plus"></i>
+          <i className="fas fa-search-plus">+</i>
         </button>
         <button onClick={handleZoomOut} style={smallButtonStyle} title="Zoom Out">
-          <i className="fas fa-search-minus"></i>
+          <i className="fas fa-search-minus">-</i>
         </button>
       </div>
       <div style={legendStyle(isLegendMinimized)}>
@@ -343,7 +344,7 @@ const smallButtonStyle = {
   border: 'none',
   borderRadius: '4px',
   cursor: 'pointer',
-  fontSize: '14px',
+  fontSize: '0.875rem', // Adjusted for smaller buttons
 };
 
 const searchInputStyle = {
@@ -359,13 +360,14 @@ const legendStyle = (isMinimized) => ({
   top: 20,
   right: 20,
   background: 'white',
-  padding: '15px',
+  padding: '10px',
   border: '1px solid #ccc',
   borderRadius: '4px',
   zIndex: 1000,
   boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
   cursor: 'pointer',
-  width: isMinimized ? 'auto' : '200px',
+  width: isMinimized ? 'auto' : '150px',
+  fontSize: '0.875rem' // Adjusted for a smaller legend
 });
 
 const legendHeaderStyle = {
