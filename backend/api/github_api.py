@@ -1,4 +1,4 @@
-# dependency_extraction/backend/api/github_api.py
+# dependency_extraction/
 import requests
 from requests.auth import HTTPBasicAuth
 import base64
