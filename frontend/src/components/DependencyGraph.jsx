@@ -1,4 +1,3 @@
-// frontend/src/components/DependencyGraph.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import axios from 'axios';
@@ -17,18 +16,23 @@ const DependencyGraph = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   const renderGraph = useCallback((data) => {
-    const nodes = new DataSet(data.nodes.map(node => ({
+    const filteredNodes = data.nodes.filter(node => selectedNodeTypes[node.type]);
+    const nodes = new DataSet(filteredNodes.map(node => ({
       ...node,
       shape: getNodeShape(node.type),
       color: getNodeColor(node.type),
-      font: { size: 14, face: 'Arial', color: '#000000', multi: true },
-      size: getNodeSize(node.type),
+      font: { size: 12, face: 'Arial', color: '#000000', multi: true },
+      size: getNodeSize(node),
+      label: getNodeLabel(node),
       title: getNodeTooltip(node),
-      widthConstraint: { minimum: 100, maximum: 200 },
-      heightConstraint: { minimum: 50 },
     })));
 
-    const edges = new DataSet(data.edges.map(edge => ({
+    const filteredEdges = data.edges.filter(edge => {
+      const fromNode = filteredNodes.find(node => node.id === edge.source);
+      const toNode = filteredNodes.find(node => node.id === edge.target);
+      return fromNode && toNode;
+    });
+    const edges = new DataSet(filteredEdges.map(edge => ({
       from: edge.source,
       to: edge.target,
       arrows: edge.relation === 'imports' ? 'to' : '',
@@ -70,9 +74,17 @@ const DependencyGraph = () => {
       nodes: {
         scaling: {
           min: 20,
-          max: 60,
+          max: 150,
         },
-        margin: 20,
+        margin: 10,
+        widthConstraint: {
+          minimum: 50,
+          maximum: 200
+        },
+        heightConstraint: {
+          minimum: 50,
+          valign: 'center'
+        }
       },
       edges: {
         smooth: {
@@ -101,7 +113,7 @@ const DependencyGraph = () => {
     newNetwork.on('deselectNode', () => {
       resetNodeStyles(nodes, edges, newNetwork);
     });
-  }, []);
+  }, [selectedNodeTypes]);
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -170,6 +182,13 @@ const DependencyGraph = () => {
             addNodeAndRelated(node.id);
           }
         });
+
+        graphData.edges.forEach(edge => {
+          const sourceNode = graphData.nodes.find(node => node.id === edge.source);
+          if (sourceNode && sourceNode.label.toLowerCase().includes(searchTerm.toLowerCase())) {
+            addNodeAndRelated(edge.target);
+          }
+        });
       } else {
         graphData.nodes.forEach(node => addNodeAndRelated(node.id));
       }
@@ -224,20 +243,17 @@ const DependencyGraph = () => {
   };
   
   const getNodeColor = (type) => {
-    if (type === 'import') {
-      return { border: '#32CD32', background: '#90EE90' };
-    }
     return nodeTypes[type] || nodeTypes.default;
   };
 
-  const getNodeSize = (type) => {
-    switch (type) {
-      case 'directory': return 40;
-      case 'file': return 35;
-      case 'import': return 25;
-      case 'package': return 30;
-      default: return 30;
-    }
+  const getNodeSize = (node) => {
+    const baseSize = 30;
+    const textLength = node.label.length;
+    return Math.max(baseSize, Math.min(textLength * 5, 150));
+  };
+
+  const getNodeLabel = (node) => {
+    return `${node.label}\n${node.type}`;
   };
 
   const getNodeTooltip = (node) => {
@@ -281,125 +297,83 @@ const DependencyGraph = () => {
   };
 
   return (
-    <div style={{ height: '100%', width: '100%', position: 'relative' }}>
-      <div ref={networkRef} style={{ height: '100%', width: '100%' }} />
-      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1000 }}>
-        <input
-          type="text"
-          placeholder="Search nodes..."
-          value={searchTerm}
-          onChange={handleSearch}
-          style={searchInputStyle}
-        />
-        <button onClick={handleFitGraph} style={smallButtonStyle} title="Fit Graph">
-          <i className="fas fa-expand-arrows-alt"></i>
-        </button>
-        <button onClick={handleZoomIn} style={smallButtonStyle} title="Zoom In">
-          <i className="fas fa-search-plus">+</i>
-        </button>
-        <button onClick={handleZoomOut} style={smallButtonStyle} title="Zoom Out">
-          <i className="fas fa-search-minus">-</i>
-        </button>
-      </div>
-      <div style={legendStyle(isLegendMinimized)}>
-        <div style={legendHeaderStyle}>
-          <h3 style={{ margin: 0, fontSize: '16px' }}>Legend</h3>
-          <button onClick={toggleLegend} style={minimizeButtonStyle}>
-            {isLegendMinimized ? '+' : '-'}
+    <div className="h-full flex flex-col relative">
+      <div className="flex justify-between items-center p-4 bg-gray-100 border-b">
+        <div className="flex items-center flex-grow mr-4">
+          <input
+            type="text"
+            placeholder="Search nodes..."
+            value={searchTerm}
+            onChange={handleSearch}
+            className="w-full px-4 py-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button onClick={handleSearch} className="px-4 py-2 bg-indigo-600 text-white rounded-r hover:bg-indigo-700 transition-colors">
+            Search
           </button>
         </div>
-        {!isLegendMinimized && (
-          <div>
-            {Object.entries(nodeTypes).map(([type, color]) => (
-              <div key={type} style={legendItemStyle} onClick={() => handleNodeTypeToggle(type)}>
-                <span style={{
-                  ...legendColorStyle,
-                  backgroundColor: color.background,
-                  borderColor: color.border,
-                  opacity: selectedNodeTypes[type] ? 1 : 0.5,
-                }}></span>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="flex">
+          <button onClick={handleFitGraph} className="p-2 bg-gray-200 rounded-l hover:bg-gray-300 transition-colors" title="Fit Graph">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+          <button onClick={handleZoomIn} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Zoom In">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+            </svg>
+          </button>
+          <button onClick={handleZoomOut} className="p-2 bg-gray-200 rounded-r hover:bg-gray-300 transition-colors" title="Zoom Out">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 relative">
+        <div ref={networkRef} className="absolute inset-0" />
+        <div className={`absolute bottom-4 right-4 bg-white rounded-lg shadow-md transition-all ${isLegendMinimized ? 'w-8 h-8' : 'w-40'}`}>
+          <button 
+            onClick={toggleLegend} 
+            className="absolute top-1 right-1 text-gray-500 hover:text-gray-700"
+            title={isLegendMinimized ? "Expand Legend" : "Minimize Legend"}
+          >
+            {isLegendMinimized ? (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+          </button>
+          {!isLegendMinimized && (
+            <div className="p-2 pt-6">
+              {Object.entries(nodeTypes).map(([type, color]) => (
+                <div key={type} className="flex items-center mb-1 cursor-pointer" onClick={() => handleNodeTypeToggle(type)}>
+                  <span
+                    className={`w-3 h-3 rounded-full mr-2 ${selectedNodeTypes[type] ? 'opacity-100' : 'opacity-50'}`}
+                    style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1 }}
+                    />
+                  <span className={`text-xs ${selectedNodeTypes[type] ? 'text-gray-800' : 'text-gray-500'}`}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 const nodeTypes = {
-  directory: { border: '#FF6347', background: '#FFA07A' },
-  file: { border: '#4682B4', background: '#87CEFA' },
-  import: { border: '#228B22', background: '#90EE90' },
-  package: { border: '#DAA520', background: '#F0E68C' },
-  default: { border: '#708090', background: '#D3D3D3' },
+  directory: { border: '#34495e', background: '#ecf0f1' },
+  file: { border: '#2980b9', background: '#e0f7fa' },
+  import: { border: '#27ae60', background: '#e9f7ef' },
+  package: { border: '#f39c12', background: '#fef5e7' },
+  default: { border: '#95a5a6', background: '#f4f6f6' },
 };
-
-const smallButtonStyle = {
-  margin: '0 5px 0 0',
-  padding: '5px 10px',
-  backgroundColor: '#4CAF50',
-  color: 'white',
-  border: 'none',
-  borderRadius: '4px',
-  cursor: 'pointer',
-  fontSize: '0.875rem', // Adjusted for smaller buttons
-};
-
-const searchInputStyle = {
-  padding: '5px 10px',
-  marginRight: '10px',
-  borderRadius: '4px',
-  border: '1px solid #ccc',
-  fontSize: '14px',
-};
-
-const legendStyle = (isMinimized) => ({
-  position: 'absolute',
-  top: 20,
-  right: 20,
-  background: 'white',
-  padding: '10px',
-  border: '1px solid #ccc',
-  borderRadius: '4px',
-  zIndex: 1000,
-  boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
-  cursor: 'pointer',
-  width: isMinimized ? 'auto' : '150px',
-  fontSize: '0.875rem'
-});
-
-
-const legendHeaderStyle = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: '10px',
-};
-
-const minimizeButtonStyle = {
-  background: 'none',
-  border: 'none',
-  fontSize: '18px',
-  cursor: 'pointer',
-  padding: '0 5px',
-};
-
-const legendItemStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  margin: '8px 0',
-  fontSize: '14px',
-};
-
-const legendColorStyle = {
-  width: '20px',
-  height: '20px',
-  marginRight: '10px',
-  border: '2px solid',
-  borderRadius: '4px',
-};
-
 
 export default DependencyGraph;
