@@ -12,6 +12,7 @@ from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import create_dependency_graph, save_graph_as_json, load_graph_from_json
 from networkx.readwrite import json_graph
 from dotenv import load_dotenv
+from typing import Optional
 import logging
 
 # Load environment variables from .env file
@@ -36,6 +37,7 @@ if not os.getenv("GITHUB_AUTH_TOKEN"):
 
 class RepoLink(BaseModel):
     repo_url: str
+    sub_directory: Optional[str] = None
 
 class QueryRequest(BaseModel):
     query: str
@@ -53,11 +55,12 @@ def store_parsed_data(parsed_data):
 async def upload_repo(link: RepoLink):
     try:
         repo_url = link.repo_url
+        sub_directory = link.sub_directory
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
         
         # Fetch repository content and metadata
         logging.debug(f"Fetching content for repo: {repo_url}")
-        repo_content = fetch_repo_content(repo_url, auth_token)
+        repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
         logging.debug(f"Fetched repo content: {repo_content}")
         
         repo_metadata = fetch_repo_metadata(repo_url, auth_token)

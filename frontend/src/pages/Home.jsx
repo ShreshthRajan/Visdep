@@ -4,6 +4,7 @@ import axios from 'axios';
 
 const Home = () => {
   const [repoUrl, setRepoUrl] = useState('');
+  const [subDirectory, setSubDirectory] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -12,7 +13,10 @@ const Home = () => {
     if (!repoUrl.trim()) return;
     try {
       setIsLoading(true);
-      const response = await axios.post('http://localhost:8000/api/upload_repo', { repo_url: repoUrl });
+      const response = await axios.post('http://localhost:8000/api/upload_repo', {
+        repo_url: repoUrl,
+        sub_directory: subDirectory.trim() || undefined
+      });
       setMessage(response.data.message);
       setTimeout(() => navigate('/graph-chat'), 2000);
     } catch (error) {
@@ -26,6 +30,14 @@ const Home = () => {
     return parts[parts.length - 1] || parts[parts.length - 2] || 'repository';
   };
 
+  const getLoadingMessage = () => {
+    const repoName = getRepoName(repoUrl);
+    if (subDirectory) {
+      return `Loading ${subDirectory} from ${repoName}...`;
+    }
+    return `Loading ${repoName}...`;
+  };
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 font-sans">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
@@ -33,7 +45,7 @@ const Home = () => {
         {isLoading ? (
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-700 mx-auto mb-4"></div>
-            <p className="text-indigo-700 font-medium">Loading {getRepoName(repoUrl)}...</p>
+            <p className="text-indigo-700 font-medium">{getLoadingMessage()}</p>
           </div>
         ) : (
           <>
@@ -42,6 +54,13 @@ const Home = () => {
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
               placeholder="Enter GitHub repository URL"
+              className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <input
+              type="text"
+              value={subDirectory}
+              onChange={(e) => setSubDirectory(e.target.value)}
+              placeholder="Enter subdirectory (optional)"
               className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <button 
