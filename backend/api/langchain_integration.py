@@ -1,4 +1,3 @@
-# dependency_extraction/backend/api/langchain_integration.py (new)
 import os
 from dotenv import load_dotenv
 import logging
@@ -6,12 +5,14 @@ import requests
 import json
 import hashlib
 import asyncio
+from typing import List
 
 # Adjust the import path for data_storage
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.ast_parser import parse_code_to_ast
-import hashlib
+from langchain.prompts import MessagesPlaceholder
+
 
 # Initialize the database
 initialize_database()
@@ -39,9 +40,14 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.runnable.history import RunnableWithMessageHistory
-from langchain.schema.messages import HumanMessage, AIMessage
 from langchain.memory.chat_message_histories import ChatMessageHistory
-
+from langchain.schema import BaseMemory, BaseChatMessageHistory
+from langchain.schema.messages import AIMessage, HumanMessage
+from langchain.schema.messages import BaseMessage
+from langchain.chains import LLMChain
+from langchain.llms.base import LLM
+from langchain.callbacks.manager import CallbackManagerForLLMRun
+from typing import Any, List, Mapping, Optional
 
 # Load environment variables from .env file
 load_dotenv()
@@ -120,18 +126,66 @@ async def initialize_retrieval_qa(context):
     
     return retrieval_qa
 
+# class AsyncConversationBufferMemory(BaseMemory):
+#     chat_memory: ChatMessageHistory = ChatMessageHistory()
+#     return_messages: bool = True
+#     memory_key: str = "history"
+
+#     @property
+#     def memory_variables(self) -> List[str]:
+#         return [self.memory_key]
+
+#     async def load_memory_variables(self, inputs: dict) -> dict:
+#         return {self.memory_key: self.chat_memory.messages}
+
+#     async def save_context(self, inputs: dict, outputs: dict) -> None:
+#         self.chat_memory.add_user_message(inputs["input"])
+#         self.chat_memory.add_ai_message(outputs["output"])
+
+#     async def clear(self) -> None:
+#         self.chat_memory.clear()
+
+#     def get_messages(self) -> List[BaseMessage]:
+#         return self.chat_memory.messages
+
+class CustomAI21ChatLLM(LLM):
+    model: str = "jamba-instruct-preview"
+    api_key: str
+    api_base: str = "https://api.ai21.com/studio/v1/chat/completions"
+
+    def _call(self, prompt: str, stop: Optional[List[str]] = None, run_manager: Optional[CallbackManagerForLLMRun] = None, **kwargs: Any) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        response = requests.post(self.api_base, headers=headers, json=data)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+
+    @property
+    def _llm_type(self) -> str:
+        return "custom_ai21_chat"
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        return {"model": self.model, "api_base": self.api_base}
+    
+chat_sessions = {} 
+
 class ChatSession:
     def __init__(self):
-        self.memory = ConversationBufferMemory(
-            return_messages=True,
-            memory_key="history",
-            chat_memory=ChatMessageHistory()
-        )
+        self.memory = ConversationBufferMemory(return_messages=True, memory_key="history")
         self.conversation_chain = None
 
     async def initialize_conversation_chain(self, context):
         try:
-            llm = AI21LLM(model="jamba-instruct-preview")
+            logging.debug("Initializing CustomAI21ChatLLM")
+            llm = CustomAI21ChatLLM(api_key=os.getenv("AI21_API_KEY"))
+            logging.debug(f"CustomAI21ChatLLM initialized with model: {llm.model}")
             
             few_shot_examples = """
             Example 1:
@@ -143,25 +197,7 @@ class ChatSession:
             3. I'll list out the main functions found.
 
             Based on the context provided, the main functions in ast_parser.py are:
-            1. parse_python_file
-            2. extract_python_info
-            3. parse_javascript_file
-            4. extract_javascript_info
-            5. parse_java_file
-            6. extract_java_info
-            7. parse_go_file
-            8. extract_go_info
-            9. parse_cpp_file
-            10. extract_cpp_info
-            11. parse_html_file
-            12. extract_html_info
-            13. parse_sql_file
-            14. extract_sql_info
-            15. handle_non_code_file
-            16. parse_code_file
-            17. traverse_directory
-            18. parse_code_to_ast
-            19. download_repo_content
+            [List of functions]
 
             These functions seem to be responsible for parsing different types of files and extracting relevant information from them.
 
@@ -174,126 +210,67 @@ class ChatSession:
             3. I'll trace the flow of how a user query is processed.
 
             Based on the context provided, here's how the chatbot handles user queries:
-
-            1. The chatbot uses a FastAPI endpoint '/chat' that accepts POST requests.
-            2. The endpoint expects a QueryRequest object containing the user's query and context.
-            3. It calls the `get_jamba_response` function from the langchain_integration module.
-            4. The `get_jamba_response` function does the following:
-            a. Initializes a retrieval QA system using the provided context.
-            b. Constructs a series of messages including system instructions, context, and the user's query.
-            c. Sends these messages to the AI21 Jamba model via an API call.
-            d. Extracts the response from the model.
-            5. The response is then returned to the user.
-            6. If successful, it returns a QueryResponse object with the model's response.
-            7. In case of errors, it raises an HTTPException with an appropriate error message.
+            [Detailed explanation of the process]
 
             This process allows the chatbot to understand the context of the repository and provide relevant answers to user queries about the codebase.
-
-            Human: Now, how can I assist you with your question about the repository?
             """
 
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"You are an AI assistant specialized in analyzing GitHub repositories. Your responses should be clear, concise, and directly related to the repository content provided in the context. Here are some guidelines and examples of how to respond:\n\n{few_shot_examples}\n\nWhen answering, please follow these steps:\n1. Analyze the relevant parts of the repository context.\n2. If the information is not directly available, state that clearly.\n3. Provide a step-by-step explanation of your reasoning.\n4. Summarize your findings in a concise answer.\n5. If asked about previous responses, refer to your conversation history."),
-                ("human", "{input}"),
+                SystemMessage(content=f"You are an AI assistant specialized in analyzing GitHub repositories. Your responses should be clear, concise, and directly related to the repository content provided in the context. Here are some examples of how to respond:\n\n{few_shot_examples}\n\nWhen answering, please follow these steps:\n1. Analyze the relevant parts of the repository context.\n2. If the information is not directly available, state that clearly.\n3. Provide a step-by-step explanation of your reasoning.\n4. Summarize your findings in a concise answer.\n5. Maintain context from previous messages in the conversation."),
+                MessagesPlaceholder(variable_name="history"),
+                HumanMessage(content="{input}"),
+                AIMessage(content="{output}")
             ])
 
-            chain = RunnablePassthrough.assign(
-                response=prompt | llm
-            )
-
-            self.conversation_chain = RunnableWithMessageHistory(
-                chain,
-                lambda session_id: self.memory,
-                input_messages_key="input",
-                history_messages_key="history",
+            self.conversation_chain = LLMChain(
+                llm=llm,
+                prompt=prompt,
+                memory=self.memory,
+                verbose=True
             )
             logging.debug("Conversation chain initialized successfully")
         except Exception as e:
-            logging.error(f"Error initializing conversation chain: {e}")
+            logging.error(f"Error initializing conversation chain: {e}", exc_info=True)
             raise
 
     async def chat(self, query, context):
         try:
+            logging.debug(f"Entering ChatSession.chat with query: {query}")
+            
             if not self.conversation_chain:
+                logging.debug("Initializing conversation chain")
                 await self.initialize_conversation_chain(context)
-
-            session_id = hashlib.md5(json.dumps(context, sort_keys=True).encode()).hexdigest()
-            response = await self.conversation_chain.ainvoke(
-                {
-                    "input": f"Repository context:\n{json.dumps(context, indent=2)}\n\nUser question: {query}",
-                },
-                config={"configurable": {"session_id": session_id}}
-            )
+            
+            logging.debug("Running conversation chain")
+            response = await self.conversation_chain.ainvoke({"input": f"Repository context:\n{json.dumps(context, indent=2)}\n\nUser question: {query}"})
+            
             logging.debug(f"Chat response: {response}")
-            return response['response']
+            return response['text']
         except Exception as e:
-            logging.error(f"Error in ChatSession.chat: {e}")
+            logging.error(f"Error in ChatSession.chat: {e}", exc_info=True)
             raise
-
-chat_sessions = {}
 
 async def get_jamba_response(query, context):
     try:
-        logging.debug(f"Processing query: {query}")
-        logging.debug(f"Context: {json.dumps(context, indent=2)}")
+        logging.debug(f"Entering get_jamba_response with query: {query}")
+        logging.debug(f"API Key: {os.getenv('AI21_API_KEY')[:5]}...")
 
-        # Initialize retrieval QA (now awaited)
-        try:
-            retrieval_qa = await initialize_retrieval_qa(context)
-            logging.debug("Retrieval QA initialized successfully")
-        except Exception as e:
-            logging.error(f"Error initializing retrieval QA: {e}")
-            raise
+        # Initialize retrieval QA
+        retrieval_qa = await initialize_retrieval_qa(context)
+        logging.debug("Retrieval QA initialized successfully")
 
-        # Construct messages for AI21 model
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant specialized in analyzing GitHub repositories."},
-            {"role": "user", "content": f"Repository context: {json.dumps(context, indent=2)}"},
-            {"role": "user", "content": query}
-        ]
+        # Use ChatSession for conversation
+        context_string = json.dumps(context, sort_keys=True)
+        session_id = hashlib.md5(context_string.encode()).hexdigest()
 
-        # Make API call to AI21 Jamba model
-        try:
-            endpoint_url = "https://api.ai21.com/studio/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {os.getenv('AI21_API_KEY')}",
-                "Content-Type": "application/json"
-            }
-            input_data = {
-                "model": "jamba-instruct-preview",
-                "messages": messages
-            }
-            response = await asyncio.to_thread(requests.post, endpoint_url, headers=headers, json=input_data)
-            logging.debug(f"Response from AI21 model: {response.json()}")
-        except Exception as e:
-            logging.error(f"Error making API call to AI21 model: {e}")
-            raise
+        if session_id not in chat_sessions:
+            chat_sessions[session_id] = ChatSession()
 
-        if response.status_code == 200 and 'choices' in response.json() and len(response.json()['choices']) > 0:
-            ai21_response = response.json()['choices'][0]['message']['content']
+        chat_session = chat_sessions[session_id]
+        response = await chat_session.chat(query, context)
+        logging.debug(f"Final response: {response}")
 
-            # Use ChatSession for improved conversation
-            try:
-                context_string = json.dumps(context, sort_keys=True)
-                session_id = hashlib.md5(context_string.encode()).hexdigest()
-
-                if session_id not in chat_sessions:
-                    chat_sessions[session_id] = ChatSession()
-
-                chat_session = chat_sessions[session_id]
-                improved_response = await chat_session.chat(query, context)
-                logging.debug(f"Improved response: {improved_response}")
-            except Exception as e:
-                logging.error(f"Error in ChatSession processing: {e}")
-                raise
-
-            # Combine the responses without prefixes
-            final_response = f"{ai21_response}\n\n{improved_response}"
-            return final_response
-        else:
-            error_msg = f"No valid response received from the model. Status code: {response.status_code}, Response: {response.text}"
-            logging.error(error_msg)
-            raise ValueError(error_msg)
+        return response
     except Exception as e:
         logging.error(f"Error in get_jamba_response: {e}")
         raise
