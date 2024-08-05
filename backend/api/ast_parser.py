@@ -6,6 +6,9 @@ from typing import Dict, Any
 from bs4 import BeautifulSoup  # For HTML parsing
 import clang.cindex  # For C/C++ parsing
 import tempfile
+import re
+import javalang
+import esprima
 
 # Python AST Parsing
 def parse_python_file(file_path: str) -> ast.AST:
@@ -37,42 +40,83 @@ def extract_python_info(tree: ast.AST) -> Dict[str, Any]:
 
 # JavaScript AST Parsing (using esprima)
 def parse_javascript_file(file_path: str) -> Dict:
-    result = subprocess.run(['esprima', '-t', file_path], capture_output=True, text=True)
-    return result.stdout
+    with open(file_path, 'r') as file:
+        content = file.read()
+    return esprima.parseModule(content, {'jsx': True, 'tokens': True})
 
-def extract_javascript_info(parsed_data: str) -> Dict[str, Any]:
-    # Implement extraction logic for JavaScript
-    return {
+def extract_javascript_info(parsed_data: esprima.nodes.Module) -> Dict[str, Any]:
+    info = {
         "functions": [],
         "classes": [],
         "imports": []
     }
+    
+    for node in parsed_data.body:
+        if isinstance(node, esprima.nodes.FunctionDeclaration):
+            info["functions"].append(node.id.name)
+        elif isinstance(node, esprima.nodes.ClassDeclaration):
+            info["classes"].append(node.id.name)
+        elif isinstance(node, esprima.nodes.ImportDeclaration):
+            if node.source.value:
+                info["imports"].append(node.source.value)
+    
+    return info
 
 # Java AST Parsing (using javaparser)
 def parse_java_file(file_path: str) -> Dict:
-    result = subprocess.run(['javaparser', file_path], capture_output=True, text=True)
-    return result.stdout
+    with open(file_path, 'r') as file:
+        content = file.read()
+    return javalang.parse.parse(content)
 
-def extract_java_info(parsed_data: str) -> Dict[str, Any]:
-    # Implement extraction logic for Java
-    return {
+def extract_java_info(parsed_data: javalang.tree.CompilationUnit) -> Dict[str, Any]:
+    info = {
         "functions": [],
         "classes": [],
         "imports": []
     }
+    
+    for path, node in parsed_data.filter(javalang.tree.MethodDeclaration):
+        info["functions"].append(node.name)
+    
+    for path, node in parsed_data.filter(javalang.tree.ClassDeclaration):
+        info["classes"].append(node.name)
+    
+    for imp in parsed_data.imports:
+        info["imports"].append(imp.path)
+    
+    return info
 
 # Go AST Parsing
 def parse_go_file(file_path: str) -> Dict:
-    result = subprocess.run(['go', 'vet', '-json', file_path], capture_output=True, text=True)
-    return result.stdout
+    with open(file_path, 'r') as file:
+        content = file.read()
+    return content
 
 def extract_go_info(parsed_data: str) -> Dict[str, Any]:
-    # Implement extraction logic for Go
-    return {
+    info = {
         "functions": [],
-        "classes": [],
         "imports": []
     }
+    
+    # Extract imports
+    import_pattern = r'import\s*\(([\s\S]*?)\)|import\s*([^\n]+)'
+    imports = re.findall(import_pattern, parsed_data)
+    
+    for imp in imports:
+        if imp[0]:  # Multi-line import
+            packages = re.findall(r'"([^"]+)"', imp[0])
+            info["imports"].extend(packages)
+        elif imp[1]:  # Single-line import
+            package = re.search(r'"([^"]+)"', imp[1])
+            if package:
+                info["imports"].append(package.group(1))
+    
+    # Extract functions (simplified, might need improvement)
+    func_pattern = r'func\s+(\w+)'
+    functions = re.findall(func_pattern, parsed_data)
+    info["functions"] = functions
+    
+    return info
 
 # C/C++ AST Parsing using clang
 def parse_cpp_file(file_path: str) -> clang.cindex.TranslationUnit:
@@ -92,8 +136,10 @@ def extract_cpp_info(tu: clang.cindex.TranslationUnit) -> Dict[str, Any]:
             info["functions"].append(node.spelling)
         elif node.kind == clang.cindex.CursorKind.CLASS_DECL:
             info["classes"].append(node.spelling)
-        elif node.kind == clang.cindex.CursorKind.INCLUDE_DIRECTIVE:
-            info["imports"].append(node.spelling)
+        elif node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
+            included_file = node.get_included_file()
+            if included_file:
+                info["imports"].append(included_file.name)
 
     return info
 
@@ -132,27 +178,27 @@ def handle_non_code_file(file_path: str) -> Dict[str, Any]:
 
 # Generic file parser
 def parse_code_file(file_path: str) -> Dict[str, Any]:
-    file_extension = file_path.split('.')[-1]
+    file_extension = os.path.splitext(file_path)[1].lower()
     try:
-        if file_extension == 'py':
+        if file_extension == '.py':
             tree = parse_python_file(file_path)
             return extract_python_info(tree)
-        elif file_extension in ['js', 'jsx']:
+        elif file_extension in ['.js', '.jsx', '.ts', '.tsx']:
             parsed_data = parse_javascript_file(file_path)
             return extract_javascript_info(parsed_data)
-        elif file_extension == 'java':
+        elif file_extension == '.java':
             parsed_data = parse_java_file(file_path)
             return extract_java_info(parsed_data)
-        elif file_extension == 'go':
+        elif file_extension == '.go':
             parsed_data = parse_go_file(file_path)
             return extract_go_info(parsed_data)
-        elif file_extension in ['c', 'cpp', 'h', 'hpp']:
+        elif file_extension in ['.c', '.cpp', '.h', '.hpp']:
             tu = parse_cpp_file(file_path)
             return extract_cpp_info(tu)
-        elif file_extension == 'html':
+        elif file_extension == '.html':
             soup = parse_html_file(file_path)
             return extract_html_info(soup)
-        elif file_extension == 'sql':
+        elif file_extension == '.sql':
             sql_content = parse_sql_file(file_path)
             return extract_sql_info(sql_content)
         else:

@@ -35,34 +35,19 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
         file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(functions)}\nClasses: {', '.join(classes)}"
         G.add_node(file_path, type="file", label=file_label, shape="ellipse")
 
+        file_extension = os.path.splitext(file_path)[1].lower()
+
         for imp in imports:
-            if '.' in imp:
-                module_path, method = imp.rsplit('.', 1)
-                source_file = next((file for file in files if file.endswith(module_path.replace('.', '/') + '.py')), None)
-                if source_file:
-                    # This is an import from within the project
-                    if method not in imported_methods:
-                        mid_point = f"{source_file}::{method}"
-                        G.add_node(mid_point, type="import", label=method, shape="box")
-                        G.add_edge(source_file, mid_point, relation="exports")
-                        imported_methods[method] = mid_point
-                    G.add_edge(imported_methods[method], file_path, relation="imports")
-                else:
-                    # This is a package import
-                    G.add_node(module_path, type="package", label=module_path, shape="star")
-                    G.add_edge(module_path, file_path, relation="imports", label=method)
-            elif imp in methods:
-                # This is a direct import of a method or class from another file
-                source_file = methods[imp]
-                if source_file != file_path:
-                    if imp not in imported_methods:
-                        mid_point = f"{source_file}::{imp}"
-                        G.add_node(mid_point, type="import", label=imp, shape="box")
-                        G.add_edge(source_file, mid_point, relation="exports")
-                        imported_methods[imp] = mid_point
-                    G.add_edge(imported_methods[imp], file_path, relation="imports")
+            if file_extension in ['.py', '.js', '.ts']:
+                handle_python_style_import(G, imp, file_path, files, methods, imported_methods)
+            elif file_extension in ['.java', '.kt']:
+                handle_java_style_import(G, imp, file_path)
+            elif file_extension in ['.go']:
+                handle_go_style_import(G, imp, file_path)
+            elif file_extension in ['.c', '.cpp', '.h', '.hpp']:
+                handle_c_style_import(G, imp, file_path)
             else:
-                # This is likely a built-in or unknown import
+                # Generic handling for unknown file types
                 G.add_node(imp, type="package", label=imp, shape="star")
                 G.add_edge(imp, file_path, relation="imports")
 
@@ -77,6 +62,50 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
             G.add_edge(directory, subdir, relation="contains")
 
     return G
+
+def handle_python_style_import(G, imp, file_path, files, methods, imported_methods):
+    if '.' in imp:
+        module_path, method = imp.rsplit('.', 1)
+        source_file = next((file for file in files if file.endswith(module_path.replace('.', '/') + '.py')), None)
+        if source_file:
+            # This is an import from within the project
+            if method not in imported_methods:
+                mid_point = f"{source_file}::{method}"
+                G.add_node(mid_point, type="import", label=method, shape="box")
+                G.add_edge(source_file, mid_point, relation="exports")
+                imported_methods[method] = mid_point
+            G.add_edge(imported_methods[method], file_path, relation="imports")
+        else:
+            # This is a package import
+            G.add_node(module_path, type="package", label=module_path, shape="star")
+            G.add_edge(module_path, file_path, relation="imports", label=method)
+    elif imp in methods:
+        # This is a direct import of a method or class from another file
+        source_file = methods[imp]
+        if source_file != file_path:
+            if imp not in imported_methods:
+                mid_point = f"{source_file}::{imp}"
+                G.add_node(mid_point, type="import", label=imp, shape="box")
+                G.add_edge(source_file, mid_point, relation="exports")
+                imported_methods[imp] = mid_point
+            G.add_edge(imported_methods[imp], file_path, relation="imports")
+    else:
+        # This is likely a built-in or unknown import
+        G.add_node(imp, type="package", label=imp, shape="star")
+        G.add_edge(imp, file_path, relation="imports")
+
+def handle_java_style_import(G, imp, file_path):
+    package_path = imp.rsplit('.', 1)[0]
+    G.add_node(package_path, type="package", label=package_path, shape="star")
+    G.add_edge(package_path, file_path, relation="imports")
+
+def handle_go_style_import(G, imp, file_path):
+    G.add_node(imp, type="package", label=imp, shape="star")
+    G.add_edge(imp, file_path, relation="imports")
+
+def handle_c_style_import(G, imp, file_path):
+    G.add_node(imp, type="header", label=imp, shape="diamond")
+    G.add_edge(imp, file_path, relation="includes")
 
 def save_graph_as_json(graph: nx.DiGraph, file_path: str) -> None:
     data = json_graph.node_link_data(graph)
