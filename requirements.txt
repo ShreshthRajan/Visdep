@@ -11,3 +11,5 @@ bs4
 clang
 langchain-community
 faiss-cpu
+javalang
+esprima
