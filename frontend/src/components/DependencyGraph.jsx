@@ -29,8 +29,8 @@ const DependencyGraph = () => {
         face: 'Arial',
         color: '#000000',
         multi: true,
-        align: node.type === 'package' ? 'center' : undefined,
-        valign: 'middle',
+        align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
+        valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
       },
       size: getNodeSize(node),
       label: getNodeLabel(node),
@@ -132,7 +132,7 @@ const DependencyGraph = () => {
         }
       }
     });
-  }, [selectedNodeTypes, currentLevel]);  
+  }, [selectedNodeTypes, currentLevel]);
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -255,8 +255,8 @@ const DependencyGraph = () => {
     switch (type) {
       case 'directory': return 'box';
       case 'file': return 'ellipse';
-      case 'import': return 'diamond';
-      case 'package': return 'star';
+      case 'import': return 'circle';
+      case 'package': return 'circle';
       default: return 'ellipse';
     }
   };
@@ -266,12 +266,18 @@ const DependencyGraph = () => {
   };
 
   const getNodeSize = (node) => {
+    if (node.type === 'import' || node.type === 'package') {
+    return 15; // Smaller size for import and package nodes
+  }
     const baseSize = 30;
     const textLength = node.label.length;
     return Math.max(baseSize, Math.min(textLength * 5, 150));
   };
 
   const getNodeLabel = (node) => {
+    if (node.type === 'package') {
+      return node.label; // Only show the package name for star-shaped nodes
+    }
     return `${node.label}\n${node.type}`;
   };
 
