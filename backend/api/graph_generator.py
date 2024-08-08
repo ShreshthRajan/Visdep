@@ -64,6 +64,27 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     # Perform edge clustering
     G = cluster_edges(G)
 
+    # Add spatial information
+    G = add_spatial_information(G)
+
+    return G
+
+def add_spatial_information(G):
+    # Use a layout algorithm to determine node positions
+    pos = nx.spring_layout(G, k=0.5, iterations=50)
+    
+    # Normalize positions to range [0, 1000] for both x and y
+    min_x = min(pos.values(), key=lambda p: p[0])[0]
+    max_x = max(pos.values(), key=lambda p: p[0])[0]
+    min_y = min(pos.values(), key=lambda p: p[1])[1]
+    max_y = max(pos.values(), key=lambda p: p[1])[1]
+    
+    for node, (x, y) in pos.items():
+        normalized_x = (x - min_x) / (max_x - min_x) * 1000
+        normalized_y = (y - min_y) / (max_y - min_y) * 1000
+        G.nodes[node]['x'] = normalized_x
+        G.nodes[node]['y'] = normalized_y
+    
     return G
 
 def handle_python_style_import(G, imp, file_path, files, methods, imported_methods):
