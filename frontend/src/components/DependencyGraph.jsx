@@ -24,12 +24,19 @@ const DependencyGraph = () => {
       ...node,
       shape: getNodeShape(node.type),
       color: getNodeColor(node.type),
-      font: { size: 12, face: 'Arial', color: '#000000', multi: true },
+      font: {
+        size: 12,
+        face: 'Arial',
+        color: '#000000',
+        multi: true,
+        align: node.type === 'package' ? 'center' : undefined,
+        valign: 'middle',
+      },
       size: getNodeSize(node),
       label: getNodeLabel(node),
       title: getNodeTooltip(node),
     })));
-
+  
     const filteredEdges = data.edges.filter(edge => {
       const fromNode = filteredNodes.find(node => node.id === edge.source);
       const toNode = filteredNodes.find(node => node.id === edge.target);
@@ -45,7 +52,7 @@ const DependencyGraph = () => {
       font: { size: 12, align: 'middle', background: '#FFFFFF' },
       label: edge.relation === 'multiple' ? `${edge.count} connections` : edge.label || '',
     })));
-
+  
     const container = networkRef.current;
     const graphData = { nodes, edges };
     const options = {
@@ -82,12 +89,12 @@ const DependencyGraph = () => {
         margin: 10,
         widthConstraint: {
           minimum: 50,
-          maximum: 200
+          maximum: 200,
         },
         heightConstraint: {
           minimum: 50,
-          valign: 'center'
-        }
+          valign: 'center',
+        },
       },
       edges: {
         smooth: {
@@ -97,26 +104,26 @@ const DependencyGraph = () => {
         },
       },
     };
-
+  
     const newNetwork = new Network(container, graphData, options);
     setNetwork(newNetwork);
-
+  
     newNetwork.once('stabilizationIterationsDone', () => {
       newNetwork.setOptions({ physics: false });
       newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
     });
-
+  
     newNetwork.on('selectNode', (params) => {
       if (params.nodes.length > 0) {
         const selectedNodeId = params.nodes[0];
         highlightConnectedNodes(selectedNodeId, nodes, edges, newNetwork);
       }
     });
-
+  
     newNetwork.on('deselectNode', () => {
       resetNodeStyles(nodes, edges, newNetwork);
     });
-
+  
     newNetwork.on('doubleClick', (params) => {
       if (params.nodes.length > 0) {
         const clickedNode = nodes.get(params.nodes[0]);
@@ -125,7 +132,7 @@ const DependencyGraph = () => {
         }
       }
     });
-  }, [selectedNodeTypes, currentLevel]);
+  }, [selectedNodeTypes, currentLevel]);  
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -336,16 +343,21 @@ const DependencyGraph = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
             </svg>
           </button>
-          <button onClick={handleZoomOut} className="p-2 bg-gray-200 rounded-r hover:bg-gray-300 transition-colors" title="Zoom Out">
+          <button onClick={handleZoomOut} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Zoom Out">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
             </svg>
           </button>
         </div>
         <div className="flex items-center ml-4">
-        <button onClick={() => setCurrentLevel(prev => prev + 1)} className="p-2 bg-gray-200 rounded-r hover:bg-gray-300 transition-colors" title="Increase Level">
+          <button onClick={() => setCurrentLevel(prev => prev + 1)} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Increase Level">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button onClick={() => setCurrentLevel(prev => Math.max(prev - 1, 1))} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Decrease Level">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
             </svg>
           </button>
         </div>
