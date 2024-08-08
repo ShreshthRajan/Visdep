@@ -15,6 +15,7 @@ const DependencyGraph = () => {
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(1);
+  
 
   const renderGraph = useCallback((data, level) => {
     const filteredNodes = data.nodes.filter(node => 
@@ -34,7 +35,6 @@ const DependencyGraph = () => {
       },
       size: getNodeSize(node),
       label: getNodeLabel(node),
-      title: getNodeTooltip(node),
     })));
   
     const filteredEdges = data.edges.filter(edge => {
@@ -76,15 +76,18 @@ const DependencyGraph = () => {
         },
       },
       interaction: {
+        hover: true,
+        hoverConnectedEdges: true,
+        selectConnectedEdges: false,
         dragNodes: true,
         dragView: true,
         zoomView: true,
-        hover: true,
       },
       nodes: {
         scaling: {
           min: 20,
           max: 150,
+          title: undefined,
         },
         margin: 10,
         widthConstraint: {
@@ -113,25 +116,46 @@ const DependencyGraph = () => {
       newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
     });
   
-    newNetwork.on('selectNode', (params) => {
-      if (params.nodes.length > 0) {
-        const selectedNodeId = params.nodes[0];
-        highlightConnectedNodes(selectedNodeId, nodes, edges, newNetwork);
-      }
+    newNetwork.on('hoverNode', (params) => {
+      const nodeId = params.node;
+      const node = nodes.get(nodeId);
+      const connectedNodes = newNetwork.getConnectedNodes(nodeId);
+      const imports = connectedNodes.filter(id => {
+        const edge = edges.get(newNetwork.getConnectedEdges(nodeId, id)[0]);
+        return edge && edge.arrows === 'to' && edge.to === nodeId;
+      });
+      const fileStructure = connectedNodes.filter(id => {
+        const connectedNode = nodes.get(id);
+        return connectedNode.type === 'directory';
+      });
+
+      const tooltipContent = `
+        <div style="font-size: 14px; padding: 10px;">
+          <strong>File Name: ${node.label}</strong><br>
+          Type: ${node.type}<br>
+          Level: ${node.level}<br>
+          Imports: ${imports.map(id => nodes.get(id).label).join(', ')}<br>
+          File structure: /${fileStructure.map(id => nodes.get(id).label).join('/')}
+        </div>
+      `;
+
+      newNetwork.body.nodes[nodeId].options.title = tooltipContent;
     });
   
-    newNetwork.on('deselectNode', () => {
-      resetNodeStyles(nodes, edges, newNetwork);
-    });
-  
-    newNetwork.on('doubleClick', (params) => {
+    newNetwork.on('click', (params) => {
+      // Prevent default behavior
+      if (params.event) {
+        params.event.preventDefault();
+      }
+    
       if (params.nodes.length > 0) {
-        const clickedNode = nodes.get(params.nodes[0]);
-        if (clickedNode.level === currentLevel) {
-          setCurrentLevel(prev => prev + 1);
-        }
+        const clickedNodeId = params.nodes[0];
+        highlightConnectedNodes(clickedNodeId, nodes, edges, newNetwork);
+      } else {
+        resetNodeStyles(nodes, edges, newNetwork);
       }
     });
+
   }, [selectedNodeTypes, currentLevel]);
 
   useEffect(() => {
@@ -150,33 +174,31 @@ const DependencyGraph = () => {
   }, [renderGraph, currentLevel]);
 
   const highlightConnectedNodes = (nodeId, nodes, edges, network) => {
-    const connectedNodeIds = new Set();
-    edges.get().forEach(edge => {
-      if (edge.from === nodeId) connectedNodeIds.add(edge.to);
-      if (edge.to === nodeId) connectedNodeIds.add(edge.from);
-    });
-
+    const connectedNodeIds = new Set([nodeId, ...network.getConnectedNodes(nodeId)]);
+  
     nodes.update(nodes.get().map(node => ({
       ...node,
-      color: connectedNodeIds.has(node.id) || node.id === nodeId
+      color: connectedNodeIds.has(node.id)
         ? getNodeColor(node.type)
         : { background: '#D3D3D3', border: '#A9A9A9' },
-      font: { ...node.font, color: connectedNodeIds.has(node.id) || node.id === nodeId ? '#000000' : '#999999' },
+      font: { ...node.font, color: connectedNodeIds.has(node.id) ? '#000000' : '#999999' },
     })));
-
+  
     edges.update(edges.get().map(edge => ({
       ...edge,
-      color: edge.from === nodeId || edge.to === nodeId ? getEdgeColor(edge.relation) : '#D3D3D3',
+      color: connectedNodeIds.has(edge.from) && connectedNodeIds.has(edge.to) 
+        ? getEdgeColor(edge.relation) 
+        : '#D3D3D3',
     })));
   };
-
+  
   const resetNodeStyles = (nodes, edges, network) => {
     nodes.update(nodes.get().map(node => ({
       ...node,
       color: getNodeColor(node.type),
       font: { ...node.font, color: '#000000' },
     })));
-
+  
     edges.update(edges.get().map(edge => ({
       ...edge,
       color: getEdgeColor(edge.relation),
