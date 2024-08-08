@@ -14,9 +14,12 @@ const DependencyGraph = () => {
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentLevel, setCurrentLevel] = useState(1);
 
-  const renderGraph = useCallback((data) => {
-    const filteredNodes = data.nodes.filter(node => selectedNodeTypes[node.type]);
+  const renderGraph = useCallback((data, level) => {
+    const filteredNodes = data.nodes.filter(node => 
+      selectedNodeTypes[node.type] && node.level <= level
+    );
     const nodes = new DataSet(filteredNodes.map(node => ({
       ...node,
       shape: getNodeShape(node.type),
@@ -37,10 +40,10 @@ const DependencyGraph = () => {
       to: edge.target,
       arrows: edge.relation === 'imports' ? 'to' : '',
       color: getEdgeColor(edge.relation),
-      width: 2,
+      width: edge.relation === 'multiple' ? Math.log(edge.count) + 1 : 1,
       smooth: { type: 'continuous', roundness: 0.2 },
       font: { size: 12, align: 'middle', background: '#FFFFFF' },
-      label: edge.label || '',
+      label: edge.relation === 'multiple' ? `${edge.count} connections` : edge.label || '',
     })));
 
     const container = networkRef.current;
@@ -113,7 +116,16 @@ const DependencyGraph = () => {
     newNetwork.on('deselectNode', () => {
       resetNodeStyles(nodes, edges, newNetwork);
     });
-  }, [selectedNodeTypes]);
+
+    newNetwork.on('doubleClick', (params) => {
+      if (params.nodes.length > 0) {
+        const clickedNode = nodes.get(params.nodes[0]);
+        if (clickedNode.level === currentLevel) {
+          setCurrentLevel(prev => prev + 1);
+        }
+      }
+    });
+  }, [selectedNodeTypes, currentLevel]);
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -121,14 +133,14 @@ const DependencyGraph = () => {
         const response = await axios.get('http://localhost:8000/api/dependency_graph');
         const data = response.data;
         setGraphData(data);
-        renderGraph(data);
+        renderGraph(data, currentLevel);
       } catch (error) {
         console.error('Error fetching graph data:', error);
       }
     };
 
     fetchGraphData();
-  }, [renderGraph]);
+  }, [renderGraph, currentLevel]);
 
   const highlightConnectedNodes = (nodeId, nodes, edges, network) => {
     const connectedNodeIds = new Set();
@@ -220,9 +232,9 @@ const DependencyGraph = () => {
         filteredNodes.has(edge.source) && filteredNodes.has(edge.target)
       );
 
-      renderGraph({ nodes: filteredNodesArray, edges: filteredEdges });
+      renderGraph({ nodes: filteredNodesArray, edges: filteredEdges }, currentLevel);
     }
-  }, [selectedNodeTypes, searchTerm, graphData, renderGraph]);
+  }, [selectedNodeTypes, searchTerm, graphData, renderGraph, currentLevel]);
 
   const handleNodeTypeToggle = (type) => {
     setSelectedNodeTypes(prev => ({ ...prev, [type]: !prev[type] }));
@@ -259,7 +271,8 @@ const DependencyGraph = () => {
   const getNodeTooltip = (node) => {
     return `<div style="font-size: 14px; padding: 10px;">
       <strong>${node.label}</strong><br>
-      Type: ${node.type}
+      Type: ${node.type}<br>
+      Level: ${node.level}
     </div>`;
   };
 
@@ -268,6 +281,7 @@ const DependencyGraph = () => {
       case 'contains': return '#A9A9A9';
       case 'imports': return '#4169E1';
       case 'exports': return '#32CD32';
+      case 'multiple': return '#FF4500';
       default: return '#000000';
     }
   };
@@ -328,6 +342,13 @@ const DependencyGraph = () => {
             </svg>
           </button>
         </div>
+        <div className="flex items-center ml-4">
+        <button onClick={() => setCurrentLevel(prev => prev + 1)} className="p-2 bg-gray-200 rounded-r hover:bg-gray-300 transition-colors" title="Increase Level">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
       </div>
       <div className="flex-1 relative">
         <div ref={networkRef} className="absolute inset-0" />
@@ -354,7 +375,7 @@ const DependencyGraph = () => {
                   <span
                     className={`w-3 h-3 rounded-full mr-2 ${selectedNodeTypes[type] ? 'opacity-100' : 'opacity-50'}`}
                     style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1 }}
-                    />
+                  />
                   <span className={`text-xs ${selectedNodeTypes[type] ? 'text-gray-800' : 'text-gray-500'}`}>
                     {type.charAt(0).toUpperCase() + type.slice(1)}
                   </span>
