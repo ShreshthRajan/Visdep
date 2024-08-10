@@ -62,23 +62,24 @@ if not os.getenv("AI21_API_KEY"):
 
 def fetch_parse_store_repo(repo_url, auth_token):
     try:
-        # Fetch repository content and metadata
         repo_content = fetch_repo_content(repo_url, auth_token)
         repo_metadata = fetch_repo_metadata(repo_url, auth_token)
-
-        # Store repository metadata
         repo_name = repo_metadata.get('full_name')
         repo_id = store_repository_metadata(repo_name, repo_metadata)
-
-        # Parse repository content to AST
         ast_data = parse_code_to_ast(repo_content)
-
-        # Store parsed AST data
-        for file_path, ast_info in ast_data.items():
-            store_ast_data(repo_id, file_path, ast_info)
-
-        return repo_id, ast_data
-
+        
+        full_context = {}
+        for file_info in repo_content:
+            file_path = file_info['path']
+            full_context[file_path] = {
+                'content': file_info['content'],
+                **ast_data.get(file_path, {})
+            }
+        
+        for file_path, file_info in ast_data.items():
+            store_ast_data(repo_id, file_path, file_info)
+        
+        return repo_id, full_context
     except Exception as e:
         logging.error(f"Error in fetch_parse_store_repo: {e}")
         raise
@@ -217,44 +218,59 @@ class ChatSession:
 
     async def initialize_vector_store(self, context):
         documents = []
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2000,
+            chunk_overlap=400,
+            separators=["\n\n", "\n", " ", ""]
+        )
         for file_path, file_info in context.items():
-            content = f"File: {file_path}\n"
+            content = f"File: {file_path}\n\n"
+            if isinstance(file_info, dict) and 'content' in file_info:
+                content += file_info['content'] + "\n\n"
             if isinstance(file_info, dict):
                 for key, value in file_info.items():
-                    if isinstance(value, list):
-                        content += f"{key}: {', '.join(value)}\n"
-                    else:
-                        content += f"{key}: {value}\n"
-            else:
-                content += str(file_info)
-            
+                    if key != 'content':
+                        if isinstance(value, list):
+                            content += f"{key}: {', '.join(value)}\n"
+                        else:
+                            content += f"{key}: {value}\n"
             chunks = text_splitter.split_text(content)
             documents.extend(chunks)
-
+        
         embeddings = AI21Embeddings(api_key=os.getenv("AI21_API_KEY"))
         return await FAISS.afrom_texts(documents, embeddings)
 
     def get_system_message(self):
         return """You are an AI assistant specialized in analyzing GitHub repositories. Your task is to provide clear, concise, and accurate information about the repository's content and structure. When answering:
-1. Always base your responses on the repository context provided.
-2. Be confident and affirmative in your responses. Your tone should be a 10 year veteran L6 engineering manager. 
-3. Provide step-by-step reasoning for complex queries.
-4. If asked about a specific file, function, or feature, focus on that in your response.
-5. If the information is not directly available, say so and provide the most relevant information you can find or make an educated guess based on the context.
-6. Maintain context from previous messages in the conversation.
-7. Infer the purpose and functionality of code based on file names, functions, and imports. Do not state how you deduce your inference. 
-8. Provide code snippets or examples when relevant.
-9. Consider the overall structure of the repository, including directories and file organization.
-10. If asked about dependencies or requirements, look for relevant files like requirements.txt or package.json.
-11. When discussing the purpose of the repository, review the entire codebase and the readme.md file and provide a concise, specific outline of the codebase. 
-"""
+    1. Always base your responses on the repository context provided, including file contents when necessary.
+    2. Be confident and affirmative in your responses. Your tone should be a 10 year veteran L6 engineering manager. 
+    3. Provide step-by-step reasoning for complex queries.
+    4. If asked about a specific file, function, or feature, focus on that in your response and refer to the actual code if available.
+    5. Maintain context from previous messages in the conversation.
+    6. Infer the purpose and functionality of code based on file names, functions, imports, and actual code content.
+    9. Consider the overall structure of the repository, including directories and file organization.
+    11. When discussing the purpose of the repository, review the entire codebase, including file contents and the readme.md file, and provide a concise, specific outline of the codebase. 
+    """
 
     def get_relevant_context(self, query: str) -> str:
-        relevant_docs = self.vector_store.similarity_search(query, k=5)
-        return "\n".join([doc.page_content for doc in relevant_docs])
+        relevant_docs = self.vector_store.similarity_search_with_score(query, k=200)  # Reduced from 100
+        sorted_docs = sorted(relevant_docs, key=lambda x: x[1], reverse=True)
+        
+        all_context = []
+        total_tokens = 0
+        max_tokens = 6000  # Reduced from 8000
 
+        for doc, score in sorted_docs:
+            doc_content = doc.page_content
+            doc_tokens = len(doc_content.split())
+            
+            if total_tokens + doc_tokens > max_tokens:
+                break
+            
+            all_context.append(doc_content)
+            total_tokens += doc_tokens
+
+        return "\n\n".join(all_context)
     def get_full_context_summary(self) -> str:
         summary = "Repository Overview:\n"
         for file_path, file_info in self.full_context.items():
@@ -266,38 +282,37 @@ class ChatSession:
                     summary += f"  Functions: {', '.join(file_info['functions'])}\n"
                 if 'classes' in file_info:
                     summary += f"  Classes: {', '.join(file_info['classes'])}\n"
+                if 'content' in file_info:
+                    summary += f"  Content Preview: {file_info['content'][:100]}...\n"
         return summary
 
     async def chat(self, query: str) -> str:
         try:
-            logging.debug(f"Entering ChatSession.chat with query: {query}")
-            
             if not self.conversation_chain:
                 raise ValueError("Conversation chain not initialized. Please call initialize_conversation_chain first.")
             
             full_context_summary = self.get_full_context_summary()
             relevant_context = self.get_relevant_context(query)
-           
+        
             input_text = f"""Full Repository Context:
-{full_context_summary}
+    {full_context_summary}
 
-Relevant Information:
-{relevant_context}
+    Relevant Information:
+    {relevant_context}
 
-User question: {query}
+    User question: {query}
 
-Please follow these steps in your response:
-1. Analyze the question and identify the key points to address.
-2. Review the relevant information and full context summary.
-3. Break down your reasoning process step-by-step.
-4. Specifically review the files being discussed and gain an intuition for the purpose of the code in context of the codebase
-5. Provide a clear and concise answer based on your analysis. Do not state the steps for your process, and provide a contextual answer. 
-6. Answer only the question being asked. 
-"""
+    Please follow these steps in your response without explicitly stating them:
+    1. Analyze the question and identify the key points to address.
+    2. Review the relevant information and full context summary.
+    3. If asked about a specific file, refer to specific file contents to provide accurate information. If asked about the 'purpose' 'goal' or anything else about the entire repo or codebase, refer to the entire codebase.
+    4. Provide a clear and concise answer based on your analysis, focusing on code-specific insights when applicable.
+    5. If the information is not directly available in the context, say so and provide the most relevant information you can find or make an educated guess based on the available context.
+    6. When discussing code, consider its structure, purpose, and how it fits into the overall project.
+    7. For questions about the overall purpose or structure of the repository, consider all provided context to give a comprehensive answer.
+    """
 
-            logging.debug("Running conversation chain")
             response = await self.conversation_chain.ainvoke({"input": input_text})
-            logging.debug(f"Raw chat response: {response}")
             return response['text']
         except Exception as e:
             logging.error(f"Error in ChatSession.chat: {e}", exc_info=True)
