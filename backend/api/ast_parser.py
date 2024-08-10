@@ -224,6 +224,9 @@ def parse_code_to_ast(repo_content: Dict[str, Any]) -> Dict[str, Any]:
     updated_ast_data = {}
     for file_path, info in ast_data.items():
         relative_path = os.path.relpath(file_path, repo_path)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            file_content = f.read()
+        info['content'] = file_content
         updated_ast_data[relative_path] = info
 
     return updated_ast_data
