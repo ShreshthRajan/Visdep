@@ -13,7 +13,9 @@ from backend.api.data_storage import initialize_database, store_repository_metad
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.ast_parser import parse_code_to_ast
 from langchain.prompts import MessagesPlaceholder
-
+from backend.api.graph_generator import create_dependency_graph, get_subgraph_at_level
+import networkx as nx
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Initialize the database
 initialize_database()
@@ -29,6 +31,7 @@ except ImportError as e:
     logging.error(f"Error importing faiss in langchain_integration: {e}")
     raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
 
+from langchain.docstore.document import Document
 from langchain_ai21 import AI21LLM, AI21Embeddings
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
@@ -196,6 +199,7 @@ class ChatSession:
             
             self.full_context = context
             self.vector_store = await self.initialize_vector_store(context)
+            self.dependency_graph = create_dependency_graph(context)
 
             prompt = ChatPromptTemplate(
                 messages=[
@@ -235,10 +239,11 @@ class ChatSession:
                         else:
                             content += f"{key}: {value}\n"
             chunks = text_splitter.split_text(content)
-            documents.extend(chunks)
+            for chunk in chunks:
+                documents.append(Document(page_content=chunk, metadata={"source": file_path}))
         
         embeddings = AI21Embeddings(api_key=os.getenv("AI21_API_KEY"))
-        return await FAISS.afrom_texts(documents, embeddings)
+        return await FAISS.afrom_documents(documents, embeddings)
 
     def get_system_message(self):
         return """You are an AI assistant specialized in analyzing GitHub repositories. Your task is to provide clear, concise, and accurate information about the repository's content and structure. When answering:
@@ -252,23 +257,100 @@ class ChatSession:
     11. When discussing the purpose of the repository, review the entire codebase, including file contents and the readme.md file, and provide a concise, specific outline of the codebase. 
     """
 
+    def get_relevant_nodes(self, query: str, query_type: str) -> List[str]:
+        try:
+            if query_type == 'codebase':
+                return list(self.dependency_graph.nodes())
+            elif query_type == 'directory':
+                directories = [node for node, data in self.dependency_graph.nodes(data=True) if data['type'] == 'directory']
+                if not directories:
+                    return []
+                most_relevant = max(directories, key=lambda d: self.calculate_relevance(d, query))
+                return list(nx.descendants(self.dependency_graph, most_relevant))
+            elif query_type == 'file':
+                files = [node for node, data in self.dependency_graph.nodes(data=True) if data['type'] == 'file']
+                if not files:
+                    return []
+                most_relevant = max(files, key=lambda f: self.calculate_relevance(f, query))
+                return [most_relevant] + list(self.dependency_graph.successors(most_relevant))
+            elif query_type == 'function':
+                functions = [node for node, data in self.dependency_graph.nodes(data=True) if data['type'] == 'import']
+                if not functions:
+                    return []
+                most_relevant = max(functions, key=lambda f: self.calculate_relevance(f, query))
+                return [most_relevant] + list(self.dependency_graph.predecessors(most_relevant)) + list(self.dependency_graph.successors(most_relevant))
+            else:
+                # For general queries, use a combination of vector similarity and graph centrality
+                relevant_docs = self.vector_store.similarity_search(query, k=200)
+                central_nodes = sorted(nx.pagerank(self.dependency_graph).items(), key=lambda x: x[1], reverse=True)[:20]
+                return list(set([doc.metadata['source'] for doc in relevant_docs] + [node for node, _ in central_nodes]))
+        except Exception as e:
+            logging.error(f"Error in get_relevant_nodes: {e}")
+            return []
+
+    def classify_query(self, query: str) -> str:
+        query_lower = query.lower()
+        if any(word in query_lower for word in ['entire', 'whole', 'all', 'codebase', 'repository']):
+            return 'codebase'
+        elif 'directory' in query_lower or 'folder' in query_lower:
+            return 'directory'
+        elif 'file' in query_lower:
+            return 'file'
+        elif 'function' in query_lower or 'method' in query_lower or 'class' in query_lower:
+            return 'function'
+        else:
+            return 'general'
+    def get_max_tokens(self, query_type: str) -> int:
+        if query_type == 'codebase':
+            return 8000
+        elif query_type == 'directory':
+            return 6000
+        elif query_type == 'file':
+            return 4000
+        elif query_type == 'function':
+            return 2000
+        else:
+            return 6000
+        
+    def calculate_relevance(self, node: str, query: str) -> float:
+        try:
+            node_embedding = self.vector_store.embeddings.embed_query(node)
+            query_embedding = self.vector_store.embeddings.embed_query(query)
+            similarity = cosine_similarity([node_embedding], [query_embedding])[0][0]
+            centrality = nx.pagerank(self.dependency_graph).get(node, 0)  # Default to 0 if node not in pagerank
+            return similarity * 0.7 + centrality * 0.3
+        except Exception as e:
+            logging.error(f"Error calculating relevance: {e}")
+            return 0  # Return a default value in case of error
+                
     def get_relevant_context(self, query: str) -> str:
-        relevant_docs = self.vector_store.similarity_search_with_score(query, k=200)  # Reduced from 100
-        sorted_docs = sorted(relevant_docs, key=lambda x: x[1], reverse=True)
+        query_type = self.classify_query(query)
+        relevant_nodes = self.get_relevant_nodes(query, query_type)
         
         all_context = []
         total_tokens = 0
-        max_tokens = 6000  # Reduced from 8000
+        max_tokens = self.get_max_tokens(query_type)
 
-        for doc, score in sorted_docs:
-            doc_content = doc.page_content
-            doc_tokens = len(doc_content.split())
-            
-            if total_tokens + doc_tokens > max_tokens:
-                break
-            
-            all_context.append(doc_content)
-            total_tokens += doc_tokens
+        for node in relevant_nodes:
+            if node in self.full_context:
+                file_info = self.full_context[node]
+                content = f"File: {node}\n\n"
+                if isinstance(file_info, dict):
+                    if 'content' in file_info:
+                        content += file_info['content'] + "\n\n"
+                    if 'functions' in file_info:
+                        content += f"Functions: {', '.join(file_info['functions'])}\n"
+                    if 'classes' in file_info:
+                        content += f"Classes: {', '.join(file_info['classes'])}\n"
+                    if 'imports' in file_info:
+                        content += f"Imports: {', '.join(file_info['imports'])}\n"
+                
+                content_tokens = len(content.split())
+                if total_tokens + content_tokens > max_tokens:
+                    break
+                
+                all_context.append(content)
+                total_tokens += content_tokens
 
         return "\n\n".join(all_context)
     def get_full_context_summary(self) -> str:
