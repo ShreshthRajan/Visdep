@@ -1,3 +1,4 @@
+// frontend/src/pages/graphchat.jsx
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DependencyGraph from '../components/DependencyGraph';
