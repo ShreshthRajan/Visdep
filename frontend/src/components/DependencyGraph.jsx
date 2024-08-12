@@ -1,3 +1,4 @@
+// frontend/src/components/dependencygraph.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import axios from 'axios';
@@ -143,16 +144,11 @@ const DependencyGraph = () => {
     });
   
     newNetwork.on('click', (params) => {
-      // Prevent default behavior
-      if (params.event) {
-        params.event.preventDefault();
-      }
-    
       if (params.nodes.length > 0) {
         const clickedNodeId = params.nodes[0];
-        highlightConnectedNodes(clickedNodeId, nodes, edges, newNetwork);
+        highlightConnectedNodes(clickedNodeId, newNetwork, nodes, edges);
       } else {
-        resetNodeStyles(nodes, edges, newNetwork);
+        resetHighlight(newNetwork, nodes, edges);
       }
     });
 
@@ -173,36 +169,14 @@ const DependencyGraph = () => {
     fetchGraphData();
   }, [renderGraph, currentLevel]);
 
-  const highlightConnectedNodes = (nodeId, nodes, edges, network) => {
-    const connectedNodeIds = new Set([nodeId, ...network.getConnectedNodes(nodeId)]);
-  
-    nodes.update(nodes.get().map(node => ({
-      ...node,
-      color: connectedNodeIds.has(node.id)
-        ? getNodeColor(node.type)
-        : { background: '#D3D3D3', border: '#A9A9A9' },
-      font: { ...node.font, color: connectedNodeIds.has(node.id) ? '#000000' : '#999999' },
-    })));
-  
-    edges.update(edges.get().map(edge => ({
-      ...edge,
-      color: connectedNodeIds.has(edge.from) && connectedNodeIds.has(edge.to) 
-        ? getEdgeColor(edge.relation) 
-        : '#D3D3D3',
-    })));
+  const highlightConnectedNodes = (nodeId, network) => {
+    const connectedNodeIds = network.getConnectedNodes(nodeId);
+    connectedNodeIds.push(nodeId);
+    network.selectNodes(connectedNodeIds);
   };
-  
-  const resetNodeStyles = (nodes, edges, network) => {
-    nodes.update(nodes.get().map(node => ({
-      ...node,
-      color: getNodeColor(node.type),
-      font: { ...node.font, color: '#000000' },
-    })));
-  
-    edges.update(edges.get().map(edge => ({
-      ...edge,
-      color: getEdgeColor(edge.relation),
-    })));
+
+  const resetHighlight = (network) => {
+    network.unselectAll();
   };
 
   useEffect(() => {
