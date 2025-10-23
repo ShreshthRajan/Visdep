@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
-from backend.api.data_storage import store_repository_metadata, store_ast_data
+from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, store_chunks_batch, retrieve_chunks
+from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import create_dependency_graph, save_graph_as_json, load_graph_from_json
 from networkx.readwrite import json_graph
@@ -17,6 +18,12 @@ import logging
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Initialize database on startup
+initialize_database()
+
+# Global variable to store latest repo_id (simple solution for prototype)
+latest_repo_id = None
 
 app = FastAPI()
 
@@ -29,11 +36,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure AI21 API key and GitHub token are set
-if not os.getenv("AI21_API_KEY"):
-    raise RuntimeError("AI21_API_KEY environment variable is not set")
+# Ensure required API keys are set
+# AI21 is now optional (we use Claude in Step 3)
 if not os.getenv("GITHUB_AUTH_TOKEN"):
-    raise RuntimeError("GITHUB_AUTH_TOKEN environment variable is not set")
+    logging.warning("GITHUB_AUTH_TOKEN not set - repository uploads will fail")
+
+# Check for LLM API keys (either Claude or AI21)
+if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("AI21_API_KEY"):
+    logging.warning("Neither ANTHROPIC_API_KEY nor AI21_API_KEY set - chatbot will not work")
+
+# Check for embeddings API key
+if not os.getenv("OPENAI_API_KEY"):
+    logging.warning("OPENAI_API_KEY not set - vector store creation will fail")
 
 class RepoLink(BaseModel):
     repo_url: str
@@ -75,15 +89,35 @@ async def upload_repo(link: RepoLink):
         for file_path, ast_info in parsed_data.items():
             store_ast_data(repo_id, file_path, ast_info)
 
-        # Save parsed data as context
+        # Process repository into chunks
+        logging.debug("Processing repository into chunks...")
+        chunks = process_repository_to_chunks(parsed_data)
+        chunk_stats = get_chunk_stats(chunks)
+        logging.info(f"Generated {chunk_stats['total']} chunks from {chunk_stats.get('files_processed', 0)} files")
+        logging.info(f"Chunk types: {chunk_stats.get('by_type', {})}")
+
+        # Store chunks in database
+        store_chunks_batch(repo_id, chunks)
+        logging.debug("Chunks stored in database")
+
+        # Save parsed data as context (keep for backward compatibility)
         with open("context.json", "w") as context_file:
             json.dump(parsed_data, context_file)
-        
+
         # Create and save the dependency graph
         graph = create_dependency_graph(parsed_data)
         save_graph_as_json(graph, "dependency_graph.json")
-        
-        return {"message": "Repository data successfully uploaded, parsed, and graph generated."}
+
+        # Store repo_id globally for latest upload (simple solution for single-user prototype)
+        global latest_repo_id
+        latest_repo_id = repo_id
+
+        return {
+            "message": "Repository data successfully uploaded, parsed, and graph generated.",
+            "repo_id": repo_id,
+            "chunks": chunk_stats['total'],
+            "files_processed": chunk_stats.get('files_processed', 0)
+        }
     
     except Exception as e:
         logging.error(f"Error in upload_repo: {e}")
@@ -118,12 +152,49 @@ async def query_jamba(request: QueryRequest):
 
 @app.get("/api/context")
 async def get_context():
+    """
+    Get context for LLM
+
+    NEW: Returns chunk-level context from database (Steps 1-3)
+    Fallback: Returns file-level context if no chunks available
+    """
+    global latest_repo_id
+
     try:
+        # NEW: Try to load chunks from database (Steps 1-3 pipeline)
+        if latest_repo_id:
+            logging.info(f"Loading chunks for repo_id={latest_repo_id}")
+            chunks = retrieve_chunks(latest_repo_id)
+
+            if chunks:
+                # Convert to dict format {chunk_id: chunk_data}
+                chunk_dict = {chunk['chunk_id']: chunk for chunk in chunks}
+                logging.info(f"Returning {len(chunks)} chunks (NEW chunk-level format)")
+                return chunk_dict
+
+        # Fallback: Load old file-level context
+        logging.warning("No chunks available, falling back to file-level context")
         with open("context.json", "r") as context_file:
             context = json.load(context_file)
         return context
+
     except Exception as e:
         logging.error(f"Error in get_context: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+@app.get("/api/chunks/{repo_id}")
+async def get_chunks(repo_id: int):
+    """
+    NEW ENDPOINT: Get chunks for a repository
+    Returns chunk-level context suitable for LLM
+    """
+    try:
+        chunks = retrieve_chunks(repo_id)
+        # Convert to dict format for frontend
+        chunk_dict = {chunk['chunk_id']: chunk for chunk in chunks}
+        return chunk_dict
+    except Exception as e:
+        logging.error(f"Error in get_chunks: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 # Include the chatbot router
