@@ -604,7 +604,8 @@ class ChatSession:
         max_tokens = int(base_budget * complexity_multiplier * repo_size_multiplier)
 
         # Cap at Claude's context limit (leave room for response)
-        max_tokens = min(max_tokens, 100000)
+        # Claude 4.0 has 200K context, cap at 150K to leave 50K for response
+        max_tokens = min(max_tokens, 150000)
 
         logging.info(f"Dynamic token budget: {max_tokens} (chunks={total_chunks}, complex={is_complex})")
         return max_tokens
@@ -651,10 +652,11 @@ class ChatSession:
         max_tokens = self._calculate_dynamic_token_budget(is_complex)
 
         # Calculate dynamic include_full based on budget (not static 5/10)
-        # Average formatted chunk ≈ 350 tokens, cap at reasonable limit
-        avg_tokens_per_chunk = 350
+        # With tiktoken: formatted chunks (code + markdown) ≈ 500 tokens
+        # This accounts for markdown overhead (##, ```, **Type:**, etc.)
+        avg_tokens_per_chunk = 500
         include_full = min(len(reranked_chunks), max_tokens // avg_tokens_per_chunk, 30)
-        logging.info(f"Dynamic include_full: {include_full} (budget={max_tokens}, chunks={len(reranked_chunks)})")
+        logging.info(f"Dynamic include_full: {include_full} (budget={max_tokens}, chunks={len(reranked_chunks)}, avg={avg_tokens_per_chunk})")
 
         # Update context assembler budget
         self.context_assembler.max_tokens = max_tokens

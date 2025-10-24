@@ -283,6 +283,15 @@ class HybridRetriever:
                 score += 0.3  # Significant boost to get into top results
                 logging.debug(f"Entry point boost: {chunk_id}")
 
+            # Factor 5: Configuration variable boost
+            # Config dictionaries (STEPS, CONFIG) are critical for understanding architecture
+            # but have low semantic similarity (just data structures)
+            if chunk.get('type') == 'module_variable':
+                var_name = chunk.get('name', '').upper()
+                if any(keyword in var_name for keyword in ['STEPS', 'CONFIG', 'SETTINGS', 'OPTIONS']):
+                    score += 0.4  # Strong boost for config dictionaries
+                    logging.debug(f"Config variable boost: {chunk_id}")
+
             ranked.append((chunk_id, score))
 
         # Sort by score
