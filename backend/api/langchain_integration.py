@@ -649,7 +649,12 @@ class ChatSession:
 
         # Step 3: Assemble context with DYNAMIC token budget
         max_tokens = self._calculate_dynamic_token_budget(is_complex)
-        include_full = 10 if is_complex else 5
+
+        # Calculate dynamic include_full based on budget (not static 5/10)
+        # Average formatted chunk ≈ 350 tokens, cap at reasonable limit
+        avg_tokens_per_chunk = 350
+        include_full = min(len(reranked_chunks), max_tokens // avg_tokens_per_chunk, 30)
+        logging.info(f"Dynamic include_full: {include_full} (budget={max_tokens}, chunks={len(reranked_chunks)})")
 
         # Update context assembler budget
         self.context_assembler.max_tokens = max_tokens

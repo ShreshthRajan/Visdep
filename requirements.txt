@@ -20,3 +20,4 @@ networkx
 scikit-learn
 anthropic
 sentence-transformers
+tiktoken

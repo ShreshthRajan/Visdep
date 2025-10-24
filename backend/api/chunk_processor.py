@@ -117,6 +117,75 @@ def extract_class_body(file_content: str, class_name: str) -> tuple:
     return code, class_start + 1, class_end + 1
 
 
+def extract_module_variables(file_path: str, file_content: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract module-level variables (STEPS, CONFIG, constants, etc.)
+
+    Args:
+        file_path: Path to file
+        file_content: File content
+        ast_info: AST info (for imports)
+
+    Returns:
+        List of module variable chunks
+    """
+    import ast as ast_module
+
+    chunks = []
+
+    # Only process Python files
+    if not file_path.endswith('.py'):
+        return chunks
+
+    try:
+        tree = ast_module.parse(file_content)
+    except:
+        return chunks
+
+    # Extract module-level assignments (only top-level, not inside functions)
+    # Use tree.body to get only module-level statements
+    for node in tree.body:
+        if isinstance(node, ast_module.Assign):
+            # Get variable name
+            for target in node.targets:
+                if isinstance(target, ast_module.Name):
+                    var_name = target.id
+
+                    # Skip private variables and common non-config names
+                    if var_name.startswith('_') or var_name in ['i', 'j', 'x', 'y', 'temp']:
+                        continue
+
+                    # Get value as string
+                    try:
+                        value_code = ast_module.unparse(node.value)
+                    except:
+                        value_code = "<complex value>"
+
+                    # Get line number
+                    lineno = node.lineno
+
+                    # Format as code chunk
+                    code = f"{var_name} = {value_code}"
+
+                    chunk_id = generate_chunk_id(file_path, var_name, lineno)
+                    chunks.append({
+                        'chunk_id': chunk_id,
+                        'file_path': file_path,
+                        'type': 'module_variable',
+                        'name': var_name,
+                        'code': code,
+                        'start_line': lineno,
+                        'end_line': lineno,
+                        'metadata': {
+                            'imports': ast_info.get('imports', []),
+                            'file_type': 'py',
+                            'variable_type': type(node.value).__name__
+                        }
+                    })
+
+    return chunks
+
+
 def chunk_file(file_path: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Convert file AST info into chunks
@@ -174,6 +243,15 @@ def chunk_file(file_path: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]
                     'file_type': file_path.split('.')[-1] if '.' in file_path else 'unknown'
                 }
             })
+
+    # Extract module-level variables (STEPS, CONFIG, constants, etc.)
+    # These are critical for understanding configuration and entry points
+    module_vars = extract_module_variables(file_path, file_content, ast_info)
+
+    # Only add module vars if we also have functions/classes (avoid duplication)
+    # If file has ONLY variables and no functions, file-level chunk is better
+    if ast_info.get('functions') or ast_info.get('classes'):
+        chunks.extend(module_vars)
 
     # If no functions or classes found, create a file-level chunk
     # This handles config files, simple scripts, etc.
