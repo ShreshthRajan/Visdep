@@ -1,45 +1,39 @@
-# # Use an official Python runtime as the base image
-# FROM python:3.9-slim
+# Production Dockerfile for VisDep Backend
+FROM python:3.10-slim
 
-# # Install Node.js and npm
-# RUN apt-get update && apt-get install -y nodejs npm
+# Set working directory
+WORKDIR /app
 
-# # Set the working directory in the container
-# WORKDIR /app
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# # Copy the requirements file into the container
-# COPY requirements.txt .
+# Copy requirements first for better caching
+COPY requirements.txt .
 
-# # Install the Python dependencies
-# RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# # Copy the backend code into the container
-# COPY backend /app/backend
+# Copy backend code
+COPY backend ./backend
+COPY .env.example .env
 
-# # Copy the frontend code into the container
-# COPY frontend /app/frontend
+# Create data directories (will be overridden by volume mount)
+RUN mkdir -p /data/faiss_indexes
 
-# # Install frontend dependencies
-# WORKDIR /app/frontend
-# RUN npm install
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# # Set back the working directory to /app
-# WORKDIR /app
+# Expose port (Railway will set PORT env var)
+EXPOSE 8000
 
-# # Set environment variables
-# ENV PYTHONPATH=/app
-# ENV PYTHONDONTWRITEBYTECODE=1
-# ENV PYTHONUNBUFFERED=1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/api/dependency_graph || exit 1
 
-# # Expose the ports the app runs on
-# EXPOSE 8000 3000
-
-# # Create a startup script
-# RUN echo '#!/bin/bash\n\
-# cd /app/backend && uvicorn main:app --host 0.0.0.0 --port 8000 --reload &\n\
-# cd /app/frontend && npm start' > /app/start.sh
-
-# RUN chmod +x /app/start.sh
-
-# # Set the startup script as the entry point
-# CMD ["/bin/bash", "/app/start.sh"]
+# Start command
+CMD uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}

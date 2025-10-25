@@ -21,3 +21,4 @@ scikit-learn
 anthropic
 sentence-transformers
 tiktoken
+psycopg2-binary

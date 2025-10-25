@@ -2,9 +2,15 @@
 
 import sqlite3
 import json
+import os
 from typing import Dict, Any
 
-DATABASE_PATH = 'data_storage.db'
+# Database path - uses Railway volume in production, local file in development
+# Railway volume is mounted at /data (persistent across restarts)
+DATABASE_PATH = os.getenv('DATABASE_PATH', 'data_storage.db')
+
+# FAISS indexes directory - also on persistent volume in production
+FAISS_DIR = os.getenv('FAISS_DIR', 'faiss_indexes')
 
 def initialize_database():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -50,6 +56,26 @@ def initialize_database():
 
     cursor.execute('''
     CREATE INDEX IF NOT EXISTS idx_repo_chunks ON chunks(repo_id)
+    ''')
+
+    # Query cache table for latency optimization (Task 2.1)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS query_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        query_hash TEXT NOT NULL,
+        repo_id INTEGER NOT NULL,
+        response TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(query_hash, repo_id)
+    )
+    ''')
+
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_query_cache_lookup ON query_cache(query_hash, repo_id)
+    ''')
+
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_query_cache_created ON query_cache(created_at)
     ''')
 
     conn.commit()
@@ -192,3 +218,115 @@ def get_chunk_by_id(chunk_id: str) -> Dict[str, Any]:
             'metadata': json.loads(row[7])
         }
     return None
+
+
+# ============================================================================
+# QUERY CACHE FUNCTIONS (Task 2.1 - Latency Optimization)
+# ============================================================================
+
+import hashlib
+from datetime import datetime, timedelta
+
+def get_cached_response(query: str, repo_id: int, ttl_days: int = 7) -> str:
+    """
+    Get cached response for query
+
+    Args:
+        query: User query text
+        repo_id: Repository ID
+        ttl_days: Cache TTL in days (default 7)
+
+    Returns:
+        Cached response or None if not found/expired
+    """
+    try:
+        query_hash = hashlib.sha256(query.encode()).hexdigest()
+
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        # Check cache with TTL
+        cursor.execute('''
+            SELECT response, created_at FROM query_cache
+            WHERE query_hash = ? AND repo_id = ?
+        ''', (query_hash, repo_id))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            response, created_at_str = row
+            created_at = datetime.fromisoformat(created_at_str)
+
+            # Check TTL
+            if datetime.now() - created_at < timedelta(days=ttl_days):
+                return response
+
+        return None
+
+    except Exception as e:
+        # Graceful degradation: if cache fails, return None (will compute fresh)
+        import logging
+        logging.warning(f"Cache lookup failed: {e}, proceeding without cache")
+        return None
+
+
+def store_cached_response(query: str, repo_id: int, response: str):
+    """
+    Store query response in cache
+
+    Args:
+        query: User query text
+        repo_id: Repository ID
+        response: Generated response to cache
+    """
+    try:
+        query_hash = hashlib.sha256(query.encode()).hexdigest()
+
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        # Upsert: insert or update if exists
+        cursor.execute('''
+            INSERT INTO query_cache (query_hash, repo_id, response, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(query_hash, repo_id) DO UPDATE SET
+                response = excluded.response,
+                created_at = excluded.created_at
+        ''', (query_hash, repo_id, response, datetime.now().isoformat()))
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        # Graceful degradation: if cache store fails, just log and continue
+        import logging
+        logging.warning(f"Cache store failed: {e}, query still completed successfully")
+
+
+def invalidate_cache_for_repo(repo_id: int):
+    """
+    Invalidate all cached queries for a repository
+
+    Called when repo is re-uploaded to ensure fresh answers
+
+    Args:
+        repo_id: Repository ID
+    """
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM query_cache WHERE repo_id = ?', (repo_id,))
+
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        import logging
+        logging.info(f"Invalidated {deleted_count} cached queries for repo {repo_id}")
+
+    except Exception as e:
+        # Graceful degradation: if invalidation fails, log but don't crash
+        import logging
+        logging.warning(f"Cache invalidation failed: {e}, continuing anyway")

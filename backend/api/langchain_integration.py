@@ -9,7 +9,7 @@ import asyncio
 from typing import List
 
 # Adjust the import path for data_storage
-from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, retrieve_chunks
+from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, retrieve_chunks, FAISS_DIR
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.ast_parser import parse_code_to_ast
 from langchain.prompts import MessagesPlaceholder
@@ -190,7 +190,7 @@ class CustomAI21ChatLLM(LLM):
 chat_sessions = {}
 
 class ChatSession:
-    def __init__(self):
+    def __init__(self, repo_id: int = None):
         self.memory = ConversationBufferMemory(return_messages=True, memory_key="history")
         self.conversation_chain = None
         self.vector_store = None
@@ -200,11 +200,13 @@ class ChatSession:
         self.reranker = None  # NEW: Step 3
         self.context_assembler = None  # NEW: Step 3
         self.claude_client = None  # NEW: Step 3
+        self.repo_id = repo_id  # Task 2.2: For FAISS persistence
 
     async def initialize_conversation_chain(self, context):
         try:
             self.full_context = context
-            self.vector_store = await self.initialize_vector_store(context)
+            # Task 2.2: Pass repo_id for FAISS persistence
+            self.vector_store = await self.initialize_vector_store(context, repo_id=self.repo_id)
             self.dependency_graph = create_dependency_graph(context)
 
             # Step 2: Initialize hybrid retriever
@@ -247,13 +249,36 @@ class ChatSession:
             logging.error(f"Error initializing conversation chain: {e}", exc_info=True)
             raise
 
-    async def initialize_vector_store(self, context):
+    async def initialize_vector_store(self, context, repo_id: int = None):
         """
         Initialize vector store with code chunks
 
-        NEW: Uses chunk-level indexing instead of file-level
-        Uses OpenAI embeddings (temporary, will upgrade to code-specific later)
+        Task 2.2: Loads persisted FAISS index from disk if available (saves ~2s)
+        Falls back to rebuilding if index not found or corrupted
+
+        Args:
+            context: Chunk data
+            repo_id: Repository ID for index persistence
+
+        Returns:
+            FAISS vector store
         """
+        # Task 2.2: Try to load persisted FAISS index first
+        if repo_id:
+            faiss_path = f"{FAISS_DIR}/{repo_id}"
+            if os.path.exists(faiss_path):
+                try:
+                    embeddings = OpenAIEmbeddings(
+                        api_key=os.getenv("OPENAI_API_KEY"),
+                        model="text-embedding-3-large"
+                    )
+                    vector_store = FAISS.load_local(faiss_path, embeddings, allow_dangerous_deserialization=True)
+                    logging.info(f"Loaded FAISS index from disk: {faiss_path} (fast path)")
+                    return vector_store
+                except Exception as e:
+                    logging.warning(f"Failed to load FAISS from disk: {e}, rebuilding...")
+
+        # Build FAISS index from chunks (original logic)
         documents = []
 
         # Check if context has chunks (new format) or files (old format)
@@ -304,14 +329,25 @@ class ChatSession:
                     documents.append(Document(page_content=content, metadata=metadata))
 
         # Use OpenAI embeddings (Step 1 baseline)
-        # Will upgrade to Qodo/Nomic in Step 2
         embeddings = OpenAIEmbeddings(
             api_key=os.getenv("OPENAI_API_KEY"),
             model="text-embedding-3-large"
         )
 
         logging.info(f"Creating FAISS index with {len(documents)} documents")
-        return await FAISS.afrom_documents(documents, embeddings)
+        vector_store = await FAISS.afrom_documents(documents, embeddings)
+
+        # Task 2.2: Save FAISS index to disk for fast loading next time
+        if repo_id:
+            try:
+                os.makedirs(FAISS_DIR, exist_ok=True)
+                faiss_path = f"{FAISS_DIR}/{repo_id}"
+                vector_store.save_local(faiss_path)
+                logging.info(f"Saved FAISS index to disk: {faiss_path}")
+            except Exception as e:
+                logging.warning(f"Failed to save FAISS to disk: {e}, continuing anyway")
+
+        return vector_store
 
     async def initialize_hybrid_retriever(self, context):
         """
@@ -553,7 +589,7 @@ class ChatSession:
 
     async def chat(self, query: str) -> str:
         """
-        Chat with LLM using retrieved context
+        Chat with LLM using retrieved context (batch mode)
 
         NEW (Step 3): Uses Claude + reranking + smart context assembly
         OLD: Falls back to AI21 if Claude not available
@@ -575,6 +611,30 @@ class ChatSession:
         except Exception as e:
             logging.error(f"Error in ChatSession.chat: {e}", exc_info=True)
             raise
+
+    async def chat_stream(self, query: str):
+        """
+        Task 2.3: Streaming variant of chat()
+
+        Yields tokens as they're generated for better perceived latency.
+        Same quality, same answer, just streamed delivery.
+        """
+        try:
+            # Only streaming supported for Claude with hybrid retriever
+            if self.claude_client and self.hybrid_retriever and self.reranker:
+                async for token in self._chat_with_claude_stream(query):
+                    yield token
+            else:
+                # Fallback: stream the batch response (simulate streaming)
+                response = await self.chat(query)
+                # Yield in chunks for consistent interface
+                for i in range(0, len(response), 50):
+                    yield response[i:i+50]
+                    await asyncio.sleep(0.01)  # Small delay to simulate streaming
+
+        except Exception as e:
+            logging.error(f"Error in ChatSession.chat_stream: {e}", exc_info=True)
+            yield f"Error: {str(e)}"
 
     def _calculate_dynamic_token_budget(self, is_complex: bool) -> int:
         """
@@ -609,6 +669,58 @@ class ChatSession:
 
         logging.info(f"Dynamic token budget: {max_tokens} (chunks={total_chunks}, complex={is_complex})")
         return max_tokens
+
+    async def _chat_with_claude_stream(self, query: str):
+        """
+        Task 2.3: Streaming variant of _chat_with_claude()
+
+        Yields tokens as Claude generates them for better UX.
+        Same quality, same answer, just streamed delivery.
+        """
+        logging.info("Using Claude with full retrieval pipeline (STREAMING)")
+
+        # Detect query complexity (same as batch)
+        query_lower = query.lower()
+        is_complex = any(word in query_lower for word in
+                        ['complete', 'entire', 'all', 'flow', 'trace', 'execution', 'how does'])
+
+        logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}")
+
+        # Hybrid search + reranking (same as batch)
+        top_chunks = self.hybrid_retriever.hybrid_search(
+            query=query,
+            top_k=20,
+            expand=True,
+            expand_max=30
+        )
+
+        if not top_chunks:
+            yield "I couldn't find relevant information in the codebase to answer your question."
+            return
+
+        # Rerank
+        rerank_k = 20 if is_complex else 10
+        reranked_chunks = self.reranker.rerank(query, top_chunks, top_k=rerank_k)
+
+        # Assemble context
+        max_tokens = self._calculate_dynamic_token_budget(is_complex)
+        avg_tokens_per_chunk = 500
+        include_full = min(len(reranked_chunks), max_tokens // avg_tokens_per_chunk, 30)
+
+        self.context_assembler.max_tokens = max_tokens
+        assembled = self.context_assembler.assemble_context(
+            reranked_chunks,
+            include_full_code_top_n=include_full
+        )
+
+        context_text = "\n".join(assembled['context_parts'])
+
+        # Build prompt
+        prompt = self._build_claude_prompt(query, context_text, assembled)
+
+        # Stream Claude response
+        async for token in self._query_claude_stream(prompt):
+            yield token
 
     async def _chat_with_claude(self, query: str) -> str:
         """
@@ -800,7 +912,7 @@ Your answer:"""
 
     async def _query_claude(self, prompt: str) -> str:
         """
-        Query Claude 3.5 Sonnet
+        Query Claude 4.0 Sonnet (batch mode)
 
         Args:
             prompt: Formatted prompt
@@ -809,7 +921,7 @@ Your answer:"""
             Claude's response
         """
         try:
-            # Use Claude 3.5 Sonnet (latest as of Oct 2025)
+            # Use Claude 4.0 Sonnet (batch mode)
             response = self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",  # Claude 4.0 Sonnet (latest)
                 max_tokens=2000,
@@ -834,10 +946,92 @@ Your answer:"""
             logging.error(f"Error querying Claude: {e}")
             raise
 
-async def get_jamba_response(query: str, context: Dict[str, Any]) -> str:
+    async def _query_claude_stream(self, prompt: str):
+        """
+        Query Claude 4.0 Sonnet (streaming mode) - Task 2.3
+
+        Streams tokens as they're generated for better perceived latency.
+        Actual latency same as batch, but user sees first token in ~1s.
+
+        Args:
+            prompt: Formatted prompt
+
+        Yields:
+            Token chunks from Claude
+        """
+        try:
+            # Use Claude 4.0 Sonnet with streaming
+            full_response = ""
+
+            with self.claude_client.messages.stream(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
+                for text in stream.text_stream:
+                    full_response += text
+                    yield text
+
+            # Save complete response to conversation memory
+            self.memory.save_context(
+                {"input": prompt},
+                {"output": full_response}
+            )
+
+        except Exception as e:
+            logging.error(f"Error in Claude streaming: {e}")
+            yield f"Error: {str(e)}"
+
+async def get_jamba_response_stream(query: str, context: Dict[str, Any], repo_id: int = None):
+    """
+    Task 2.3: Streaming variant of get_jamba_response()
+
+    Yields tokens as they're generated. No caching for streams (live only).
+
+    Args:
+        query: User query
+        context: Code context
+        repo_id: Repository ID
+
+    Yields:
+        Response tokens
+    """
+    try:
+        logging.debug(f"Entering streaming query with: {query}")
+
+        # Build session (same as batch)
+        context_string = json.dumps(context, sort_keys=True)
+        session_id = hashlib.md5(context_string.encode()).hexdigest()
+
+        if session_id not in chat_sessions:
+            chat_sessions[session_id] = ChatSession(repo_id=repo_id)
+            await chat_sessions[session_id].initialize_conversation_chain(context)
+
+        chat_session = chat_sessions[session_id]
+
+        # Stream the response
+        async for token in chat_session.chat_stream(query):
+            yield token
+
+    except Exception as e:
+        logging.error(f"Error in streaming response: {e}")
+        yield f"Error: {str(e)}"
+
+
+async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None) -> str:
     try:
         logging.debug(f"Entering get_jamba_response with query: {query}")
         logging.debug(f"API Key: {os.getenv('AI21_API_KEY')[:5] if os.getenv('AI21_API_KEY') else 'Not set'}...")
+
+        # Task 2.1: Check cache first (if repo_id available)
+        if repo_id:
+            from backend.api.data_storage import get_cached_response, store_cached_response
+            cached = get_cached_response(query, repo_id)
+            if cached:
+                logging.info(f"Cache HIT for query (repo_id={repo_id})")
+                return cached
+            logging.debug(f"Cache MISS for query (repo_id={repo_id})")
 
         # NEW: Load chunks from database if available
         # For now, use context as-is (it might be old file-level or new chunk-level)
@@ -846,7 +1040,8 @@ async def get_jamba_response(query: str, context: Dict[str, Any]) -> str:
         session_id = hashlib.md5(context_string.encode()).hexdigest()
 
         if session_id not in chat_sessions:
-            chat_sessions[session_id] = ChatSession()
+            # Task 2.2: Pass repo_id to ChatSession for FAISS persistence
+            chat_sessions[session_id] = ChatSession(repo_id=repo_id)
             # Convert context to chunk format if it's chunks from DB
             # For Step 1: context is still file-level from frontend
             # Vector store will handle both formats
@@ -855,6 +1050,12 @@ async def get_jamba_response(query: str, context: Dict[str, Any]) -> str:
         chat_session = chat_sessions[session_id]
         response = await chat_session.chat(query)
         logging.debug(f"Final response: {response}")
+
+        # Task 2.1: Store in cache after generating (if repo_id available)
+        if repo_id and response:
+            from backend.api.data_storage import store_cached_response
+            store_cached_response(query, repo_id, response)
+            logging.debug(f"Cached response for future queries (repo_id={repo_id})")
 
         return response
     except Exception as e:

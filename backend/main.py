@@ -3,6 +3,7 @@ import os
 import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
@@ -15,6 +16,7 @@ from networkx.readwrite import json_graph
 from dotenv import load_dotenv
 from typing import Optional
 import logging
+import asyncio
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,9 +30,15 @@ latest_repo_id = None
 app = FastAPI()
 
 # Add CORS middleware to allow requests from the frontend
+# Supports both local development and production
+ALLOWED_ORIGINS = os.getenv(
+    'ALLOWED_ORIGINS',
+    'http://localhost:3000,https://visdep.com,https://*.vercel.app'
+).split(',')
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Adjust this to your frontend's origin in production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -108,6 +116,10 @@ async def upload_repo(link: RepoLink):
         graph = create_dependency_graph(parsed_data)
         save_graph_as_json(graph, "dependency_graph.json")
 
+        # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
+        from backend.api.data_storage import invalidate_cache_for_repo
+        invalidate_cache_for_repo(repo_id)
+
         # Store repo_id globally for latest upload (simple solution for single-user prototype)
         global latest_repo_id
         latest_repo_id = repo_id
@@ -138,16 +150,77 @@ async def query_jamba(request: QueryRequest):
     try:
         query = request.query
         context = request.context
-        
-        # Get response from Jamba model (now awaited)
-        response = await get_jamba_response(query, context)
-        
+
+        # Get response from Jamba model with caching (Task 2.1)
+        # Pass latest_repo_id for cache lookup
+        global latest_repo_id
+        response = await get_jamba_response(query, context, repo_id=latest_repo_id)
+
         if response:
             return {"response": response}
         else:
             raise HTTPException(status_code=500, detail="Failed to get a response from the model.")
-    
+
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+@app.get("/api/query_stream")
+async def query_stream(query: str):
+    """
+    Task 2.3: Streaming endpoint for real-time Claude responses
+
+    Uses Server-Sent Events (SSE) to stream tokens as they're generated.
+    Perceived latency: ~1s to first token (vs 19s for batch).
+
+    Args:
+        query: User query (URL parameter)
+
+    Returns:
+        StreamingResponse with SSE events
+    """
+    try:
+        from backend.api.langchain_integration import get_jamba_response_stream
+
+        # Load context for latest repo
+        global latest_repo_id
+        if not latest_repo_id:
+            raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
+
+        # Get chunks from database
+        chunks = retrieve_chunks(latest_repo_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail="No chunks found for repository.")
+
+        # Convert to context format
+        context = {chunk['chunk_id']: chunk for chunk in chunks}
+
+        # Stream response
+        async def event_generator():
+            try:
+                async for token in get_jamba_response_stream(query, context, repo_id=latest_repo_id):
+                    # SSE format: data: {token}\n\n
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    await asyncio.sleep(0)  # Allow other tasks
+
+                # Send completion event
+                yield f"data: {json.dumps({'done': True})}\n\n"
+
+            except Exception as e:
+                logging.error(f"Error in stream generator: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # Disable nginx buffering
+            }
+        )
+
+    except Exception as e:
+        logging.error(f"Error in query_stream: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/context")
