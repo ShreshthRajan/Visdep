@@ -44,7 +44,6 @@ from langchain_core.prompts import (
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langchain_core.runnables import RunnablePassthrough, RunnableSequence
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.memory import BaseMemory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.language_models.llms import LLM
 from langchain_core.callbacks import CallbackManagerForLLMRun
