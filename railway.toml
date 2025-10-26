@@ -1,8 +1,8 @@
 [build]
-builder = "NIXPACKS"
+builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+# Let Dockerfile CMD handle the start command (uses start.sh script)
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
