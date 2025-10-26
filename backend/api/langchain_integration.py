@@ -53,7 +53,8 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores import FAISS
 
-from langchain_ai21 import AI21LLM, AI21Embeddings
+# AI21 imports removed from module level - lazy loaded only when needed (fallback case)
+# This prevents ImportError if langchain_ai21 version incompatible
 from langchain_openai import OpenAIEmbeddings
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -95,6 +96,10 @@ def fetch_parse_store_repo(repo_url, auth_token):
         raise
 
 async def initialize_retrieval_qa(context):
+    """DEPRECATED - Old function, not used in current pipeline"""
+    # Lazy import AI21 only if this function is called (which it isn't)
+    from langchain_ai21 import AI21LLM, AI21Embeddings
+
     # Prepare documents from context
     documents = []
     for file_path, info in context.items():
@@ -138,7 +143,7 @@ async def initialize_retrieval_qa(context):
         retriever=vector_store.as_retriever(),
         combine_docs_chain=combine_docs_chain
     )
-    
+
     return retrieval_qa
 
 # class AsyncConversationBufferMemory(BaseMemory):
@@ -228,6 +233,9 @@ class ChatSession:
                 self.conversation_chain = None
             else:
                 # Fallback to AI21 for backward compatibility
+                # Lazy import - only loads if Claude not available
+                from langchain_ai21 import AI21LLM
+
                 logging.warning("ANTHROPIC_API_KEY not set, falling back to AI21")
                 llm = CustomAI21ChatLLM(api_key=os.getenv("AI21_API_KEY"))
                 logging.debug(f"CustomAI21ChatLLM initialized with model: {llm.model}")
