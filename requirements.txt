@@ -4,6 +4,7 @@ requests
 langchain
 langchain-core
 langchain-text-splitters
+langchain-ai21
 python-dotenv
 pydantic
 pytest
