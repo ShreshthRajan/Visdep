@@ -12,7 +12,6 @@ from typing import List
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, retrieve_chunks, FAISS_DIR
 from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
 from backend.api.ast_parser import parse_code_to_ast
-from langchain.prompts import MessagesPlaceholder
 from backend.api.graph_generator import create_dependency_graph, get_subgraph_at_level
 from backend.api.hybrid_retrieval import HybridRetriever, build_chunk_graph
 from backend.api.reranker import CodeReranker, ContextAssembler, extract_citations_from_response
@@ -34,31 +33,35 @@ except ImportError as e:
     logging.error(f"Error importing faiss in langchain_integration: {e}")
     raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
 
-from langchain.docstore.document import Document
-from langchain_ai21 import AI21LLM, AI21Embeddings
-from langchain_openai import OpenAIEmbeddings
-from langchain.prompts import ChatPromptTemplate
+# LangChain v0.2+ imports (migrated from deprecated v0.1 paths)
+from langchain_core.documents import Document
+from langchain_core.prompts import (
+    MessagesPlaceholder,
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate
+)
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_core.runnables import RunnablePassthrough, RunnableSequence
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.memory import BaseMemory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.language_models.llms import LLM
+from langchain_core.callbacks import CallbackManagerForLLMRun
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores import FAISS
-from langchain.schema import SystemMessage, HumanMessage
-from langchain_core.runnables import RunnableSequence
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationChain
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from langchain.schema.runnable.history import RunnableWithMessageHistory
-from langchain.memory.chat_message_histories import ChatMessageHistory
-from langchain.schema import BaseMemory, BaseChatMessageHistory
-from langchain.schema.messages import AIMessage, HumanMessage
-from langchain.schema.messages import BaseMessage
-from langchain.chains import LLMChain
-from langchain.llms.base import LLM
-from langchain.callbacks.manager import CallbackManagerForLLMRun
+from langchain_ai21 import AI21LLM, AI21Embeddings
+from langchain_openai import OpenAIEmbeddings
+
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain, ConversationChain, LLMChain
+from langchain.memory import ConversationBufferMemory
+
 from typing import Dict, Any, List, Mapping, Optional
-from langchain.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate
 
 # Load environment variables from .env file
 load_dotenv()
