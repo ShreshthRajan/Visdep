@@ -1,7 +1,7 @@
 // frontend/src/components/dependencygraph.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
-import axios from 'axios';
+import API from '../api';
 
 const DependencyGraph = () => {
   const networkRef = useRef(null);
