@@ -341,7 +341,8 @@ class ChatSession:
         # Use OpenAI embeddings (Step 1 baseline)
         embeddings = OpenAIEmbeddings(
             api_key=os.getenv("OPENAI_API_KEY"),
-            model="text-embedding-3-large"
+            model="text-embedding-3-large",
+            chunk_size=1000  # Process max 1000 documents per API call (safety: ~200K tokens)
         )
 
         logging.info(f"Creating FAISS index with {len(documents)} documents")
