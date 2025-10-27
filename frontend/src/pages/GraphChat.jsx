@@ -6,7 +6,13 @@ import Chatbot from '../components/Chatbot';
 
 const GraphChat = () => {
   const [graphWidth, setGraphWidth] = useState(65);
+  const [highlightedNodes, setHighlightedNodes] = useState([]);
   const navigate = useNavigate();
+
+  const handleHighlightNodes = useCallback((nodeIds) => {
+    console.log('GraphChat: Highlighting nodes:', nodeIds);
+    setHighlightedNodes(nodeIds || []);
+  }, []);
 
   const handleResize = useCallback((e) => {
     const newWidth = (e.clientX / window.innerWidth) * 100;
@@ -40,7 +46,7 @@ const GraphChat = () => {
       <div className="flex flex-1 overflow-hidden">
         <div style={{ width: `${graphWidth}%` }} className="bg-white shadow-lg">
           <div className="h-full">
-            <DependencyGraph />
+            <DependencyGraph highlightedNodes={highlightedNodes} />
           </div>
         </div>
         <div
@@ -48,7 +54,7 @@ const GraphChat = () => {
           onMouseDown={() => document.addEventListener('mousemove', handleResize)}
         />
         <div style={{ width: `${100 - graphWidth}%` }} className="bg-white shadow-lg flex flex-col">
-          <Chatbot />
+          <Chatbot onHighlightNodes={handleHighlightNodes} />
         </div>
       </div>
     </div>

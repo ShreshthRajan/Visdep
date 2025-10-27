@@ -157,7 +157,13 @@ async def query_jamba(request: QueryRequest):
         response = await get_jamba_response(query, context, repo_id=latest_repo_id)
 
         if response:
-            return {"response": response}
+            # Handle both dict (new format with citations) and string (legacy format)
+            if isinstance(response, dict):
+                # New format: includes response, citations, highlighted_nodes
+                return response
+            else:
+                # Legacy format: plain string response
+                return {"response": response}
         else:
             raise HTTPException(status_code=500, detail="Failed to get a response from the model.")
 

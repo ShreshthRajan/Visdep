@@ -11,7 +11,7 @@ const ListRenderer = ({ items }) => (
   </ul>
 );
 
-const Chatbot = () => {
+const Chatbot = ({ onHighlightNodes }) => {
   const [query, setQuery] = useState('');
   const [context, setContext] = useState({});
   const [chatHistory, setChatHistory] = useState([]);
@@ -47,7 +47,18 @@ const Chatbot = () => {
 
     try {
       const res = await API.post('/api/query', { query: currentQuery, context });
-      setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: res.data.response }]);
+
+      // Extract response text (handle both formats)
+      const responseText = res.data.response || res.data;
+      setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: responseText }]);
+
+      // Highlight graph nodes if citations are present
+      if (res.data.highlighted_nodes && onHighlightNodes) {
+        console.log('Chatbot: Received highlighted_nodes:', res.data.highlighted_nodes);
+        onHighlightNodes(res.data.highlighted_nodes);
+      } else {
+        console.log('Chatbot: No highlighted_nodes in response');
+      }
     } catch (error) {
       setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: 'Error querying Visdep' }]);
       console.error('Error querying Visdep:', error);

@@ -3,7 +3,7 @@
 import sqlite3
 import json
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Database path - uses Railway volume in production, local file in development
 # Railway volume is mounted at /data (persistent across restarts)
@@ -330,3 +330,73 @@ def invalidate_cache_for_repo(repo_id: int):
         # Graceful degradation: if invalidation fails, log but don't crash
         import logging
         logging.warning(f"Cache invalidation failed: {e}, continuing anyway")
+
+
+# ============================================================================
+# CITATION MAPPING FUNCTIONS (Phase 3 - Graph Highlighting)
+# ============================================================================
+
+def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
+    """
+    Map a single citation (file + line range) to chunk_id
+
+    Args:
+        citation: {'file': 'main.py', 'start_line': 42, 'end_line': 68}
+        repo_id: Repository ID
+
+    Returns:
+        chunk_id if found, None otherwise
+    """
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        # Find chunk that contains this line range
+        # Strategy: Find the smallest chunk that contains the citation's start_line
+        cursor.execute('''
+            SELECT chunk_id FROM chunks
+            WHERE repo_id = ?
+            AND file_path = ?
+            AND start_line <= ?
+            AND end_line >= ?
+            ORDER BY (end_line - start_line) ASC
+            LIMIT 1
+        ''', (repo_id, citation['file'], citation['start_line'], citation['start_line']))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return row[0] if row else None
+
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to map citation to chunk: {e}")
+        return None
+
+
+def map_citations_to_chunk_ids(citations: List[Dict[str, Any]], repo_id: int) -> List[str]:
+    """
+    Map multiple citations to chunk IDs for graph highlighting
+
+    Args:
+        citations: List of citation dicts from extract_citations_from_response()
+                  Format: [{'file': 'main.py', 'start_line': 42, 'end_line': 68}, ...]
+        repo_id: Repository ID
+
+    Returns:
+        List of unique chunk_ids (may be shorter than citations if some not found)
+    """
+    if not citations or not repo_id:
+        return []
+
+    chunk_ids = []
+
+    for citation in citations:
+        chunk_id = map_citation_to_chunk_id(citation, repo_id)
+        if chunk_id and chunk_id not in chunk_ids:
+            chunk_ids.append(chunk_id)
+
+    import logging
+    logging.info(f"Mapped {len(citations)} citations to {len(chunk_ids)} unique chunk IDs")
+
+    return chunk_ids

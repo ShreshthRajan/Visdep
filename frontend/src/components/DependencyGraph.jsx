@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import API from '../api';
 
-const DependencyGraph = () => {
+const DependencyGraph = ({ highlightedNodes = [] }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
@@ -19,24 +19,31 @@ const DependencyGraph = () => {
   
 
   const renderGraph = useCallback((data, level) => {
-    const filteredNodes = data.nodes.filter(node => 
+    const filteredNodes = data.nodes.filter(node =>
       selectedNodeTypes[node.type] && node.level <= level
     );
-    const nodes = new DataSet(filteredNodes.map(node => ({
-      ...node,
-      shape: getNodeShape(node.type),
-      color: getNodeColor(node.type),
-      font: {
-        size: 12,
-        face: 'Arial',
-        color: '#000000',
-        multi: true,
-        align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
-        valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
-      },
-      size: getNodeSize(node),
-      label: getNodeLabel(node),
-    })));
+    const nodes = new DataSet(filteredNodes.map(node => {
+      // Check if this node should be highlighted
+      const isHighlighted = highlightedNodes.includes(node.id);
+
+      return {
+        ...node,
+        shape: getNodeShape(node.type),
+        color: isHighlighted
+          ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted nodes
+          : getNodeColor(node.type),  // Normal color
+        font: {
+          size: 12,
+          face: 'Arial',
+          color: '#000000',
+          multi: true,
+          align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
+          valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
+        },
+        size: getNodeSize(node),
+        label: getNodeLabel(node),
+      };
+    }));
   
     const filteredEdges = data.edges.filter(edge => {
       const fromNode = filteredNodes.find(node => node.id === edge.source);
@@ -152,7 +159,15 @@ const DependencyGraph = () => {
       }
     });
 
-  }, [selectedNodeTypes, currentLevel]);
+  }, [selectedNodeTypes, currentLevel, highlightedNodes]);
+
+  // Re-render graph when highlighted nodes change
+  useEffect(() => {
+    if (graphData && highlightedNodes.length > 0) {
+      console.log('DependencyGraph: Highlighting nodes:', highlightedNodes);
+      renderGraph(graphData, currentLevel);
+    }
+  }, [highlightedNodes, graphData, currentLevel, renderGraph]);
 
   useEffect(() => {
     const fetchGraphData = async () => {

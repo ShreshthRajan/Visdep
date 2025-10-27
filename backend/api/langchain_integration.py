@@ -800,11 +800,21 @@ class ChatSession:
         # Step 6: Extract citations from response
         citations = extract_citations_from_response(response_text)
 
-        # Step 7: Format response with metadata
-        # For now, just return text (metadata will be used by frontend later)
+        # Step 7: Map citations to chunk IDs for graph highlighting
+        highlighted_nodes = []
+        if citations and self.repo_id:
+            from backend.api.data_storage import map_citations_to_chunk_ids
+            highlighted_nodes = map_citations_to_chunk_ids(citations, self.repo_id)
+            logging.info(f"Mapped {len(citations)} citations to {len(highlighted_nodes)} highlighted nodes")
+
+        # Step 8: Return structured response with highlighting data
         logging.info(f"Claude response generated ({len(response_text)} chars, {len(citations)} citations)")
 
-        return response_text
+        return {
+            'response': response_text,
+            'citations': citations,
+            'highlighted_nodes': highlighted_nodes
+        }
 
     async def _chat_with_claude_legacy(self, query: str) -> str:
         """
