@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import API from '../api';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 
@@ -22,7 +22,7 @@ const Chatbot = () => {
   useEffect(() => {
     const fetchContext = async () => {
       try {
-        const contextResponse = await axios.get('http://localhost:8000/api/context');
+        const contextResponse = await API.get('/api/context');
         setContext(contextResponse.data);
       } catch (error) {
         console.error('Error fetching context:', error);
@@ -46,7 +46,7 @@ const Chatbot = () => {
     setIsLoading(true);
 
     try {
-      const res = await axios.post('http://localhost:8000/api/query', { query: currentQuery, context });
+      const res = await API.post('/api/query', { query: currentQuery, context });
       setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: res.data.response }]);
     } catch (error) {
       setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: 'Error querying Visdep' }]);

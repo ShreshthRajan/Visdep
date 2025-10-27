@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import API from '../api';
 
 const Home = () => {
   const [repoUrl, setRepoUrl] = useState('');
@@ -13,7 +13,7 @@ const Home = () => {
     if (!repoUrl.trim()) return;
     try {
       setIsLoading(true);
-      const response = await axios.post('http://localhost:8000/api/upload_repo', {
+      const response = await API.post('/api/upload_repo', {
         repo_url: repoUrl,
         sub_directory: subDirectory.trim() || undefined
       });
