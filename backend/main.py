@@ -101,8 +101,12 @@ async def upload_repo(link: RepoLink):
         logging.debug("Processing repository into chunks...")
         chunks = process_repository_to_chunks(parsed_data)
         chunk_stats = get_chunk_stats(chunks)
-        logging.info(f"Generated {chunk_stats['total']} chunks from {chunk_stats.get('files_processed', 0)} files")
-        logging.info(f"Chunk types: {chunk_stats.get('by_type', {})}")
+
+        # Enhanced logging for method-level chunking
+        logging.info(f"📊 CHUNKING STATS: Generated {chunk_stats['total']} chunks from {chunk_stats.get('files_processed', 0)} files")
+        logging.info(f"   By type: {chunk_stats.get('by_type', {})}")
+        logging.info(f"   Token stats: avg={chunk_stats.get('avg_tokens', 0):.0f}, max={chunk_stats.get('max_tokens', 0)}, >800tok={chunk_stats.get('chunks_over_800_tokens', 0)}")
+        logging.info(f"   Truncated: {chunk_stats.get('chunks_truncated', 0)} chunks")
 
         # Store chunks in database
         store_chunks_batch(repo_id, chunks)

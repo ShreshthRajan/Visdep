@@ -18,24 +18,85 @@ def parse_python_file(file_path: str) -> ast.AST:
     return tree
 
 def extract_python_info(tree: ast.AST) -> Dict[str, Any]:
+    """
+    Extract structured Python code information with method-level granularity.
+
+    Returns:
+        {
+            'functions': [{'name': 'func', 'lineno': 10, 'end_lineno': 25, ...}],
+            'classes': [{'name': 'Session', 'lineno': 50, 'end_lineno': 200,
+                        'methods': [{'name': 'request', 'lineno': 60, ...}]}],
+            'imports': ['os', 'sys.path', ...]
+        }
+    """
     info = {
         "functions": [],
         "classes": [],
         "imports": []
     }
 
-    for node in ast.walk(tree):
+    # Use tree.body (not ast.walk) to preserve hierarchy and distinguish
+    # top-level functions from class methods
+    for node in tree.body:
         if isinstance(node, ast.FunctionDef):
-            info["functions"].append(node.name)
+            # Top-level function
+            info["functions"].append({
+                "name": node.name,
+                "lineno": node.lineno,
+                "end_lineno": node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                "is_async": isinstance(node, ast.AsyncFunctionDef),
+                "decorators": [ast.unparse(d) for d in node.decorator_list] if node.decorator_list else []
+            })
+
+        elif isinstance(node, ast.AsyncFunctionDef):
+            # Top-level async function
+            info["functions"].append({
+                "name": node.name,
+                "lineno": node.lineno,
+                "end_lineno": node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                "is_async": True,
+                "decorators": [ast.unparse(d) for d in node.decorator_list] if node.decorator_list else []
+            })
+
         elif isinstance(node, ast.ClassDef):
-            info["classes"].append(node.name)
+            # Class with structured method information
+            methods = []
+            class_docstring_lines = 0
+
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) or isinstance(item, ast.AsyncFunctionDef):
+                    # Method within class
+                    methods.append({
+                        "name": item.name,
+                        "lineno": item.lineno,
+                        "end_lineno": item.end_lineno if hasattr(item, 'end_lineno') else item.lineno,
+                        "is_async": isinstance(item, ast.AsyncFunctionDef),
+                        "decorators": [ast.unparse(d) for d in item.decorator_list] if item.decorator_list else []
+                    })
+                elif isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant):
+                    # Class docstring (count lines for definition extraction)
+                    if isinstance(item.value.value, str):
+                        class_docstring_lines = len(item.value.value.split('\n'))
+
+            info["classes"].append({
+                "name": node.name,
+                "lineno": node.lineno,
+                "end_lineno": node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                "methods": methods,
+                "docstring_lines": class_docstring_lines,
+                "decorators": [ast.unparse(d) for d in node.decorator_list] if node.decorator_list else [],
+                "bases": [ast.unparse(base) for base in node.bases] if node.bases else []
+            })
+
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 info["imports"].append(alias.name)
+
         elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                info["imports"].append(f"{node.module}.{alias.name}")
-    
+            if node.module:
+                for alias in node.names:
+                    info["imports"].append(f"{node.module}.{alias.name}")
+
     return info
 
 # JavaScript AST Parsing (using esprima)
