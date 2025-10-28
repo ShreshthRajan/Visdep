@@ -347,8 +347,9 @@ class ChatSession:
         logging.info(f"Creating FAISS index with {len(documents)} documents")
 
         # Always use manual batching to prevent OpenAI token limit errors
-        # BATCH_SIZE=350 guarantees safety: 350 chunks × 800 tokens/chunk = 280K tokens < 300K limit
-        BATCH_SIZE = 350
+        # BATCH_SIZE=200 guarantees safety: 200 chunks × 1200 tokens/chunk = 240K tokens < 300K limit
+        # Ultra-conservative to handle repos with very large chunks (entire classes with all methods)
+        BATCH_SIZE = 200
         vector_stores = []
 
         total_batches = (len(documents) + BATCH_SIZE - 1) // BATCH_SIZE
