@@ -341,37 +341,39 @@ class ChatSession:
         # Use OpenAI embeddings (Step 1 baseline)
         embeddings = OpenAIEmbeddings(
             api_key=os.getenv("OPENAI_API_KEY"),
-            model="text-embedding-3-large",
-            chunk_size=500  # Conservative: 500 docs × ~400 tokens = 200K tokens (safe under 300K limit)
+            model="text-embedding-3-large"
         )
 
         logging.info(f"Creating FAISS index with {len(documents)} documents")
 
-        # For very large repos (>2000 chunks), use manual batching with FAISS merging
-        if len(documents) > 2000:
-            logging.info(f"Large repo detected ({len(documents)} docs), using manual batching...")
-            BATCH_SIZE = 500
-            vector_stores = []
+        # Always use manual batching to prevent OpenAI token limit errors
+        # BATCH_SIZE=350 guarantees safety: 350 chunks × 800 tokens/chunk = 280K tokens < 300K limit
+        BATCH_SIZE = 350
+        vector_stores = []
 
-            for i in range(0, len(documents), BATCH_SIZE):
-                batch = documents[i:i + BATCH_SIZE]
-                batch_num = (i // BATCH_SIZE) + 1
-                total_batches = (len(documents) + BATCH_SIZE - 1) // BATCH_SIZE
-                logging.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} documents)...")
+        total_batches = (len(documents) + BATCH_SIZE - 1) // BATCH_SIZE
+        logging.info(f"Processing embeddings in {total_batches} batch(es) of up to {BATCH_SIZE} documents each...")
 
-                batch_store = await FAISS.afrom_documents(batch, embeddings)
-                vector_stores.append(batch_store)
+        for i in range(0, len(documents), BATCH_SIZE):
+            batch = documents[i:i + BATCH_SIZE]
+            batch_num = (i // BATCH_SIZE) + 1
+            logging.info(f"Embedding batch {batch_num}/{total_batches} ({len(batch)} documents)...")
 
-            # Merge all FAISS indexes into the first one
+            batch_store = await FAISS.afrom_documents(batch, embeddings)
+            vector_stores.append(batch_store)
+            logging.info(f"Batch {batch_num}/{total_batches} complete")
+
+        # Merge all FAISS indexes into the first one
+        if len(vector_stores) > 1:
             logging.info(f"Merging {len(vector_stores)} FAISS indexes...")
             vector_store = vector_stores[0]
-            for store in vector_stores[1:]:
+            for idx, store in enumerate(vector_stores[1:], 1):
                 vector_store.merge_from(store)
-
-            logging.info(f"Successfully created merged FAISS index with {len(documents)} documents")
+                logging.info(f"Merged index {idx+1}/{len(vector_stores)}")
         else:
-            # Normal repos: standard flow
-            vector_store = await FAISS.afrom_documents(documents, embeddings)
+            vector_store = vector_stores[0]
+
+        logging.info(f"Successfully created FAISS index with {len(documents)} documents")
 
         # Task 2.2: Save FAISS index to disk for fast loading next time
         if repo_id:
