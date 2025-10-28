@@ -342,11 +342,36 @@ class ChatSession:
         embeddings = OpenAIEmbeddings(
             api_key=os.getenv("OPENAI_API_KEY"),
             model="text-embedding-3-large",
-            chunk_size=1000  # Process max 1000 documents per API call (safety: ~200K tokens)
+            chunk_size=500  # Conservative: 500 docs × ~400 tokens = 200K tokens (safe under 300K limit)
         )
 
         logging.info(f"Creating FAISS index with {len(documents)} documents")
-        vector_store = await FAISS.afrom_documents(documents, embeddings)
+
+        # For very large repos (>2000 chunks), use manual batching with FAISS merging
+        if len(documents) > 2000:
+            logging.info(f"Large repo detected ({len(documents)} docs), using manual batching...")
+            BATCH_SIZE = 500
+            vector_stores = []
+
+            for i in range(0, len(documents), BATCH_SIZE):
+                batch = documents[i:i + BATCH_SIZE]
+                batch_num = (i // BATCH_SIZE) + 1
+                total_batches = (len(documents) + BATCH_SIZE - 1) // BATCH_SIZE
+                logging.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} documents)...")
+
+                batch_store = await FAISS.afrom_documents(batch, embeddings)
+                vector_stores.append(batch_store)
+
+            # Merge all FAISS indexes into the first one
+            logging.info(f"Merging {len(vector_stores)} FAISS indexes...")
+            vector_store = vector_stores[0]
+            for store in vector_stores[1:]:
+                vector_store.merge_from(store)
+
+            logging.info(f"Successfully created merged FAISS index with {len(documents)} documents")
+        else:
+            # Normal repos: standard flow
+            vector_store = await FAISS.afrom_documents(documents, embeddings)
 
         # Task 2.2: Save FAISS index to disk for fast loading next time
         if repo_id:
