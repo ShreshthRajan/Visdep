@@ -276,6 +276,85 @@ async def get_chunks(repo_id: int):
         logging.error(f"Error in get_chunks: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
+@app.get("/api/debug/chunks/{repo_id}")
+async def debug_chunks(repo_id: int, search: Optional[str] = None):
+    """
+    DEBUG ENDPOINT: Inspect chunks and search results
+
+    Usage:
+    - /api/debug/chunks/1 - List all chunks for repo
+    - /api/debug/chunks/1?search=route - Search chunks by name/file
+    """
+    try:
+        chunks = retrieve_chunks(repo_id)
+
+        if search:
+            # Filter chunks matching search term
+            matching = [c for c in chunks if search.lower() in c['name'].lower() or search.lower() in c['file_path'].lower()]
+            return {
+                "total_chunks": len(chunks),
+                "search_term": search,
+                "matching_chunks": len(matching),
+                "results": [
+                    {
+                        "chunk_id": c['chunk_id'],
+                        "name": c['name'],
+                        "type": c['type'],
+                        "file": c['file_path'],
+                        "lines": f"{c['start_line']}-{c['end_line']}",
+                        "code_preview": c['code'][:200] + "..." if len(c['code']) > 200 else c['code']
+                    }
+                    for c in matching[:20]
+                ]
+            }
+        else:
+            # Return summary stats
+            by_type = {}
+            by_file = {}
+            for c in chunks:
+                by_type[c['type']] = by_type.get(c['type'], 0) + 1
+                by_file[c['file_path']] = by_file.get(c['file_path'], 0) + 1
+
+            return {
+                "total_chunks": len(chunks),
+                "by_type": by_type,
+                "files_with_chunks": len(by_file),
+                "sample_chunk_ids": [c['chunk_id'] for c in chunks[:10]]
+            }
+    except Exception as e:
+        logging.error(f"Error in debug_chunks: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+@app.get("/api/debug/graph")
+async def debug_graph():
+    """
+    DEBUG ENDPOINT: Inspect current dependency graph structure
+
+    Returns info about nodes and their IDs
+    """
+    try:
+        graph = load_graph_from_json("dependency_graph.json")
+        data = json_graph.node_link_data(graph)
+
+        nodes_by_type = {}
+        for node in data["nodes"]:
+            node_type = node.get('type', 'unknown')
+            nodes_by_type[node_type] = nodes_by_type.get(node_type, 0) + 1
+
+        return {
+            "total_nodes": len(data["nodes"]),
+            "total_edges": len(data["links"]),
+            "nodes_by_type": nodes_by_type,
+            "sample_node_ids": [n['id'] for n in data["nodes"][:10]],
+            "sample_nodes": [
+                {"id": n['id'], "type": n.get('type', '?'), "label": n.get('label', '?')}
+                for n in data["nodes"][:10]
+            ]
+        }
+    except Exception as e:
+        logging.error(f"Error in debug_graph: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
 # Include the chatbot router
 app.include_router(chatbot_router, prefix="/api")
 

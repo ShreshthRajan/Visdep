@@ -46,7 +46,16 @@ const Chatbot = ({ onHighlightNodes }) => {
     setIsLoading(true);
 
     try {
+      console.log('🔍 CHATBOT DEBUG: Sending query:', currentQuery);
       const res = await API.post('/api/query', { query: currentQuery, context });
+
+      console.log('📦 CHATBOT DEBUG: Received response:', {
+        hasResponse: !!res.data.response,
+        hasCitations: !!res.data.citations,
+        hasHighlightedNodes: !!res.data.highlighted_nodes,
+        citationCount: res.data.citations?.length || 0,
+        highlightedNodeCount: res.data.highlighted_nodes?.length || 0
+      });
 
       // Extract response text (handle both formats)
       const responseText = res.data.response || res.data;
@@ -54,14 +63,22 @@ const Chatbot = ({ onHighlightNodes }) => {
 
       // Highlight graph nodes if citations are present
       if (res.data.highlighted_nodes && onHighlightNodes) {
-        console.log('Chatbot: Received highlighted_nodes:', res.data.highlighted_nodes);
+        console.log('✅ CHATBOT: Calling onHighlightNodes with:', res.data.highlighted_nodes);
         onHighlightNodes(res.data.highlighted_nodes);
-      } else {
-        console.log('Chatbot: No highlighted_nodes in response');
+      } else if (!res.data.highlighted_nodes) {
+        console.warn('⚠️ CHATBOT: No highlighted_nodes in response');
+      } else if (!onHighlightNodes) {
+        console.warn('⚠️ CHATBOT: onHighlightNodes callback is undefined');
+      }
+
+      // Log full response for debugging
+      if (res.data.citations && res.data.citations.length > 0) {
+        console.log('📑 CHATBOT: Citations:', res.data.citations);
       }
     } catch (error) {
       setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: 'Error querying Visdep' }]);
-      console.error('Error querying Visdep:', error);
+      console.error('❌ CHATBOT ERROR:', error);
+      console.error('Error details:', error.response?.data);
     } finally {
       setIsLoading(false);
     }

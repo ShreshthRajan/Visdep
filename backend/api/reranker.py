@@ -53,6 +53,13 @@ class CodeReranker:
         if not chunks:
             return []
 
+        logging.info(f"🔄 RERANKER DEBUG: Reranking {len(chunks)} chunks for query: '{query}'")
+
+        # Log input chunks before reranking
+        logging.info(f"   Input chunks before reranking:")
+        for i, chunk in enumerate(chunks[:5], 1):
+            logging.info(f"     {i}. {chunk['name']} in {chunk['file_path']}:{chunk.get('start_line', '?')}")
+
         # Create (query, chunk) pairs for cross-encoder
         pairs = []
         for chunk in chunks:
@@ -76,7 +83,14 @@ class CodeReranker:
         # Return top-k
         top_chunks = scored_chunks[:top_k]
 
-        logging.info(f"Reranked {len(chunks)} chunks to top {len(top_chunks)}")
+        logging.info(f"✅ Reranked {len(chunks)} chunks to top {len(top_chunks)}")
+
+        # Log reranked results
+        logging.info(f"   Top 3 after reranking:")
+        for i, chunk in enumerate(top_chunks[:3], 1):
+            score = chunk.get('rerank_score', 0)
+            logging.info(f"     {i}. {chunk['name']} (score: {score:.3f}) in {chunk['file_path']}:{chunk.get('start_line', '?')}")
+
         return top_chunks
 
 

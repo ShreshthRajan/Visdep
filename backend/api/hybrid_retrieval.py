@@ -321,36 +321,57 @@ class HybridRetriever:
         Returns:
             List of ranked chunks with scores
         """
-        logging.info(f"Hybrid search for query: {query}")
+        logging.info(f"🔍 HYBRID SEARCH DEBUG: Query = '{query}'")
 
         # Step 1: BM25 search
         bm25_results = self.bm25_search(query, top_k=bm25_k)
+        logging.info(f"📊 BM25: Retrieved {len(bm25_results)} results")
+        if bm25_results:
+            top_3_bm25 = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score)
+                          for cid, score in bm25_results[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 BM25: {top_3_bm25}")
 
         # Step 2: Vector search
         vector_results = self.vector_search(query, top_k=vector_k)
+        logging.info(f"📊 Vector: Retrieved {len(vector_results)} results")
+        if vector_results:
+            top_3_vector = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score)
+                            for cid, score in vector_results[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 Vector: {top_3_vector}")
 
         # Step 3: Reciprocal Rank Fusion
         fused_results = self.reciprocal_rank_fusion(bm25_results, vector_results)
+        logging.info(f"📊 RRF Fusion: {len(fused_results)} unique results")
 
         # Take top 50 from fusion
         top_fused = [chunk_id for chunk_id, _ in fused_results[:50]]
+        if top_fused:
+            top_3_fused = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'])
+                           for cid in top_fused[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 Fused: {top_3_fused}")
 
         # Step 4: Graph expansion (optional)
         if expand:
             expanded_ids = self.expand_with_graph(top_fused, max_expand=expand_max)
+            added = len(expanded_ids) - len(top_fused)
+            logging.info(f"📊 Graph Expansion: Added {added} chunks ({len(top_fused)} → {len(expanded_ids)})")
         else:
             expanded_ids = top_fused
 
         # Step 5: Build similarity scores cache from vector search results
-        # This avoids re-embedding each chunk in multi_factor_ranking (saves 60-80 API calls!)
         similarity_cache = {chunk_id: score for chunk_id, score in vector_results}
         logging.debug(f"Built similarity cache with {len(similarity_cache)} scores")
 
         # Step 6: Multi-factor ranking with cached scores
         ranked = self.multi_factor_ranking(expanded_ids, query, similarity_cache=similarity_cache)
+        logging.info(f"📊 Multi-Factor Ranking: Scored {len(ranked)} chunks")
 
         # Step 7: Get top-k chunks
         final_chunk_ids = [chunk_id for chunk_id, _ in ranked[:top_k]]
+        if final_chunk_ids:
+            top_3_ranked = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score_map.get(cid, 0))
+                            for cid in final_chunk_ids[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 Final: {top_3_ranked}")
 
         # Step 8: Return full chunk objects with scores
         results = []
@@ -362,7 +383,12 @@ class HybridRetriever:
                 chunk['relevance_score'] = score_map[chunk_id]
                 results.append(chunk)
 
-        logging.info(f"Hybrid search returned {len(results)} chunks")
+        logging.info(f"✅ Hybrid search returned {len(results)} chunks")
+
+        # DEBUG: Log full details of top 3 results
+        for i, chunk in enumerate(results[:3], 1):
+            logging.info(f"   Result {i}: {chunk['name']} ({chunk['type']}) in {chunk['file_path']}:{chunk['start_line']}-{chunk['end_line']}")
+
         return results
 
 

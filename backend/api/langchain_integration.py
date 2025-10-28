@@ -830,13 +830,28 @@ class ChatSession:
 
         # Step 7: Map citations to chunk IDs for graph highlighting
         highlighted_nodes = []
+        logging.info(f"🎯 HIGHLIGHTING DEBUG: Extracted {len(citations)} citations from Claude response")
+
+        if citations:
+            for i, cite in enumerate(citations, 1):
+                logging.info(f"   Citation {i}: {cite}")
+
         if citations and self.repo_id:
             from backend.api.data_storage import map_citations_to_chunk_ids
             highlighted_nodes = map_citations_to_chunk_ids(citations, self.repo_id)
-            logging.info(f"Mapped {len(citations)} citations to {len(highlighted_nodes)} highlighted nodes")
+            logging.info(f"✅ Mapped {len(citations)} citations to {len(highlighted_nodes)} highlighted nodes")
+        elif not citations:
+            logging.warning(f"⚠️ No citations found in Claude response - cannot highlight nodes")
+        elif not self.repo_id:
+            logging.warning(f"⚠️ No repo_id available - cannot map citations to chunks")
 
         # Step 8: Return structured response with highlighting data
-        logging.info(f"Claude response generated ({len(response_text)} chars, {len(citations)} citations)")
+        logging.info(f"📤 RESPONSE DEBUG: Returning structured response:")
+        logging.info(f"   - Response text: {len(response_text)} chars")
+        logging.info(f"   - Citations: {len(citations)}")
+        logging.info(f"   - Highlighted nodes: {len(highlighted_nodes)}")
+        if highlighted_nodes:
+            logging.info(f"   - Node IDs: {highlighted_nodes}")
 
         return {
             'response': response_text,

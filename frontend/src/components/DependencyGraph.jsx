@@ -163,9 +163,28 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
 
   // Re-render graph when highlighted nodes change
   useEffect(() => {
+    console.log('🎨 GRAPH DEBUG: highlightedNodes changed:', highlightedNodes);
+
     if (graphData && highlightedNodes.length > 0) {
-      console.log('DependencyGraph: Highlighting nodes:', highlightedNodes);
+      console.log('✅ GRAPH: Re-rendering with highlights...');
+      console.log('   Graph has', graphData.nodes.length, 'nodes');
+      console.log('   Attempting to highlight:', highlightedNodes);
+
+      // Check if any highlighted nodes exist in graph
+      const matchingNodes = graphData.nodes.filter(node => highlightedNodes.includes(node.id));
+      console.log('   Matching nodes found:', matchingNodes.length);
+
+      if (matchingNodes.length === 0) {
+        console.warn('⚠️ GRAPH: No matching nodes found! Highlighted IDs don\'t match graph node IDs');
+        console.warn('   Sample highlighted ID:', highlightedNodes[0]);
+        console.warn('   Sample graph node ID:', graphData.nodes[0]?.id);
+      } else {
+        console.log('✅ GRAPH: Found matching nodes:', matchingNodes.map(n => n.id));
+      }
+
       renderGraph(graphData, currentLevel);
+    } else if (highlightedNodes.length === 0) {
+      console.log('ℹ️ GRAPH: No nodes to highlight (empty array)');
     }
   }, [highlightedNodes, graphData, currentLevel, renderGraph]);
 

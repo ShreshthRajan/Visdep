@@ -386,17 +386,32 @@ def map_citations_to_chunk_ids(citations: List[Dict[str, Any]], repo_id: int) ->
     Returns:
         List of unique chunk_ids (may be shorter than citations if some not found)
     """
+    import logging
+
     if not citations or not repo_id:
+        logging.warning(f"⚠️ Citation mapping skipped: citations={len(citations) if citations else 0}, repo_id={repo_id}")
         return []
+
+    logging.info(f"🎯 CITATION MAPPING DEBUG: Processing {len(citations)} citations for repo_id={repo_id}")
 
     chunk_ids = []
 
-    for citation in citations:
-        chunk_id = map_citation_to_chunk_id(citation, repo_id)
-        if chunk_id and chunk_id not in chunk_ids:
-            chunk_ids.append(chunk_id)
+    for i, citation in enumerate(citations, 1):
+        logging.info(f"   Citation {i}: {citation.get('file', '?')}:{citation.get('start_line', '?')}-{citation.get('end_line', '?')}")
 
-    import logging
-    logging.info(f"Mapped {len(citations)} citations to {len(chunk_ids)} unique chunk IDs")
+        chunk_id = map_citation_to_chunk_id(citation, repo_id)
+
+        if chunk_id:
+            if chunk_id not in chunk_ids:
+                chunk_ids.append(chunk_id)
+                logging.info(f"     ✅ Mapped to chunk_id: {chunk_id}")
+            else:
+                logging.info(f"     ⚠️ Duplicate chunk_id (skipped): {chunk_id}")
+        else:
+            logging.warning(f"     ❌ No chunk found for citation: {citation.get('file', '?')}:{citation.get('start_line', '?')}")
+
+    logging.info(f"✅ Final mapping: {len(citations)} citations → {len(chunk_ids)} unique chunk IDs")
+    if chunk_ids:
+        logging.info(f"   Highlighted chunks: {chunk_ids}")
 
     return chunk_ids
