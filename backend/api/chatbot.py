@@ -44,7 +44,6 @@ router = APIRouter()
 
 
 
-
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 
