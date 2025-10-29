@@ -16,10 +16,18 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     # First pass: collect all files and methods
     for file_path, file_info in ast_data.items():
         files.add(file_path)
-        for func in file_info.get("functions", []):
-            methods[func] = file_path
-        for cls in file_info.get("classes", []):
-            methods[cls] = file_path
+
+        # Handle both OLD format (strings) and NEW format (dicts)
+        functions = file_info.get("functions", [])
+        classes = file_info.get("classes", [])
+
+        for func in functions:
+            func_name = func['name'] if isinstance(func, dict) else func
+            methods[func_name] = file_path
+
+        for cls in classes:
+            cls_name = cls['name'] if isinstance(cls, dict) else cls
+            methods[cls_name] = file_path
 
     # Second pass: create nodes and edges
     for file_path, file_info in ast_data.items():
@@ -32,7 +40,11 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
         classes = file_info.get("classes", [])
         imports = file_info.get("imports", [])
 
-        file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(functions)}\nClasses: {', '.join(classes)}"
+        # Extract names (handle both string and dict formats)
+        func_names = [f['name'] if isinstance(f, dict) else f for f in functions]
+        class_names = [c['name'] if isinstance(c, dict) else c for c in classes]
+
+        file_label = f"{os.path.basename(file_path)}\nFunctions: {', '.join(func_names)}\nClasses: {', '.join(class_names)}"
         G.add_node(file_path, type="file", label=file_label, shape="ellipse", level=file_path.count('/') + 1)
 
         file_extension = os.path.splitext(file_path)[1].lower()

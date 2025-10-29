@@ -338,7 +338,7 @@ def invalidate_cache_for_repo(repo_id: int):
 
 def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
     """
-    Map a single citation (file + line range) to chunk_id
+    Map a single citation (file + line range) to chunk_id with fuzzy file path matching.
 
     Args:
         citation: {'file': 'main.py', 'start_line': 42, 'end_line': 68}
@@ -348,11 +348,13 @@ def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
         chunk_id if found, None otherwise
     """
     try:
+        import logging
         conn = sqlite3.connect(DATABASE_PATH)
         cursor = conn.cursor()
 
-        # Find chunk that contains this line range
-        # Strategy: Find the smallest chunk that contains the citation's start_line
+        cited_file = citation['file']
+
+        # Try exact match first
         cursor.execute('''
             SELECT chunk_id FROM chunks
             WHERE repo_id = ?
@@ -361,9 +363,27 @@ def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
             AND end_line >= ?
             ORDER BY (end_line - start_line) ASC
             LIMIT 1
-        ''', (repo_id, citation['file'], citation['start_line'], citation['start_line']))
+        ''', (repo_id, cited_file, citation['start_line'], citation['start_line']))
 
         row = cursor.fetchone()
+
+        # If no exact match, try fuzzy matching (file_path ends with cited filename)
+        if not row:
+            cursor.execute('''
+                SELECT chunk_id, file_path FROM chunks
+                WHERE repo_id = ?
+                AND file_path LIKE ?
+                AND start_line <= ?
+                AND end_line >= ?
+                ORDER BY (end_line - start_line) ASC
+                LIMIT 1
+            ''', (repo_id, f'%{cited_file}', citation['start_line'], citation['start_line']))
+
+            row = cursor.fetchone()
+
+            if row:
+                logging.debug(f"Fuzzy matched citation '{cited_file}' to chunk file_path '{row[1]}'")
+
         conn.close()
 
         return row[0] if row else None

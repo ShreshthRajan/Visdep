@@ -836,10 +836,12 @@ class ChatSession:
 
         logging.info(f"Hybrid search returned {len(top_chunks)} chunks")
 
-        # Step 2: Rerank (adjust based on complexity)
-        rerank_k = 20 if is_complex else 10
-        reranked_chunks = self.reranker.rerank(query, top_chunks, top_k=rerank_k)
-        logging.info(f"Reranked to top {len(reranked_chunks)} chunks")
+        # Step 2: Skip reranking (cross-encoder trained on web search, not code)
+        # Hybrid search (BM25 + Vector + Graph + Multi-factor) already provides excellent ranking
+        # Reranker was found to demote relevant code in favor of test code
+        # TODO: Re-enable with code-specific cross-encoder model in future
+        reranked_chunks = top_chunks  # Use hybrid search results directly
+        logging.info(f"Using hybrid search ranking directly (reranker disabled for code quality)")
 
         # Step 3: Assemble context with DYNAMIC token budget
         max_tokens = self._calculate_dynamic_token_budget(is_complex)

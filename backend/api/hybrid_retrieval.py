@@ -48,23 +48,78 @@ class HybridRetriever:
         logging.info(f"HybridRetriever initialized with {len(chunks)} chunks")
 
     def _build_bm25_index(self):
-        """Build BM25 index over chunk code + names"""
+        """
+        Build BM25 index with optimized tokenization for code search.
+
+        Enhancements:
+        - Name boosting: Repeat chunk name for higher BM25 scores
+        - Keyword expansion: Include parent class, method name separately
+        - Smart tokenization: Strip punctuation, handle camelCase
+        """
         corpus = []
         self.chunk_ids = []
 
         for chunk in self.chunks:
-            # Combine code, name, file path for indexing
-            text = f"{chunk['name']} {chunk['file_path']} {chunk['code']}"
+            # Extract keywords for better matching
+            keywords = [chunk['name']]  # Full name: 'Session.request'
+
+            # Add parent class if it's a method
+            if chunk.get('metadata', {}).get('parent_class'):
+                parent = chunk['metadata']['parent_class']
+                keywords.append(parent)  # 'Session'
+
+                # Add method name without class
+                if '.' in chunk['name']:
+                    method_only = chunk['name'].split('.')[-1]
+                    keywords.append(method_only)  # 'request'
+
+            # Add type for semantic search
+            keywords.append(chunk['type'])  # 'method', 'function', etc.
+
+            # Name boosting: Repeat name 5x for higher BM25 score
+            # This ensures name matches rank higher than code content matches
+            name_boosted = (chunk['name'] + " ") * 5
+
+            # Combine: boosted name + keywords + file path + code
+            text = f"{name_boosted}{' '.join(keywords)} {chunk['file_path']} {chunk['code']}"
             corpus.append(text)
             self.chunk_ids.append(chunk['chunk_id'])
 
-        # Tokenize corpus
-        tokenized_corpus = [doc.lower().split() for doc in corpus]
+        # Tokenize corpus with smart tokenization
+        tokenized_corpus = [self._tokenize_for_bm25(doc) for doc in corpus]
 
         # Build BM25 index
         self.bm25 = BM25Okapi(tokenized_corpus)
 
         logging.info(f"BM25 index built with {len(corpus)} documents")
+
+    def _tokenize_for_bm25(self, text: str) -> List[str]:
+        """
+        Smart tokenization for BM25 that handles code-specific patterns.
+
+        - Strips punctuation: 'Session.request()' → 'session' 'request'
+        - Handles camelCase: 'HTTPAdapter' → 'http' 'adapter'
+        - Preserves dotted names: Also keeps 'session.request' as full token
+        """
+        import re
+
+        # Lowercase
+        text = text.lower()
+
+        # Extract dotted names as full tokens (preserve 'session.request')
+        dotted_pattern = r'\b\w+\.\w+\b'
+        dotted_names = re.findall(dotted_pattern, text)
+
+        # Standard word tokenization (splits on punctuation and whitespace)
+        # This breaks 'Session.request()' → 'session', 'request'
+        word_pattern = r'\b[a-z_][a-z0-9_]*\b'
+        words = re.findall(word_pattern, text)
+
+        # Combine: dotted names (full) + individual words
+        # This gives us BOTH 'session.request' AND 'session', 'request'
+        tokens = dotted_names + words
+
+        return tokens
 
     def _compute_pagerank(self):
         """Precompute PageRank centrality scores"""
@@ -77,7 +132,7 @@ class HybridRetriever:
 
     def bm25_search(self, query: str, top_k: int = 100) -> List[Tuple[str, float]]:
         """
-        BM25 keyword search
+        BM25 keyword search with smart query tokenization.
 
         Args:
             query: Search query
@@ -86,7 +141,9 @@ class HybridRetriever:
         Returns:
             List of (chunk_id, score) tuples
         """
-        tokenized_query = query.lower().split()
+        # Use same smart tokenization as indexing
+        tokenized_query = self._tokenize_for_bm25(query)
+
         scores = self.bm25.get_scores(tokenized_query)
 
         # Get top-k indices
@@ -368,14 +425,16 @@ class HybridRetriever:
 
         # Step 7: Get top-k chunks
         final_chunk_ids = [chunk_id for chunk_id, _ in ranked[:top_k]]
-        if final_chunk_ids:
-            top_3_ranked = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score_map.get(cid, 0))
-                            for cid in final_chunk_ids[:3] if cid in self.chunk_index]
-            logging.info(f"   Top 3 Final: {top_3_ranked}")
 
         # Step 8: Return full chunk objects with scores
         results = []
         score_map = dict(ranked)
+
+        # Log top 3 final results (after score_map is created)
+        if final_chunk_ids:
+            top_3_ranked = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score_map.get(cid, 0))
+                            for cid in final_chunk_ids[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 Final: {top_3_ranked}")
 
         for chunk_id in final_chunk_ids:
             if chunk_id in self.chunk_index:
