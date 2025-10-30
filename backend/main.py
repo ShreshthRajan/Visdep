@@ -11,7 +11,7 @@ from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, store_chunks_batch, retrieve_chunks
 from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
-from backend.api.graph_generator import create_dependency_graph, save_graph_as_json, load_graph_from_json
+from backend.api.graph_generator import create_dependency_graph, create_chunk_level_graph, save_graph_as_json, load_graph_from_json
 from networkx.readwrite import json_graph
 from dotenv import load_dotenv
 from typing import Optional
@@ -117,7 +117,19 @@ async def upload_repo(link: RepoLink):
             json.dump(parsed_data, context_file)
 
         # Create and save the dependency graph
-        graph = create_dependency_graph(parsed_data)
+        # Auto-detect: Use chunk-level graph if chunks have method-level data
+        has_method_level_chunks = any(
+            chunk.get('type') == 'method' or chunk.get('metadata', {}).get('parent_class')
+            for chunk in chunks[:10]  # Check first 10 chunks
+        )
+
+        if has_method_level_chunks:
+            logging.info("Creating chunk-level graph (method-level chunks detected)...")
+            graph = create_chunk_level_graph(chunks)
+        else:
+            logging.info("Creating file-level graph (legacy chunks detected)...")
+            graph = create_dependency_graph(parsed_data)
+
         save_graph_as_json(graph, "dependency_graph.json")
 
         # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
