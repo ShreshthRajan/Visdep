@@ -233,7 +233,11 @@ class HybridRetriever:
             logging.warning("No chunk graph, skipping expansion")
             return chunk_ids
 
-        expanded = set(chunk_ids)
+        # Preserve RRF ranking order by using list instead of set
+        # Original chunk_ids are in RRF order (best first)
+        # Expanded chunks are added to END (lower priority)
+        expanded_list = list(chunk_ids)  # Preserve order
+        expanded_set = set(chunk_ids)  # For fast membership check
         to_explore = list(chunk_ids)
 
         for depth in range(expand_depth):
@@ -245,25 +249,27 @@ class HybridRetriever:
 
                 # Add successors (this chunk imports/calls these)
                 for successor in self.chunk_graph.successors(chunk_id):
-                    if successor not in expanded and len(expanded) < len(chunk_ids) + max_expand:
-                        expanded.add(successor)
+                    if successor not in expanded_set and len(expanded_set) < len(chunk_ids) + max_expand:
+                        expanded_set.add(successor)
+                        expanded_list.append(successor)  # Append to END (preserves RRF order at top)
                         new_to_explore.append(successor)
 
                 # Add predecessors (these chunks import/call this one)
                 for predecessor in self.chunk_graph.predecessors(chunk_id):
-                    if predecessor not in expanded and len(expanded) < len(chunk_ids) + max_expand:
-                        expanded.add(predecessor)
+                    if predecessor not in expanded_set and len(expanded_set) < len(chunk_ids) + max_expand:
+                        expanded_set.add(predecessor)
+                        expanded_list.append(predecessor)  # Append to END
                         new_to_explore.append(predecessor)
 
             to_explore = new_to_explore
 
-            if len(expanded) >= len(chunk_ids) + max_expand:
+            if len(expanded_set) >= len(chunk_ids) + max_expand:
                 break
 
-        added = len(expanded) - len(chunk_ids)
+        added = len(expanded_list) - len(chunk_ids)
         logging.debug(f"Graph expansion added {added} chunks (depth={expand_depth})")
 
-        return list(expanded)
+        return expanded_list
 
     def multi_factor_ranking(
         self,
@@ -415,31 +421,29 @@ class HybridRetriever:
         else:
             expanded_ids = top_fused
 
-        # Step 5: Build similarity scores cache from vector search results
-        similarity_cache = {chunk_id: score for chunk_id, score in vector_results}
-        logging.debug(f"Built similarity cache with {len(similarity_cache)} scores")
+        # Step 5: Use RRF ranking directly (skip multi-factor ranking)
+        # RRF already optimally combines BM25 + Vector + Graph signals
+        # Multi-factor ranking was found to destroy good ranking because:
+        # - Expanded chunks not in vector top-100 get default similarity
+        # - All chunks end up with similar scores (~0.45)
+        # - BM25 ranking signal is lost
+        # Result: Session.request drops from #1 to out of top-20
+        #
+        # By using RRF directly: BM25 + Vector ranking is preserved
+        final_chunk_ids = expanded_ids[:top_k]
 
-        # Step 6: Multi-factor ranking with cached scores
-        ranked = self.multi_factor_ranking(expanded_ids, query, similarity_cache=similarity_cache)
-        logging.info(f"📊 Multi-Factor Ranking: Scored {len(ranked)} chunks")
-
-        # Step 7: Get top-k chunks
-        final_chunk_ids = [chunk_id for chunk_id, _ in ranked[:top_k]]
-
-        # Step 8: Return full chunk objects with scores
-        results = []
-        score_map = dict(ranked)
-
-        # Log top 3 final results (after score_map is created)
+        logging.info(f"📊 Using RRF fusion ranking directly (multi-factor ranking disabled)")
         if final_chunk_ids:
-            top_3_ranked = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'], score_map.get(cid, 0))
-                            for cid in final_chunk_ids[:3] if cid in self.chunk_index]
-            logging.info(f"   Top 3 Final: {top_3_ranked}")
+            top_3_final = [(self.chunk_index[cid]['name'], self.chunk_index[cid]['file_path'])
+                          for cid in final_chunk_ids[:3] if cid in self.chunk_index]
+            logging.info(f"   Top 3 Final: {top_3_final}")
 
-        for chunk_id in final_chunk_ids:
+        # Step 6: Return full chunk objects
+        results = []
+        for i, chunk_id in enumerate(final_chunk_ids):
             if chunk_id in self.chunk_index:
                 chunk = self.chunk_index[chunk_id].copy()
-                chunk['relevance_score'] = score_map[chunk_id]
+                chunk['relevance_score'] = 1.0 / (i + 1)  # Rank-based score
                 results.append(chunk)
 
         logging.info(f"✅ Hybrid search returned {len(results)} chunks")
