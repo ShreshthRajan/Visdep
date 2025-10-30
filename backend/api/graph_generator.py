@@ -1,9 +1,200 @@
 import os
 import networkx as nx
-from typing import Dict, Any
+from typing import Dict, Any, List
 from networkx.readwrite import json_graph
 import json
 from collections import defaultdict
+import logging
+
+
+def create_chunk_level_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
+    """
+    Create dependency graph at chunk/method level for precise code navigation.
+
+    This creates nodes for individual functions, methods, and classes (not just files).
+    Node IDs match chunk IDs exactly, enabling method-level highlighting.
+
+    Args:
+        chunks: List of chunk dictionaries from database
+
+    Returns:
+        NetworkX DiGraph with hierarchical structure:
+        - Level 1-2: Directories
+        - Level 3: Files
+        - Level 4: Functions + Class definitions
+        - Level 5: Methods within classes
+    """
+    G = nx.DiGraph()
+
+    if not chunks:
+        logging.warning("No chunks provided to create_chunk_level_graph")
+        return G
+
+    logging.info(f"Creating chunk-level graph from {len(chunks)} chunks...")
+
+    # Extract unique directories and files from chunks
+    directories = set()
+    files = set()
+    class_definitions = {}  # {file_path: {class_name: chunk_id}}
+
+    for chunk in chunks:
+        file_path = chunk['file_path']
+        files.add(file_path)
+
+        # Extract directory hierarchy
+        dir_path = os.path.dirname(file_path)
+        while dir_path:
+            directories.add(dir_path)
+            dir_path = os.path.dirname(dir_path)
+
+        # Track class definitions for parent-child edges
+        if chunk['type'] == 'class_definition':
+            if file_path not in class_definitions:
+                class_definitions[file_path] = {}
+            class_definitions[file_path][chunk['name']] = chunk['chunk_id']
+
+    # Step 1: Add directory nodes
+    for directory in directories:
+        G.add_node(
+            directory,
+            type="directory",
+            label=os.path.basename(directory) or directory,
+            shape="box",
+            level=directory.count('/') + 1
+        )
+
+    # Step 2: Add file nodes
+    for file_path in files:
+        G.add_node(
+            file_path,
+            type="file",
+            label=os.path.basename(file_path),
+            shape="ellipse",
+            level=file_path.count('/') + 2
+        )
+
+    # Step 3: Add chunk nodes (functions, classes, methods)
+    for chunk in chunks:
+        chunk_id = chunk['chunk_id']
+        chunk_type = chunk['type']
+        name = chunk['name']
+        file_path = chunk['file_path']
+
+        # Determine level based on chunk type
+        if chunk_type == 'method':
+            level = 5  # Methods are deepest level
+        elif chunk_type in ['function', 'class_definition']:
+            level = 4  # Top-level functions and class defs
+        elif chunk_type == 'module_variable':
+            level = 4  # Module variables
+        else:
+            level = 4  # Default
+
+        # Create node with chunk ID as node ID (enables highlighting!)
+        G.add_node(
+            chunk_id,
+            type=chunk_type,
+            label=name,
+            shape=_get_shape_for_chunk_type(chunk_type),
+            file=file_path,
+            lines=f"{chunk.get('start_line', '?')}-{chunk.get('end_line', '?')}",
+            parent_class=chunk.get('metadata', {}).get('parent_class'),
+            level=level
+        )
+
+    # Step 4: Create edges (containment hierarchy)
+
+    # Directory → subdirectory edges
+    for directory in directories:
+        subdirs = [d for d in directories if os.path.dirname(d) == directory]
+        for subdir in subdirs:
+            G.add_edge(directory, subdir, relation="contains")
+
+    # Directory → file edges
+    for directory in directories:
+        for file_path in files:
+            if os.path.dirname(file_path) == directory:
+                G.add_edge(directory, file_path, relation="contains")
+
+    # File → chunk edges (file contains functions/classes)
+    for chunk in chunks:
+        chunk_id = chunk['chunk_id']
+        file_path = chunk['file_path']
+        chunk_type = chunk['type']
+
+        # File contains top-level functions and class definitions
+        if chunk_type in ['function', 'class_definition', 'module_variable']:
+            if file_path in G and chunk_id in G:
+                G.add_edge(file_path, chunk_id, relation="contains")
+
+    # Class → method edges (class contains methods)
+    for chunk in chunks:
+        if chunk['type'] == 'method':
+            chunk_id = chunk['chunk_id']
+            parent_class = chunk.get('metadata', {}).get('parent_class')
+            file_path = chunk['file_path']
+
+            if parent_class and file_path in class_definitions:
+                class_chunk_id = class_definitions[file_path].get(parent_class)
+                if class_chunk_id and class_chunk_id in G:
+                    G.add_edge(class_chunk_id, chunk_id, relation="contains")
+
+    # Step 5: Add package/import nodes (external dependencies)
+    packages = set()
+    for chunk in chunks:
+        imports = chunk.get('metadata', {}).get('imports', [])
+        for imp in imports:
+            # Extract package name (first part before '.')
+            if '.' in imp:
+                package = imp.split('.')[0]
+            else:
+                package = imp
+
+            # Skip internal imports and common builtins
+            if package not in ['', 'self', 'super'] and not package.startswith('_'):
+                packages.add(package)
+
+    for package in packages:
+        if package not in G:  # Don't duplicate
+            G.add_node(
+                package,
+                type="package",
+                label=package,
+                shape="star",
+                level=0  # Packages at top level
+            )
+
+    # Add import edges (file → package)
+    for chunk in chunks:
+        chunk_id = chunk['chunk_id']
+        imports = chunk.get('metadata', {}).get('imports', [])
+
+        for imp in imports:
+            package = imp.split('.')[0] if '.' in imp else imp
+            if package in G and package in packages:
+                # Add edge from chunk to package
+                if chunk_id in G:
+                    G.add_edge(package, chunk_id, relation="imports")
+
+    # Step 6: Add spatial layout (hierarchical positioning)
+    G = add_spatial_information(G)
+
+    logging.info(f"✅ Chunk-level graph created: {len(G.nodes())} nodes, {len(G.edges())} edges")
+
+    return G
+
+
+def _get_shape_for_chunk_type(chunk_type: str) -> str:
+    """Get node shape based on chunk type."""
+    shapes = {
+        'method': 'ellipse',
+        'function': 'ellipse',
+        'class_definition': 'box',
+        'module_variable': 'diamond',
+        'file': 'ellipse'
+    }
+    return shapes.get(chunk_type, 'ellipse')
+
 
 def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     G = nx.DiGraph()
