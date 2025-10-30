@@ -12,6 +12,10 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     file: true,
     import: true,
     package: true,
+    class_definition: true,
+    function: true,
+    method: false,  // Hidden by default (too many - 462 methods)
+    module_variable: true,
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -180,13 +184,30 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         console.warn('   Sample graph node ID:', graphData.nodes[0]?.id);
       } else {
         console.log('✅ GRAPH: Found matching nodes:', matchingNodes.map(n => n.id));
+
+        // Auto-zoom to first highlighted node
+        if (network && matchingNodes.length > 0) {
+          const firstNodeId = matchingNodes[0].id;
+          console.log('🔍 GRAPH: Auto-zooming to highlighted node:', firstNodeId);
+
+          // Focus on the highlighted node with animation
+          setTimeout(() => {
+            network.focus(firstNodeId, {
+              scale: 1.5,
+              animation: {
+                duration: 1000,
+                easingFunction: 'easeInOutQuad'
+              }
+            });
+          }, 100);
+        }
       }
 
       renderGraph(graphData, currentLevel);
     } else if (highlightedNodes.length === 0) {
       console.log('ℹ️ GRAPH: No nodes to highlight (empty array)');
     }
-  }, [highlightedNodes, graphData, currentLevel, renderGraph]);
+  }, [highlightedNodes, graphData, currentLevel, renderGraph, network]);
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -442,6 +463,10 @@ const nodeTypes = {
   file: { border: '#2980b9', background: '#e0f7fa' },
   import: { border: '#27ae60', background: '#e9f7ef' },
   package: { border: '#f39c12', background: '#fef5e7' },
+  class_definition: { border: '#8e44ad', background: '#f4ecf7' },
+  function: { border: '#3498db', background: '#ebf5fb' },
+  method: { border: '#e74c3c', background: '#fadbd8' },
+  module_variable: { border: '#16a085', background: '#d1f2eb' },
   default: { border: '#95a5a6', background: '#f4f6f6' },
 };
 

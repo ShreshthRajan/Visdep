@@ -1118,6 +1118,11 @@ async def get_jamba_response_stream(query: str, context: Dict[str, Any], repo_id
 
         chat_session = chat_sessions[session_id]
 
+        # Update repo_id (in case session was cached from different repo)
+        if repo_id and chat_session.repo_id != repo_id:
+            logging.debug(f"Updating cached session repo_id: {chat_session.repo_id} → {repo_id}")
+            chat_session.repo_id = repo_id
+
         # Stream the response
         async for token in chat_session.chat_stream(query):
             yield token
@@ -1156,6 +1161,12 @@ async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int =
             await chat_sessions[session_id].initialize_conversation_chain(context)
 
         chat_session = chat_sessions[session_id]
+
+        # Update repo_id (in case session was cached from different repo)
+        if repo_id and chat_session.repo_id != repo_id:
+            logging.debug(f"Updating cached session repo_id: {chat_session.repo_id} → {repo_id}")
+            chat_session.repo_id = repo_id
+
         response = await chat_session.chat(query)
         logging.debug(f"Final response: {response}")
 
