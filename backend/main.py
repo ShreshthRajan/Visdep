@@ -118,19 +118,31 @@ async def upload_repo(link: RepoLink):
 
         # Create and save the dependency graph
         # Auto-detect: Use chunk-level graph if chunks have method-level data
+        logging.info(f"🔍 GRAPH CREATION: Analyzing {len(chunks)} chunks for graph type detection...")
+
+        # Check if ANY chunk is a method (not just first 10 - test files come first!)
         has_method_level_chunks = any(
-            chunk.get('type') == 'method' or chunk.get('metadata', {}).get('parent_class')
-            for chunk in chunks[:10]  # Check first 10 chunks
+            chunk.get('type') == 'method'
+            for chunk in chunks
         )
 
+        logging.info(f"   Detection result: has_method_level_chunks = {has_method_level_chunks}")
         if has_method_level_chunks:
-            logging.info("Creating chunk-level graph (method-level chunks detected)...")
+            method_count = sum(1 for c in chunks if c.get('type') == 'method')
+            logging.info(f"   Found {method_count} method chunks")
+
+        if has_method_level_chunks:
+            logging.info("📊 Creating CHUNK-LEVEL graph (method-level chunks detected)...")
+            logging.info(f"   Sample chunk types: {[c.get('type') for c in chunks[:5]]}")
             graph = create_chunk_level_graph(chunks)
+            logging.info(f"✅ Chunk-level graph created with {len(graph.nodes())} nodes, {len(graph.edges())} edges")
         else:
-            logging.info("Creating file-level graph (legacy chunks detected)...")
+            logging.info("📊 Creating FILE-LEVEL graph (legacy chunks detected)...")
             graph = create_dependency_graph(parsed_data)
+            logging.info(f"✅ File-level graph created with {len(graph.nodes())} nodes, {len(graph.edges())} edges")
 
         save_graph_as_json(graph, "dependency_graph.json")
+        logging.info("💾 Graph saved to dependency_graph.json")
 
         # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
         from backend.api.data_storage import invalidate_cache_for_repo

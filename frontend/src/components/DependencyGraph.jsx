@@ -19,13 +19,19 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentLevel, setCurrentLevel] = useState(1);
+  const [currentLevel, setCurrentLevel] = useState(4);  // Default to level 4 (shows files + classes + functions)
   
 
   const renderGraph = useCallback((data, level) => {
-    const filteredNodes = data.nodes.filter(node =>
-      selectedNodeTypes[node.type] && node.level <= level
-    );
+    // Filter nodes by type and level, BUT always include highlighted nodes
+    const filteredNodes = data.nodes.filter(node => {
+      // Always include highlighted nodes regardless of level/type
+      if (highlightedNodes.includes(node.id)) {
+        return true;
+      }
+      // Otherwise apply normal filtering
+      return selectedNodeTypes[node.type] && node.level <= level;
+    });
     const nodes = new DataSet(filteredNodes.map(node => {
       // Check if this node should be highlighted
       const isHighlighted = highlightedNodes.includes(node.id);
@@ -169,8 +175,13 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   useEffect(() => {
     console.log('🎨 GRAPH DEBUG: highlightedNodes changed:', highlightedNodes);
 
-    if (graphData && highlightedNodes.length > 0) {
-      console.log('✅ GRAPH: Re-rendering with highlights...');
+    if (!graphData) {
+      console.log('ℹ️ GRAPH: No graph data yet');
+      return;
+    }
+
+    if (highlightedNodes.length > 0) {
+      console.log('✅ GRAPH: Processing highlights...');
       console.log('   Graph has', graphData.nodes.length, 'nodes');
       console.log('   Attempting to highlight:', highlightedNodes);
 
@@ -182,32 +193,47 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         console.warn('⚠️ GRAPH: No matching nodes found! Highlighted IDs don\'t match graph node IDs');
         console.warn('   Sample highlighted ID:', highlightedNodes[0]);
         console.warn('   Sample graph node ID:', graphData.nodes[0]?.id);
+        console.warn('   Total graph nodes:', graphData.nodes.length);
       } else {
         console.log('✅ GRAPH: Found matching nodes:', matchingNodes.map(n => n.id));
 
-        // Auto-zoom to first highlighted node
+        // Auto-zoom to first highlighted node (only if network is ready)
         if (network && matchingNodes.length > 0) {
           const firstNodeId = matchingNodes[0].id;
           console.log('🔍 GRAPH: Auto-zooming to highlighted node:', firstNodeId);
 
-          // Focus on the highlighted node with animation
+          // Wait for graph to fully render before zooming
+          // The network needs time after renderGraph to initialize node positions
           setTimeout(() => {
-            network.focus(firstNodeId, {
-              scale: 1.5,
-              animation: {
-                duration: 1000,
-                easingFunction: 'easeInOutQuad'
+            try {
+              // Verify node exists in network before focusing
+              const nodePosition = network.getPosition(firstNodeId);
+              if (nodePosition && (nodePosition.x !== undefined)) {
+                network.focus(firstNodeId, {
+                  scale: 1.5,
+                  animation: {
+                    duration: 1000,
+                    easingFunction: 'easeInOutQuad'
+                  }
+                });
+                console.log('✅ GRAPH: Auto-zoom successful');
+              } else {
+                console.warn('⚠️ GRAPH: Node position not ready, skipping auto-zoom');
               }
-            });
-          }, 100);
+            } catch (error) {
+              console.warn('⚠️ GRAPH: Auto-zoom failed (node not in rendered network yet):', error.message);
+            }
+          }, 500);  // Increased delay to ensure network is fully initialized
         }
       }
 
-      renderGraph(graphData, currentLevel);
-    } else if (highlightedNodes.length === 0) {
+      // Re-render graph to apply highlighting
+      // Note: Don't call renderGraph here - it's already in the renderGraph useCallback dependencies
+      // The graph will re-render automatically when highlightedNodes changes via the renderGraph callback
+    } else {
       console.log('ℹ️ GRAPH: No nodes to highlight (empty array)');
     }
-  }, [highlightedNodes, graphData, currentLevel, renderGraph, network]);
+  }, [highlightedNodes, graphData, network]);  // Removed renderGraph and currentLevel to prevent infinite loop
 
   useEffect(() => {
     const fetchGraphData = async () => {
