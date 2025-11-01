@@ -11,12 +11,12 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
-    import: true,
-    package: false,  // Too many (51), hide by default
+    import: false,  // Hidden by default (140 nodes - creates horizontal sprawl)
+    package: false,  // Hidden by default (51 nodes - external deps clutter)
     class_definition: true,
     function: true,
-    method: false,  // Hidden by default (too many - 462 methods)
-    module_variable: false,  // Hide by default (38 nodes)
+    method: false,  // Hidden by default (462 methods - show in focused mode)
+    module_variable: false,  // Hidden by default (38 nodes - not core structure)
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,12 +24,35 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   
 
   const renderGraph = useCallback((data, level) => {
-    // Filter nodes by type and level, BUT always include highlighted nodes
+    // Dual-mode filtering: Full structure view vs Highlight-focused view
     const filteredNodes = data.nodes.filter(node => {
+      // FOCUSED MODE: Show only highlighted nodes + their parents
+      if (viewMode === 'focused' && highlightedNodes.length > 0) {
+        // Always include highlighted nodes
+        if (highlightedNodes.includes(node.id)) {
+          return true;
+        }
+
+        // Include parent containers (files, directories) for context
+        // Check if any highlighted node is a child of this node
+        const isParentOfHighlight = highlightedNodes.some(hId => {
+          // Check if highlighted node's path includes this node's ID
+          return hId.startsWith(node.id);
+        });
+
+        if (isParentOfHighlight && (node.type === 'file' || node.type === 'directory')) {
+          return true;
+        }
+
+        return false;  // Hide everything else in focused mode
+      }
+
+      // FULL MODE: Show structure (directories, files, classes)
       // Always include highlighted nodes regardless of level/type
       if (highlightedNodes.includes(node.id)) {
         return true;
       }
+
       // Otherwise apply normal filtering
       return selectedNodeTypes[node.type] && node.level <= level;
     });
@@ -76,20 +99,26 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     const graphData = { nodes, edges };
     const options = {
       layout: {
-        hierarchical: {
-          enabled: true,
-          direction: 'UD',  // Top-down: packages → directories → files → classes → methods
-          sortMethod: 'directed',  // Follow edge direction for natural flow
-          levelSeparation: 150,  // Vertical space between levels
-          nodeSpacing: 120,  // Horizontal space between nodes at same level
-          treeSpacing: 200,  // Space between separate trees
-          blockShifting: true,  // Reduce whitespace (performance optimization)
-          edgeMinimization: true,  // Minimize edge crossings (cleaner graph)
-          parentCentralization: true,  // Center parent nodes above children
-        },
+        improvedLayout: true,
+        randomSeed: 42,  // Consistent layout across reloads
       },
       physics: {
-        enabled: false,  // Disable physics for hierarchical (instant rendering, no bouncing)
+        enabled: true,
+        solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
+        forceAtlas2Based: {
+          gravitationalConstant: -50,  // Nodes repel each other (prevent overlap)
+          centralGravity: 0.01,  // Weak pull to center (allows clustering)
+          springLength: 100,  // Distance nodes try to maintain
+          springConstant: 0.08,  // Strength of connections
+          damping: 0.4,  // Friction (prevents oscillation)
+          avoidOverlap: 1,  // Prevent node overlap (critical for readability)
+        },
+        stabilization: {
+          enabled: true,
+          iterations: 2000,  // Enough for clean organization
+          updateInterval: 25,  // Smooth animation
+          fit: true,  // Auto-fit after stabilization
+        },
       },
       interaction: {
         hover: true,
@@ -127,11 +156,20 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     const newNetwork = new Network(container, graphData, options);
     setNetwork(newNetwork);
 
-    // With hierarchical layout and physics disabled, graph renders instantly
-    // No stabilization needed - fit graph immediately
-    setTimeout(() => {
-      newNetwork.fit({ animation: { duration: 800, easingFunction: 'easeInOutQuad' } });
-    }, 100);  // Small delay to ensure DOM is ready
+    // Force-Atlas2 clustering: Let physics organize, then lock positions
+    newNetwork.once('stabilizationIterationsDone', () => {
+      console.log('✅ GRAPH: Clustering complete, locking positions');
+      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
+      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+    });
+
+    // Show progress during stabilization
+    newNetwork.on('stabilizationProgress', (params) => {
+      const progress = Math.round((params.iterations / params.total) * 100);
+      if (progress % 20 === 0) {  // Log every 20%
+        console.log(`📊 GRAPH: Organizing clusters... ${progress}%`);
+      }
+    });
   
     newNetwork.on('hoverNode', (params) => {
       const nodeId = params.node;
@@ -168,7 +206,15 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       }
     });
 
-  }, [selectedNodeTypes, currentLevel, highlightedNodes]);
+  }, [selectedNodeTypes, currentLevel, highlightedNodes, viewMode]);
+
+  // Auto-switch to focused mode when highlights appear
+  useEffect(() => {
+    if (highlightedNodes.length > 0) {
+      console.log('🎯 AUTO-SWITCH: Switching to focused view (highlighting detected)');
+      setViewMode('focused');
+    }
+  }, [highlightedNodes]);
 
   // Re-render graph when highlighted nodes change
   useEffect(() => {
@@ -182,6 +228,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     if (highlightedNodes.length > 0) {
       console.log('✅ GRAPH: Processing highlights...');
       console.log('   Graph has', graphData.nodes.length, 'nodes');
+      console.log('   View mode:', viewMode);
       console.log('   Attempting to highlight:', highlightedNodes);
 
       // Check if any highlighted nodes exist in graph
@@ -381,6 +428,21 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     <div className="h-full flex flex-col relative">
       <div className="flex justify-between items-center p-4 bg-gray-100 border-b">
         <div className="flex items-center flex-grow mr-4">
+          {/* View Mode Toggle */}
+          {highlightedNodes.length > 0 && (
+            <button
+              onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
+              className={`mr-4 px-4 py-2 rounded font-medium transition-colors ${
+                viewMode === 'focused'
+                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title={viewMode === 'focused' ? 'Show full repository structure' : 'Focus on highlighted results'}
+            >
+              {viewMode === 'focused' ? '🎯 Focused View' : '📊 Full Structure'}
+            </button>
+          )}
+
           <input
             type="text"
             placeholder="Search nodes..."
