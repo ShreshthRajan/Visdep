@@ -7,15 +7,16 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
+  const [viewMode, setViewMode] = useState('full');  // 'full' or 'focused'
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
     import: true,
-    package: true,
+    package: false,  // Too many (51), hide by default
     class_definition: true,
     function: true,
     method: false,  // Hidden by default (too many - 462 methods)
-    module_variable: true,
+    module_variable: false,  // Hide by default (38 nodes)
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -75,23 +76,20 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     const graphData = { nodes, edges };
     const options = {
       layout: {
-        improvedLayout: true,
-        randomSeed: 42,
+        hierarchical: {
+          enabled: true,
+          direction: 'UD',  // Top-down: packages → directories → files → classes → methods
+          sortMethod: 'directed',  // Follow edge direction for natural flow
+          levelSeparation: 150,  // Vertical space between levels
+          nodeSpacing: 120,  // Horizontal space between nodes at same level
+          treeSpacing: 200,  // Space between separate trees
+          blockShifting: true,  // Reduce whitespace (performance optimization)
+          edgeMinimization: true,  // Minimize edge crossings (cleaner graph)
+          parentCentralization: true,  // Center parent nodes above children
+        },
       },
       physics: {
-        enabled: true,
-        barnesHut: {
-          gravitationalConstant: -5000,
-          centralGravity: 0.3,
-          springLength: 200,
-          springConstant: 0.04,
-          damping: 0.09,
-          avoidOverlap: 1,
-        },
-        stabilization: {
-          iterations: 1000,
-          updateInterval: 25,
-        },
+        enabled: false,  // Disable physics for hierarchical (instant rendering, no bouncing)
       },
       interaction: {
         hover: true,
@@ -128,11 +126,12 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   
     const newNetwork = new Network(container, graphData, options);
     setNetwork(newNetwork);
-  
-    newNetwork.once('stabilizationIterationsDone', () => {
-      newNetwork.setOptions({ physics: false });
-      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeOutQuart' } });
-    });
+
+    // With hierarchical layout and physics disabled, graph renders instantly
+    // No stabilization needed - fit graph immediately
+    setTimeout(() => {
+      newNetwork.fit({ animation: { duration: 800, easingFunction: 'easeInOutQuad' } });
+    }, 100);  // Small delay to ensure DOM is ready
   
     newNetwork.on('hoverNode', (params) => {
       const nodeId = params.node;
@@ -196,35 +195,13 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         console.warn('   Total graph nodes:', graphData.nodes.length);
       } else {
         console.log('✅ GRAPH: Found matching nodes:', matchingNodes.map(n => n.id));
+        console.log('💡 TIP: Gold nodes are now visible in the graph - use Fit Graph button or zoom to see them');
 
-        // Auto-zoom to first highlighted node (only if network is ready)
-        if (network && matchingNodes.length > 0) {
-          const firstNodeId = matchingNodes[0].id;
-          console.log('🔍 GRAPH: Auto-zooming to highlighted node:', firstNodeId);
-
-          // Wait for graph to fully render before zooming
-          // The network needs time after renderGraph to initialize node positions
-          setTimeout(() => {
-            try {
-              // Verify node exists in network before focusing
-              const nodePosition = network.getPosition(firstNodeId);
-              if (nodePosition && (nodePosition.x !== undefined)) {
-                network.focus(firstNodeId, {
-                  scale: 1.5,
-                  animation: {
-                    duration: 1000,
-                    easingFunction: 'easeInOutQuad'
-                  }
-                });
-                console.log('✅ GRAPH: Auto-zoom successful');
-              } else {
-                console.warn('⚠️ GRAPH: Node position not ready, skipping auto-zoom');
-              }
-            } catch (error) {
-              console.warn('⚠️ GRAPH: Auto-zoom failed (node not in rendered network yet):', error.message);
-            }
-          }, 500);  // Increased delay to ensure network is fully initialized
-        }
+        // Note: Auto-zoom removed for reliability
+        // Gold highlighting makes nodes easy to find visually
+        // User can click "Fit Graph" button to see full graph
+        // Or manually zoom/pan to highlighted nodes
+        // This is more reliable than programmatic focus() which has timing issues
       }
 
       // Re-render graph to apply highlighting
