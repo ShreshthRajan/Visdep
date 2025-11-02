@@ -8,19 +8,24 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
   const [viewMode, setViewMode] = useState('full');  // 'full' or 'focused'
+  const [repoSize, setRepoSize] = useState('medium');  // 'small', 'medium', 'large'
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
-    import: false,  // Hidden by default (140 nodes - creates horizontal sprawl)
-    package: false,  // Hidden by default (51 nodes - external deps clutter)
-    class_definition: true,
-    function: true,
-    method: false,  // Hidden by default (462 methods - show in focused mode)
-    module_variable: false,  // Hidden by default (38 nodes - not core structure)
+    import: false,
+    package: false,
+    class_definition: true,  // Will be set adaptively
+    function: true,  // Will be set adaptively
+    method: false,
+    module_variable: false,
+  });
+  const [nodeFading, setNodeFading] = useState({
+    class_definition: true,  // Show faded by default for medium repos
+    function: true,  // Show faded by default for medium repos
   });
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentLevel, setCurrentLevel] = useState(4);  // Default to level 4 (shows files + classes + functions)
+  const [currentLevel, setCurrentLevel] = useState(4);
   
 
   const renderGraph = useCallback((data, level) => {
@@ -60,16 +65,38 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       // Check if this node should be highlighted
       const isHighlighted = highlightedNodes.includes(node.id);
 
+      // Determine opacity based on node type and fading settings
+      const isFaded = nodeFading[node.type] && !isHighlighted;
+      const opacity = isFaded ? 0.35 : 1.0;  // 35% opacity for faded, full for others
+
+      // Get base color
+      const baseColor = isHighlighted
+        ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted (always full opacity)
+        : getNodeColor(node.type);
+
+      // Apply opacity to color
+      const colorWithOpacity = {
+        background: baseColor.background,
+        border: baseColor.border,
+        highlight: {
+          background: baseColor.background,
+          border: baseColor.border,
+        },
+        hover: {
+          background: baseColor.background,
+          border: baseColor.border,
+        },
+      };
+
       return {
         ...node,
         shape: getNodeShape(node.type),
-        color: isHighlighted
-          ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted nodes
-          : getNodeColor(node.type),  // Normal color
+        color: colorWithOpacity,
+        opacity: opacity,  // Set node opacity
         font: {
-          size: 12,
-          face: 'Arial',
-          color: '#000000',
+          size: isFaded ? 10 : 12,  // Smaller font for faded nodes
+          face: 'system-ui, -apple-system, sans-serif',
+          color: isFaded ? '#666666' : '#000000',  // Gray text for faded
           multi: true,
           align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
           valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
@@ -206,7 +233,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       }
     });
 
-  }, [selectedNodeTypes, currentLevel, highlightedNodes, viewMode]);
+  }, [selectedNodeTypes, currentLevel, highlightedNodes, viewMode, nodeFading]);
 
   // Auto-switch to focused mode when highlights appear
   useEffect(() => {
@@ -265,6 +292,46 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         const response = await API.get('/api/dependency_graph');
         const data = response.data;
         setGraphData(data);
+
+        // Adaptive defaults based on repository size
+        const totalNodes = data.nodes.length;
+        console.log(`📊 Repository size: ${totalNodes} nodes`);
+
+        if (totalNodes < 200) {
+          // Small repo: Show everything
+          setRepoSize('small');
+          setSelectedNodeTypes(prev => ({
+            ...prev,
+            class_definition: true,
+            function: true,
+          }));
+          setNodeFading({ class_definition: false, function: false });
+          setCurrentLevel(4);
+          console.log('✅ Small repo detected: Showing all details');
+        } else if (totalNodes < 1000) {
+          // Medium repo: Show files + faded classes/functions
+          setRepoSize('medium');
+          setSelectedNodeTypes(prev => ({
+            ...prev,
+            class_definition: true,
+            function: true,
+          }));
+          setNodeFading({ class_definition: true, function: true });
+          setCurrentLevel(4);
+          console.log('✅ Medium repo detected: Showing files + faded classes/functions');
+        } else {
+          // Large repo: Files only, hide classes/functions
+          setRepoSize('large');
+          setSelectedNodeTypes(prev => ({
+            ...prev,
+            class_definition: false,
+            function: false,
+          }));
+          setNodeFading({ class_definition: false, function: false });
+          setCurrentLevel(3);
+          console.log('✅ Large repo detected: Showing files only');
+        }
+
         renderGraph(data, currentLevel);
       } catch (error) {
         console.error('Error fetching graph data:', error);
@@ -504,15 +571,49 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
           </button>
           {!isLegendMinimized && (
             <div className="p-2 pt-6">
+              <div className="text-xs font-semibold text-gray-600 mb-2">
+                Repo: {repoSize} ({graphData?.nodes.length} nodes)
+              </div>
               {Object.entries(nodeTypes).map(([type, color]) => (
-                <div key={type} className="flex items-center mb-1 cursor-pointer" onClick={() => handleNodeTypeToggle(type)}>
-                  <span
-                    className={`w-3 h-3 rounded-full mr-2 ${selectedNodeTypes[type] ? 'opacity-100' : 'opacity-50'}`}
-                    style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1 }}
-                  />
-                  <span className={`text-xs ${selectedNodeTypes[type] ? 'text-gray-800' : 'text-gray-500'}`}>
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </span>
+                <div key={type} className="mb-1">
+                  <div className="flex items-center cursor-pointer" onClick={() => handleNodeTypeToggle(type)}>
+                    <input
+                      type="checkbox"
+                      checked={selectedNodeTypes[type]}
+                      onChange={() => {}}
+                      className="mr-2 cursor-pointer"
+                    />
+                    <span
+                      className={`w-3 h-3 rounded-full mr-1`}
+                      style={{
+                        backgroundColor: color.background,
+                        borderColor: color.border,
+                        borderWidth: 1,
+                        opacity: selectedNodeTypes[type] ? (nodeFading[type] ? 0.35 : 1.0) : 0.2
+                      }}
+                    />
+                    <span className={`text-xs ${selectedNodeTypes[type] ? 'text-gray-800' : 'text-gray-400'}`}>
+                      {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
+                      {selectedNodeTypes[type] && nodeFading[type] && (
+                        <span className="text-gray-500 ml-1">(faded)</span>
+                      )}
+                    </span>
+                  </div>
+                  {/* Fading toggle for classes and functions */}
+                  {selectedNodeTypes[type] && (type === 'class_definition' || type === 'function') && (
+                    <div className="ml-6 mt-1">
+                      <label className="flex items-center cursor-pointer text-xs text-gray-600">
+                        <input
+                          type="checkbox"
+                          checked={!nodeFading[type]}
+                          onChange={() => setNodeFading(prev => ({ ...prev, [type]: !prev[type] }))}
+                          className="mr-1 cursor-pointer"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        Full opacity
+                      </label>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
