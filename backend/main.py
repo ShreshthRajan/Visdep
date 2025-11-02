@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from backend.api.github_api import fetch_repo_content, fetch_repo_metadata
+from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, store_chunks_batch, retrieve_chunks
@@ -80,10 +80,21 @@ async def upload_repo(link: RepoLink):
         sub_directory = link.sub_directory
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
         
-        # Fetch repository content and metadata
+        # Fetch repository content using git clone (faster, no rate limits)
+        # Fallback to API if git not available
         logging.debug(f"Fetching content for repo: {repo_url}")
-        repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
-        logging.debug(f"Fetched repo content: {repo_content}")
+
+        try:
+            # Try git clone first (industry standard, no rate limits)
+            repo_content = fetch_repo_content_via_git(repo_url, sub_directory)
+            logging.info(f"✅ Fetched {len(repo_content)} files via git clone (0 API calls)")
+        except Exception as git_error:
+            # Fallback to GitHub API if git fails
+            logging.warning(f"Git clone failed: {git_error}, falling back to GitHub API")
+            repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
+            logging.info(f"✅ Fetched {len(repo_content)} files via GitHub API")
+
+        logging.debug(f"Fetched repo content: {len(repo_content)} files")
         
         repo_metadata = fetch_repo_metadata(repo_url, auth_token)
         logging.debug(f"Fetched repo metadata: {repo_metadata}")
