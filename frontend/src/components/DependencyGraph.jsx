@@ -133,19 +133,21 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         enabled: true,
         solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
         forceAtlas2Based: {
-          gravitationalConstant: -50,  // Nodes repel each other (prevent overlap)
-          centralGravity: 0.01,  // Weak pull to center (allows clustering)
-          springLength: 100,  // Distance nodes try to maintain
-          springConstant: 0.08,  // Strength of connections
-          damping: 0.4,  // Friction (prevents oscillation)
-          avoidOverlap: 1,  // Prevent node overlap (critical for readability)
+          gravitationalConstant: -150,  // Strong repulsion (spread nodes apart for readability)
+          centralGravity: 0.005,  // Very weak center (allows wide spreading)
+          springLength: 150,  // Longer springs (more space between nodes)
+          springConstant: 0.04,  // Weaker connections (less clustering force)
+          damping: 0.6,  // High damping (settle faster, less bouncing)
+          avoidOverlap: 1.5,  // Strong overlap prevention (critical for 400+ nodes)
         },
         stabilization: {
           enabled: true,
-          iterations: 2000,  // Enough for clean organization
-          updateInterval: 25,  // Smooth animation
-          fit: true,  // Auto-fit after stabilization
+          iterations: 2500,  // More iterations for complex graphs
+          updateInterval: 25,
+          fit: true,
         },
+        maxVelocity: 30,  // Limit maximum movement speed
+        minVelocity: 0.5,  // Stop when movement is minimal
       },
       interaction: {
         hover: true,
@@ -157,18 +159,27 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       },
       nodes: {
         scaling: {
-          min: 20,
-          max: 150,
+          min: 25,  // Larger minimum (more readable)
+          max: 200,  // Larger maximum
           title: undefined,
         },
-        margin: 10,
+        margin: 15,  // More space around nodes
         widthConstraint: {
-          minimum: 50,
-          maximum: 200,
+          minimum: 60,  // Larger minimum width
+          maximum: 250,  // Wider max for long method names
         },
         heightConstraint: {
-          minimum: 50,
+          minimum: 60,  // Taller nodes
           valign: 'center',
+        },
+        font: {
+          size: 13,  // Larger base font
+          face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+          color: '#1a1a1a',
+          bold: {
+            size: 14,
+            face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+          },
         },
       },
       edges: {
