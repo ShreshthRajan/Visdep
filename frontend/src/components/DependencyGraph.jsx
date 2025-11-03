@@ -26,9 +26,13 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const [isLegendMinimized, setIsLegendMinimized] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(4);
+  const [loadingState, setLoadingState] = useState({ isLoading: false, message: '', progress: 0 });
   
 
   const renderGraph = useCallback((data, level) => {
+    // Set initial rendering state
+    setLoadingState({ isLoading: true, message: 'Preparing graph...', progress: 40 });
+
     // Adaptive stabilization iterations based on graph complexity
     // Research: Force-Atlas2 converges exponentially (80% settled in first 30%)
     // vis-network docs recommend 200-1000 iterations for most graphs
@@ -213,19 +217,30 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     const newNetwork = new Network(container, graphData, options);
     setNetwork(newNetwork);
 
-    // Force-Atlas2 clustering: Let physics organize, then lock positions
-    newNetwork.once('stabilizationIterationsDone', () => {
-      console.log('✅ GRAPH: Clustering complete, locking positions');
-      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
-      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
-    });
-
-    // Show progress during stabilization
+    // Show progress during stabilization (live updates)
     newNetwork.on('stabilizationProgress', (params) => {
       const progress = Math.round((params.iterations / params.total) * 100);
+      setLoadingState({
+        isLoading: true,
+        message: `Organizing clusters...`,
+        progress: 50 + (progress / 2)  // 50-100% range
+      });
       if (progress % 20 === 0) {  // Log every 20%
         console.log(`📊 GRAPH: Organizing clusters... ${progress}%`);
       }
+    });
+
+    // Force-Atlas2 clustering: Let physics organize, then lock positions
+    newNetwork.once('stabilizationIterationsDone', () => {
+      console.log('✅ GRAPH: Clustering complete, locking positions');
+      setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
+      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
+      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+
+      // Mark as complete after animation
+      setTimeout(() => {
+        setLoadingState({ isLoading: false, message: '', progress: 100 });
+      }, 1000);
     });
   
     newNetwork.on('hoverNode', (params) => {
@@ -328,8 +343,10 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   useEffect(() => {
     const fetchGraphData = async () => {
       try {
+        setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
         const response = await API.get('/api/dependency_graph');
         const data = response.data;
+        setLoadingState({ isLoading: true, message: 'Analyzing graph structure...', progress: 30 });
         setGraphData(data);
 
         // Adaptive defaults based on repository size
@@ -589,6 +606,24 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         </div>
       </div>
       <div className="flex-1 relative">
+        {/* Loading Overlay */}
+        {loadingState.isLoading && (
+          <div className="absolute inset-0 bg-white bg-opacity-90 z-50 flex flex-col items-center justify-center">
+            <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+              <div className="flex items-center justify-center mb-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+              </div>
+              <p className="text-center text-gray-700 font-medium mb-2">{loadingState.message}</p>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                  style={{ width: `${loadingState.progress}%` }}
+                ></div>
+              </div>
+              <p className="text-center text-gray-500 text-sm mt-2">{loadingState.progress}%</p>
+            </div>
+          </div>
+        )}
         <div ref={networkRef} className="absolute inset-0" />
         <div className={`absolute bottom-4 right-4 bg-white rounded-lg shadow-md transition-all ${isLegendMinimized ? 'w-8 h-8' : 'w-40'}`}>
           <button 

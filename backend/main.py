@@ -60,6 +60,8 @@ if not os.getenv("OPENAI_API_KEY"):
 class RepoLink(BaseModel):
     repo_url: str
     sub_directory: Optional[str] = None
+    exclude_docs: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
+    exclude_examples: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
 
 class QueryRequest(BaseModel):
     query: str
@@ -73,13 +75,65 @@ def store_parsed_data(parsed_data):
     # Log the storage action for debugging
     print(f"Storing parsed AST data: {parsed_data}")
 
+def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=None):
+    """
+    Smart directory filtering with auto-detection for large repositories.
+
+    Args:
+        repo_content: List of {path, content} dicts
+        exclude_docs: None (auto), True (force exclude), False (force include)
+        exclude_examples: None (auto), True (force exclude), False (force include)
+
+    Returns:
+        Filtered repo_content, excluded_dirs list
+    """
+    total_files = len(repo_content)
+
+    # Detect if docs/, docs_src/, or examples/ exist
+    # Note: docs_src/ is common in Python projects (FastAPI, Pydantic, etc.) for tutorial code
+    has_docs = any(
+        'docs/' in f['path'] or f['path'].startswith('docs/') or
+        'docs_src/' in f['path'] or f['path'].startswith('docs_src/')
+        for f in repo_content
+    )
+    has_examples = any('examples/' in f['path'] or f['path'].startswith('examples/') for f in repo_content)
+
+    # Auto-detection logic: Exclude if repo is large (>500 files) AND directory exists
+    if exclude_docs is None:
+        exclude_docs = has_docs and total_files > 500
+    if exclude_examples is None:
+        exclude_examples = has_examples and total_files > 500
+
+    excluded_dirs = []
+
+    # Apply filters
+    if exclude_docs and has_docs:
+        repo_content = [f for f in repo_content if not (
+            'docs/' in f['path'] or f['path'].startswith('docs/') or
+            'docs_src/' in f['path'] or f['path'].startswith('docs_src/')
+        )]
+        excluded_dirs.append('docs/')
+        logging.info(f"📁 Excluded docs/ and docs_src/ directories (large repo optimization)")
+
+    if exclude_examples and has_examples:
+        repo_content = [f for f in repo_content if not ('examples/' in f['path'] or f['path'].startswith('examples/'))]
+        excluded_dirs.append('examples/')
+        logging.info(f"📁 Excluded examples/ directory (large repo optimization)")
+
+    if excluded_dirs:
+        logging.info(f"✂️  Filtered: {total_files} → {len(repo_content)} files (excluded: {', '.join(excluded_dirs)})")
+
+    return repo_content, excluded_dirs
+
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
     try:
         repo_url = link.repo_url
         sub_directory = link.sub_directory
+        exclude_docs = link.exclude_docs
+        exclude_examples = link.exclude_examples
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
-        
+
         # Fetch repository content using git clone (faster, no rate limits)
         # Fallback to API if git not available
         logging.debug(f"Fetching content for repo: {repo_url}")
@@ -93,6 +147,9 @@ async def upload_repo(link: RepoLink):
             logging.warning(f"Git clone failed: {git_error}, falling back to GitHub API")
             repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
             logging.info(f"✅ Fetched {len(repo_content)} files via GitHub API")
+
+        # Apply smart directory filtering (enterprise-grade optimization)
+        repo_content, excluded_dirs = filter_repository_content(repo_content, exclude_docs, exclude_examples)
 
         logging.debug(f"Fetched repo content: {len(repo_content)} files")
         
@@ -167,7 +224,8 @@ async def upload_repo(link: RepoLink):
             "message": "Repository data successfully uploaded, parsed, and graph generated.",
             "repo_id": repo_id,
             "chunks": chunk_stats['total'],
-            "files_processed": chunk_stats.get('files_processed', 0)
+            "files_processed": chunk_stats.get('files_processed', 0),
+            "excluded_dirs": excluded_dirs  # Tell frontend what was excluded
         }
     
     except Exception as e:

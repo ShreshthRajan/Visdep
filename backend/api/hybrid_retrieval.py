@@ -368,7 +368,8 @@ class HybridRetriever:
         bm25_k: int = 100,
         vector_k: int = 100,
         expand: bool = True,
-        expand_max: int = 30
+        expand_max: int = 50,  # Increased from 30 to 50 (research-backed)
+        expand_depth: int = 2  # Increased from 1 to 2 (HopRAG/GraphRAG 2025 research)
     ) -> List[Dict[str, Any]]:
         """
         Main hybrid search pipeline
@@ -379,10 +380,16 @@ class HybridRetriever:
             bm25_k: Number of BM25 results
             vector_k: Number of vector results
             expand: Whether to use graph expansion
-            expand_max: Max chunks to add via graph
+            expand_max: Max chunks to add via graph (50 for multi-hop reasoning)
+            expand_depth: Graph traversal depth (2 hops for complete call chains)
 
         Returns:
             List of ranked chunks with scores
+
+        Research-backed defaults:
+        - expand_depth=2: HopRAG (2025) shows 2-3 hops optimal for complex queries
+        - expand_max=50: CodeRAG (2025) shows 40+ point improvement with multi-hop
+        - Finds complete call chains (e.g., route → init → get_dependant → solve)
         """
         logging.info(f"🔍 HYBRID SEARCH DEBUG: Query = '{query}'")
 
@@ -414,10 +421,12 @@ class HybridRetriever:
             logging.info(f"   Top 3 Fused: {top_3_fused}")
 
         # Step 4: Graph expansion (optional)
+        # Research: 2-hop traversal finds complete call chains (HopRAG 2025, CodeRAG 2025)
+        # Example: add_api_route → APIRoute.__init__ → get_dependant → solve_dependencies
         if expand:
-            expanded_ids = self.expand_with_graph(top_fused, max_expand=expand_max)
+            expanded_ids = self.expand_with_graph(top_fused, max_expand=expand_max, expand_depth=expand_depth)
             added = len(expanded_ids) - len(top_fused)
-            logging.info(f"📊 Graph Expansion: Added {added} chunks ({len(top_fused)} → {len(expanded_ids)})")
+            logging.info(f"📊 Graph Expansion: Added {added} chunks ({len(top_fused)} → {len(expanded_ids)}) at depth={expand_depth}")
         else:
             expanded_ids = top_fused
 
