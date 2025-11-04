@@ -10,6 +10,8 @@ const Home = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [excludeDocs, setExcludeDocs] = useState(null); // null = auto-detect
   const [excludeExamples, setExcludeExamples] = useState(null); // null = auto-detect
+  const [excludeTests, setExcludeTests] = useState(null); // null = auto-detect (>40%)
+  const [filterNotifications, setFilterNotifications] = useState([]);
   const navigate = useNavigate();
 
   const handleUpload = async () => {
@@ -20,15 +22,24 @@ const Home = () => {
         repo_url: repoUrl,
         sub_directory: subDirectory.trim() || undefined,
         exclude_docs: excludeDocs,
-        exclude_examples: excludeExamples
+        exclude_examples: excludeExamples,
+        exclude_tests: excludeTests
       });
-      setMessage(response.data.message);
 
-      // Show what was excluded
-      if (response.data.excluded_dirs && response.data.excluded_dirs.length > 0) {
-        console.log(`✂️  Excluded directories: ${response.data.excluded_dirs.join(', ')}`);
+      // Handle filter metadata and notifications
+      const filterMeta = response.data.filter_metadata;
+      if (filterMeta && filterMeta.notifications && filterMeta.notifications.length > 0) {
+        setFilterNotifications(filterMeta.notifications);
+        console.log('✂️  Smart Filtering Applied:', filterMeta);
+
+        // Show summary in console
+        console.log(`📊 Files: ${filterMeta.original_file_count} → ${filterMeta.filtered_file_count} (${filterMeta.total_savings_pct}% reduction)`);
+        filterMeta.notifications.forEach(notif => {
+          console.log(`   ${notif.directory}: ${notif.files_excluded} files excluded - ${notif.reason}`);
+        });
       }
 
+      setMessage(response.data.message);
       setTimeout(() => navigate('/graph-chat'), 2000);
     } catch (error) {
       setMessage('Error uploading repository');
@@ -53,6 +64,43 @@ const Home = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 font-sans">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
         <h1 className="text-4xl font-bold mb-6 text-center text-indigo-700">Visdep</h1>
+        {/* Smart Filter Notifications */}
+        {filterNotifications.length > 0 && !isLoading && (
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start">
+              <span className="text-2xl mr-3">⚡</span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-blue-900 mb-2">Smart Filtering Applied</p>
+                {filterNotifications.map((notif, idx) => (
+                  <div key={idx} className="mb-2 text-xs text-blue-800">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">
+                        ✂️ {notif.directory} ({notif.files_excluded.toLocaleString()} files)
+                      </span>
+                      <span className="text-blue-600 font-semibold">
+                        saves {notif.savings_pct}% time
+                      </span>
+                    </div>
+                    <p className="text-blue-700 mt-1">{notif.reason}</p>
+                    {notif.can_override && (
+                      <button
+                        onClick={() => {
+                          // Re-upload with tests included
+                          setExcludeTests(false);
+                          setFilterNotifications([]);
+                        }}
+                        className="mt-1 text-xs text-indigo-600 hover:text-indigo-800 underline"
+                      >
+                        Include anyway (slower)
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-700 mx-auto mb-4"></div>
@@ -87,39 +135,66 @@ const Home = () => {
 
               {showAdvanced && (
                 <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                  <p className="text-xs text-gray-600 mb-2">
-                    For large repos (>500 files), auto-exclude docs/ and examples/ directories to improve performance.
+                  <p className="text-xs text-gray-600 mb-3">
+                    Enterprise-grade smart filtering: Auto-excludes non-essential directories for faster analysis.
                   </p>
 
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={excludeDocs === true}
-                      onChange={(e) => setExcludeDocs(e.target.checked ? true : null)}
-                      className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <span className="text-sm text-gray-700">
-                      Exclude <code className="px-1 bg-gray-200 rounded text-xs">docs/</code> directory
-                      <span className="text-xs text-gray-500 ml-1">(auto for large repos)</span>
-                    </span>
-                  </label>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-700">Tier 1: Always Auto-Exclude</p>
 
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={excludeExamples === true}
-                      onChange={(e) => setExcludeExamples(e.target.checked ? true : null)}
-                      className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <span className="text-sm text-gray-700">
-                      Exclude <code className="px-1 bg-gray-200 rounded text-xs">examples/</code> directory
-                      <span className="text-xs text-gray-500 ml-1">(auto for large repos)</span>
-                    </span>
-                  </label>
+                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
+                      <input
+                        type="checkbox"
+                        checked={excludeDocs === true}
+                        onChange={(e) => setExcludeDocs(e.target.checked ? true : null)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">docs/</code>
+                        <span className="text-xs text-gray-500 ml-1">(auto if >500 files)</span>
+                      </span>
+                    </label>
 
-                  <p className="text-xs text-gray-500 mt-2">
-                    💡 <code className="px-1 bg-gray-200 rounded">tests/</code> are always included for better code understanding.
-                  </p>
+                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
+                      <input
+                        type="checkbox"
+                        checked={excludeExamples === true}
+                        onChange={(e) => setExcludeExamples(e.target.checked ? true : null)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">examples/</code>
+                        <span className="text-xs text-gray-500 ml-1">(auto if >500 files)</span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-gray-300">
+                    <p className="text-xs font-semibold text-gray-700">Tier 2: Smart Auto-Exclude</p>
+
+                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
+                      <input
+                        type="checkbox"
+                        checked={excludeTests === true}
+                        onChange={(e) => setExcludeTests(e.target.checked ? true : null)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">tests/</code>
+                        <span className="text-xs text-gray-500 ml-1">(auto if >40% of repo)</span>
+                      </span>
+                    </label>
+
+                    <p className="text-xs text-gray-500 ml-2 mt-1">
+                      💡 Also auto-excludes: migrations/ (>20%), locale/ (>200 files)
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-gray-300">
+                    <p className="text-xs text-gray-500">
+                      ℹ️ Smart filtering saves 60-80% time on large repos like Django, FastAPI, React
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

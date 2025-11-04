@@ -62,6 +62,7 @@ class RepoLink(BaseModel):
     sub_directory: Optional[str] = None
     exclude_docs: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
     exclude_examples: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
+    exclude_tests: Optional[bool] = None  # None = auto-detect (>40%), True = exclude, False = include
 
 class QueryRequest(BaseModel):
     query: str
@@ -75,55 +76,202 @@ def store_parsed_data(parsed_data):
     # Log the storage action for debugging
     print(f"Storing parsed AST data: {parsed_data}")
 
-def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=None):
+def analyze_directory_contributions(repo_content):
     """
-    Smart directory filtering with auto-detection for large repositories.
+    Analyze which directories contribute most files (for smart filtering).
+
+    Returns:
+        Dict of {dir_name: {'count': int, 'percentage': float, 'sample_files': list}}
+    """
+    from collections import defaultdict
+
+    dir_stats = defaultdict(lambda: {'count': 0, 'files': []})
+    total_files = len(repo_content)
+
+    # Directories to analyze (enterprise-grade filtering targets)
+    target_dirs = ['tests/', 'migrations/', 'locale/', 'static/', 'templates/', 'docs/', 'docs_src/', 'examples/']
+
+    for file_info in repo_content:
+        path = file_info['path']
+        for target_dir in target_dirs:
+            if target_dir in path or path.startswith(target_dir):
+                # Extract root directory name (e.g., 'django/contrib/admin/tests/' → 'tests/')
+                dir_stats[target_dir]['count'] += 1
+                if len(dir_stats[target_dir]['files']) < 3:  # Keep 3 sample files
+                    dir_stats[target_dir]['files'].append(path)
+                break
+
+    # Calculate percentages
+    result = {}
+    for dir_name, stats in dir_stats.items():
+        if stats['count'] > 0:
+            result[dir_name] = {
+                'count': stats['count'],
+                'percentage': (stats['count'] / total_files) * 100,
+                'sample_files': stats['files']
+            }
+
+    return result
+
+def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=None, exclude_tests=None):
+    """
+    Enterprise-grade tiered directory filtering with smart auto-detection.
+
+    Tier 1: Always exclude (docs, examples) for large repos
+    Tier 2: Smart exclude (tests, migrations) if >40% contribution
+    Tier 3: Notify user of exclusions with savings calculation
 
     Args:
         repo_content: List of {path, content} dicts
         exclude_docs: None (auto), True (force exclude), False (force include)
         exclude_examples: None (auto), True (force exclude), False (force include)
+        exclude_tests: None (auto), True (force exclude), False (force include)
 
     Returns:
-        Filtered repo_content, excluded_dirs list
+        Tuple of (filtered_content, metadata_dict)
+        metadata_dict contains: excluded_dirs, notifications, savings
     """
     total_files = len(repo_content)
+    original_count = total_files
 
-    # Detect if docs/, docs_src/, or examples/ exist
-    # Note: docs_src/ is common in Python projects (FastAPI, Pydantic, etc.) for tutorial code
-    has_docs = any(
-        'docs/' in f['path'] or f['path'].startswith('docs/') or
-        'docs_src/' in f['path'] or f['path'].startswith('docs_src/')
-        for f in repo_content
-    )
-    has_examples = any('examples/' in f['path'] or f['path'].startswith('examples/') for f in repo_content)
+    # Analyze directory contributions
+    dir_contributions = analyze_directory_contributions(repo_content)
 
-    # Auto-detection logic: Exclude if repo is large (>500 files) AND directory exists
+    logging.info(f"📊 SMART FILTER: Analyzing {total_files} files...")
+    for dir_name, stats in sorted(dir_contributions.items(), key=lambda x: x[1]['percentage'], reverse=True):
+        logging.info(f"   {dir_name}: {stats['count']} files ({stats['percentage']:.1f}%)")
+
+    excluded_dirs = []
+    notifications = []
+
+    # TIER 1: Always exclude docs and examples for large repos (>500 files)
+    has_docs = 'docs/' in dir_contributions or 'docs_src/' in dir_contributions
+    has_examples = 'examples/' in dir_contributions
+
     if exclude_docs is None:
         exclude_docs = has_docs and total_files > 500
     if exclude_examples is None:
         exclude_examples = has_examples and total_files > 500
 
-    excluded_dirs = []
-
-    # Apply filters
     if exclude_docs and has_docs:
+        before = len(repo_content)
         repo_content = [f for f in repo_content if not (
             'docs/' in f['path'] or f['path'].startswith('docs/') or
             'docs_src/' in f['path'] or f['path'].startswith('docs_src/')
         )]
+        after = len(repo_content)
+        excluded_count = before - after
         excluded_dirs.append('docs/')
-        logging.info(f"📁 Excluded docs/ and docs_src/ directories (large repo optimization)")
+
+        notifications.append({
+            'type': 'tier1_auto',
+            'directory': 'docs/',
+            'files_excluded': excluded_count,
+            'reason': 'Documentation files are not needed for understanding code implementation',
+            'savings_pct': int((excluded_count / original_count) * 100)
+        })
+        logging.info(f"📁 Tier 1: Excluded docs/ ({excluded_count} files)")
 
     if exclude_examples and has_examples:
+        before = len(repo_content)
         repo_content = [f for f in repo_content if not ('examples/' in f['path'] or f['path'].startswith('examples/'))]
+        after = len(repo_content)
+        excluded_count = before - after
         excluded_dirs.append('examples/')
-        logging.info(f"📁 Excluded examples/ directory (large repo optimization)")
+
+        notifications.append({
+            'type': 'tier1_auto',
+            'directory': 'examples/',
+            'files_excluded': excluded_count,
+            'reason': 'Example code is redundant with actual implementation',
+            'savings_pct': int((excluded_count / original_count) * 100)
+        })
+        logging.info(f"📁 Tier 1: Excluded examples/ ({excluded_count} files)")
+
+    # TIER 2: Smart exclude tests if >40% contribution AND repo is large (>1000 files)
+    if total_files > 1000:
+        tests_stats = dir_contributions.get('tests/', {})
+        migrations_stats = dir_contributions.get('migrations/', {})
+        locale_stats = dir_contributions.get('locale/', {})
+        static_stats = dir_contributions.get('static/', {})
+        templates_stats = dir_contributions.get('templates/', {})
+
+        # Auto-exclude tests if >40% of repo (enterprise heuristic)
+        if exclude_tests is None and tests_stats.get('percentage', 0) > 40:
+            exclude_tests = True
+            logging.info(f"🧠 SMART DETECTION: tests/ is {tests_stats['percentage']:.1f}% of repo (>40% threshold) → Auto-excluding")
+
+        if exclude_tests and tests_stats:
+            before = len(repo_content)
+            repo_content = [f for f in repo_content if not ('tests/' in f['path'] or f['path'].startswith('tests/') or '/test_' in f['path'])]
+            after = len(repo_content)
+            excluded_count = before - after
+            excluded_dirs.append('tests/')
+
+            notifications.append({
+                'type': 'tier2_smart',
+                'directory': 'tests/',
+                'files_excluded': excluded_count,
+                'reason': 'Test files are not core implementation (configure in Advanced Options to include)',
+                'savings_pct': int((excluded_count / original_count) * 100),
+                'contribution_pct': tests_stats['percentage'],
+                'can_override': True
+            })
+            logging.info(f"📁 Tier 2: Smart-excluded tests/ ({excluded_count} files, {tests_stats['percentage']:.1f}% of repo)")
+
+        # Auto-exclude migrations if >20% AND >500 migration files
+        if migrations_stats.get('count', 0) > 500 and migrations_stats.get('percentage', 0) > 20:
+            before = len(repo_content)
+            repo_content = [f for f in repo_content if not ('migrations/' in f['path'] or f['path'].startswith('migrations/'))]
+            after = len(repo_content)
+            excluded_count = before - after
+            excluded_dirs.append('migrations/')
+
+            notifications.append({
+                'type': 'tier2_smart',
+                'directory': 'migrations/',
+                'files_excluded': excluded_count,
+                'reason': 'Database migrations are generated code, not core implementation',
+                'savings_pct': int((excluded_count / original_count) * 100)
+            })
+            logging.info(f"📁 Tier 2: Smart-excluded migrations/ ({excluded_count} files)")
+
+        # Auto-exclude locale if >200 files (translation files)
+        if locale_stats.get('count', 0) > 200:
+            before = len(repo_content)
+            repo_content = [f for f in repo_content if not ('locale/' in f['path'] or f['path'].startswith('locale/'))]
+            after = len(repo_content)
+            excluded_count = before - after
+            excluded_dirs.append('locale/')
+
+            notifications.append({
+                'type': 'tier2_smart',
+                'directory': 'locale/',
+                'files_excluded': excluded_count,
+                'reason': 'Translation files are not code logic',
+                'savings_pct': int((excluded_count / original_count) * 100)
+            })
+            logging.info(f"📁 Tier 2: Smart-excluded locale/ ({excluded_count} files)")
+
+    # Calculate total savings
+    final_count = len(repo_content)
+    total_excluded = original_count - final_count
+    total_savings_pct = int((total_excluded / original_count) * 100) if total_excluded > 0 else 0
 
     if excluded_dirs:
-        logging.info(f"✂️  Filtered: {total_files} → {len(repo_content)} files (excluded: {', '.join(excluded_dirs)})")
+        logging.info(f"✂️  FINAL FILTER: {original_count} → {final_count} files ({total_savings_pct}% reduction)")
+        logging.info(f"   Excluded directories: {', '.join(excluded_dirs)}")
 
-    return repo_content, excluded_dirs
+    metadata = {
+        'excluded_dirs': excluded_dirs,
+        'notifications': notifications,
+        'original_file_count': original_count,
+        'filtered_file_count': final_count,
+        'total_savings_pct': total_savings_pct,
+        'dir_contributions': dir_contributions
+    }
+
+    return repo_content, metadata
 
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
@@ -132,6 +280,7 @@ async def upload_repo(link: RepoLink):
         sub_directory = link.sub_directory
         exclude_docs = link.exclude_docs
         exclude_examples = link.exclude_examples
+        exclude_tests = link.exclude_tests
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
 
         # Fetch repository content using git clone (faster, no rate limits)
@@ -148,8 +297,8 @@ async def upload_repo(link: RepoLink):
             repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
             logging.info(f"✅ Fetched {len(repo_content)} files via GitHub API")
 
-        # Apply smart directory filtering (enterprise-grade optimization)
-        repo_content, excluded_dirs = filter_repository_content(repo_content, exclude_docs, exclude_examples)
+        # Apply enterprise-grade tiered filtering with smart auto-detection
+        repo_content, filter_metadata = filter_repository_content(repo_content, exclude_docs, exclude_examples, exclude_tests)
 
         logging.debug(f"Fetched repo content: {len(repo_content)} files")
         
@@ -225,7 +374,7 @@ async def upload_repo(link: RepoLink):
             "repo_id": repo_id,
             "chunks": chunk_stats['total'],
             "files_processed": chunk_stats.get('files_processed', 0),
-            "excluded_dirs": excluded_dirs  # Tell frontend what was excluded
+            "filter_metadata": filter_metadata  # Enterprise-grade filtering info with notifications
         }
     
     except Exception as e:
