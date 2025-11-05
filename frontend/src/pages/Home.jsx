@@ -12,6 +12,7 @@ const Home = () => {
   const [excludeExamples, setExcludeExamples] = useState(null); // null = auto-detect
   const [excludeTests, setExcludeTests] = useState(null); // null = auto-detect (>40%)
   const [filterNotifications, setFilterNotifications] = useState([]);
+  const [megaRepoWarning, setMegaRepoWarning] = useState(null);
   const navigate = useNavigate();
 
   const handleUpload = async () => {
@@ -44,6 +45,12 @@ const Home = () => {
         });
       }
 
+      // Handle mega-repo warning (PyTorch, TensorFlow, etc.)
+      if (response.data.mega_repo_warning) {
+        setMegaRepoWarning(response.data.mega_repo_warning);
+        console.warn('⚠️ MEGA-REPO WARNING:', response.data.mega_repo_warning);
+      }
+
       setMessage(response.data.message);
       setIsLoading(false);
     } catch (error) {
@@ -71,6 +78,34 @@ const Home = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 font-sans">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
         <h1 className="text-4xl font-bold mb-6 text-center text-indigo-700">Visdep</h1>
+        {/* Mega-Repo Warning */}
+        {megaRepoWarning && !isLoading && (
+          <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+            <div className="flex items-start">
+              <span className="text-3xl mr-3">⚠️</span>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-yellow-900 mb-2">Extremely Large Repository</p>
+                <p className="text-sm text-yellow-800 mb-2">
+                  This repository has <strong>{megaRepoWarning.chunk_count.toLocaleString()} chunks</strong> which will take 2-5 minutes to process and may cause performance issues.
+                </p>
+                <div className="bg-yellow-100 p-3 rounded mt-2 mb-2">
+                  <p className="text-xs font-semibold text-yellow-900 mb-1">💡 Recommendation:</p>
+                  <p className="text-xs text-yellow-800 mb-2">Use the "subdirectory" field to focus on a specific module for faster, better results.</p>
+                  <p className="text-xs text-yellow-700 font-mono">
+                    Examples: {Object.entries(megaRepoWarning.examples).map(([key, val]) => val).join(' • ')}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setMegaRepoWarning(null)}
+                  className="text-xs text-yellow-700 hover:text-yellow-900 underline"
+                >
+                  Dismiss (continue anyway)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Smart Filter Notifications */}
         {filterNotifications.length > 0 && !isLoading && (
           <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">

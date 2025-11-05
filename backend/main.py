@@ -325,6 +325,31 @@ async def upload_repo(link: RepoLink):
         logging.info(f"   Token stats: avg={chunk_stats.get('avg_tokens', 0):.0f}, max={chunk_stats.get('max_tokens', 0)}, >800tok={chunk_stats.get('chunks_over_800_tokens', 0)}")
         logging.info(f"   Truncated: {chunk_stats.get('chunks_truncated', 0)} chunks")
 
+        # Enterprise-grade mega-repo detection
+        # Warn users about extremely large repos (PyTorch, TensorFlow, Linux kernel scale)
+        # Threshold: 20K chunks (Django=11.7K works, PyTorch=92K is too large)
+        mega_repo_warning = None
+        if chunk_stats['total'] > 20000:
+            mega_repo_warning = {
+                'type': 'mega_repo',
+                'chunk_count': chunk_stats['total'],
+                'message': f"⚠️ This repository is extremely large ({chunk_stats['total']:,} chunks).",
+                'recommendation': "For faster analysis and better performance, we recommend using the 'subdirectory' field to focus on a specific module.",
+                'examples': {
+                    'pytorch': "Try subdirectory: 'torch' or 'torch/nn'",
+                    'tensorflow': "Try subdirectory: 'tensorflow/python'",
+                    'chromium': "Try subdirectory: 'chrome/browser'"
+                },
+                'impact': {
+                    'upload_time': 'May take 2-5 minutes',
+                    'graph_size': f'~{chunk_stats["total"] * 1.1:,.0f} nodes (very large)',
+                    'query_time': 'Queries may be slower (~15-20 seconds)'
+                }
+            }
+            logging.warning(f"⚠️ MEGA-REPO DETECTED: {chunk_stats['total']:,} chunks")
+            logging.warning(f"   Upload will continue but may take 2-5 minutes")
+            logging.warning(f"   Recommend using subdirectory field for better performance")
+
         # Store chunks in database
         store_chunks_batch(repo_id, chunks)
         logging.debug("Chunks stored in database")
@@ -374,7 +399,8 @@ async def upload_repo(link: RepoLink):
             "repo_id": repo_id,
             "chunks": chunk_stats['total'],
             "files_processed": chunk_stats.get('files_processed', 0),
-            "filter_metadata": filter_metadata  # Enterprise-grade filtering info with notifications
+            "filter_metadata": filter_metadata,  # Enterprise-grade filtering info with notifications
+            "mega_repo_warning": mega_repo_warning  # Warning for extremely large repos
         }
     
     except Exception as e:
