@@ -27,7 +27,8 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(4);
   const [loadingState, setLoadingState] = useState({ isLoading: false, message: '', progress: 0 });
-  
+  const lastGraphDataRef = useRef(null);  // Track if graphData changed (new repo uploaded)
+
 
   const renderGraph = useCallback((data, level) => {
     // Set initial rendering state
@@ -147,15 +148,44 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     })));
   
     const container = networkRef.current;
-    const graphData = { nodes, edges };
-    const options = {
-      layout: {
-        improvedLayout: true,
-        randomSeed: 42,  // Consistent layout across reloads
-      },
-      physics: {
-        enabled: true,
-        solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
+
+    // Enterprise optimization: Reuse existing network when switching views
+    // Only create new network on first render or when graph data changes (new repo uploaded)
+    // This makes view switching instant (0.1s vs 5s) by avoiding re-stabilization
+    const isNewGraphData = data !== lastGraphDataRef.current;
+    const shouldReuseNetwork = network && network.body && network.body.data && !isNewGraphData;
+
+    if (shouldReuseNetwork) {
+      console.log('⚡ OPTIMIZATION: Reusing network, skipping physics (instant view switch)');
+    } else if (isNewGraphData) {
+      console.log('🆕 NEW REPO: Creating fresh network with physics');
+    } else {
+      console.log('🏗️ FIRST RENDER: Creating network with physics');
+    }
+
+    if (isNewGraphData || !lastGraphDataRef.current) {
+      lastGraphDataRef.current = data;  // Track graphData for new repo detection
+    }
+
+    // Reuse existing network or create new one
+    let currentNetwork;
+    if (shouldReuseNetwork) {
+      // Instant view switch: Update data on existing network
+      currentNetwork = network;
+      currentNetwork.setData({ nodes, edges });
+      currentNetwork.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+      setLoadingState({ isLoading: false, message: '', progress: 100 });
+    } else {
+      // First render or new repo: Create network with physics
+      const graphData = { nodes, edges };
+      const options = {
+        layout: {
+          improvedLayout: true,
+          randomSeed: 42,  // Consistent layout across reloads
+        },
+        physics: {
+          enabled: true,  // Physics always enabled for new networks
+          solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
         forceAtlas2Based: {
           gravitationalConstant: -150,  // Strong repulsion (spread nodes apart for readability)
           centralGravity: 0.005,  // Very weak center (allows wide spreading)
@@ -165,7 +195,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
           avoidOverlap: 1.5,  // Strong overlap prevention (critical for 400+ nodes)
         },
         stabilization: {
-          enabled: true,
+          enabled: !shouldReuseNetwork,  // Skip stabilization when reusing network
           iterations: stabilizationIterations,  // Adaptive: 300/800/1500 based on repo size
           updateInterval: 25,
           fit: true,
@@ -212,43 +242,45 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
           roundness: 0.2,
         },
       },
-    };
-  
-    const newNetwork = new Network(container, graphData, options);
-    setNetwork(newNetwork);
+      };
 
-    // Show progress during stabilization (live updates)
-    newNetwork.on('stabilizationProgress', (params) => {
-      const progress = Math.round((params.iterations / params.total) * 100);
-      setLoadingState({
-        isLoading: true,
-        message: `Organizing clusters...`,
-        progress: 50 + (progress / 2)  // 50-100% range
+      currentNetwork = new Network(container, graphData, options);
+      setNetwork(currentNetwork);
+
+      // Show progress during stabilization (live updates)
+      currentNetwork.on('stabilizationProgress', (params) => {
+        const progress = Math.round((params.iterations / params.total) * 100);
+        setLoadingState({
+          isLoading: true,
+          message: `Organizing clusters...`,
+          progress: 50 + (progress / 2)  // 50-100% range
+        });
+        if (progress % 20 === 0) {  // Log every 20%
+          console.log(`📊 GRAPH: Organizing clusters... ${progress}%`);
+        }
       });
-      if (progress % 20 === 0) {  // Log every 20%
-        console.log(`📊 GRAPH: Organizing clusters... ${progress}%`);
-      }
-    });
 
-    // Force-Atlas2 clustering: Let physics organize, then lock positions
-    newNetwork.once('stabilizationIterationsDone', () => {
-      console.log('✅ GRAPH: Clustering complete, locking positions');
-      setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
-      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
-      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+      // Force-Atlas2 clustering: Let physics organize, then lock positions
+      currentNetwork.once('stabilizationIterationsDone', () => {
+        console.log('✅ GRAPH: Clustering complete, locking positions');
+        setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
+        currentNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
+        currentNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
 
-      // Mark as complete after animation
-      setTimeout(() => {
-        setLoadingState({ isLoading: false, message: '', progress: 100 });
-      }, 1000);
-    });
-  
-    newNetwork.on('hoverNode', (params) => {
+        // Mark as complete after animation
+        setTimeout(() => {
+          setLoadingState({ isLoading: false, message: '', progress: 100 });
+        }, 1000);
+      });
+    }
+
+    // Attach event handlers (works for both new and reused networks)
+    currentNetwork.on('hoverNode', (params) => {
       const nodeId = params.node;
       const node = nodes.get(nodeId);
-      const connectedNodes = newNetwork.getConnectedNodes(nodeId);
+      const connectedNodes = currentNetwork.getConnectedNodes(nodeId);
       const imports = connectedNodes.filter(id => {
-        const edge = edges.get(newNetwork.getConnectedEdges(nodeId, id)[0]);
+        const edge = edges.get(currentNetwork.getConnectedEdges(nodeId, id)[0]);
         return edge && edge.arrows === 'to' && edge.to === nodeId;
       });
       const fileStructure = connectedNodes.filter(id => {
@@ -266,15 +298,15 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         </div>
       `;
 
-      newNetwork.body.nodes[nodeId].options.title = tooltipContent;
+      currentNetwork.body.nodes[nodeId].options.title = tooltipContent;
     });
-  
-    newNetwork.on('click', (params) => {
+
+    currentNetwork.on('click', (params) => {
       if (params.nodes.length > 0) {
         const clickedNodeId = params.nodes[0];
-        highlightConnectedNodes(clickedNodeId, newNetwork, nodes, edges);
+        highlightConnectedNodes(clickedNodeId, currentNetwork, nodes, edges);
       } else {
-        resetHighlight(newNetwork, nodes, edges);
+        resetHighlight(currentNetwork, nodes, edges);
       }
     });
 
@@ -329,7 +361,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     } else {
       console.log('ℹ️ GRAPH: No nodes to highlight (empty array)');
     }
-  }, [highlightedNodes, graphData, network]);  // Removed renderGraph and currentLevel to prevent infinite loop
+  }, [highlightedNodes, graphData, network, viewMode]);  // Added viewMode to fix focused view rendering
 
   // Render graph when data or filters change (but not when searching)
   useEffect(() => {
@@ -337,7 +369,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       console.log('🎨 Re-rendering graph with current filters');
       renderGraph(graphData, currentLevel);
     }
-  }, [graphData, selectedNodeTypes, currentLevel, nodeFading, renderGraph, searchTerm]);
+  }, [graphData, selectedNodeTypes, currentLevel, nodeFading, renderGraph, searchTerm, viewMode]);
 
   // Fetch graph data once on mount
   useEffect(() => {

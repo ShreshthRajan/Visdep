@@ -16,6 +16,11 @@ const Home = () => {
 
   const handleUpload = async () => {
     if (!repoUrl.trim()) return;
+
+    // Navigate immediately to show loading progress (enterprise UX)
+    // Upload continues in background, graph page shows chain-of-thought loading
+    navigate('/graph-chat');
+
     try {
       setIsLoading(true);
       const response = await API.post('/api/upload_repo', {
@@ -40,10 +45,12 @@ const Home = () => {
       }
 
       setMessage(response.data.message);
-      setTimeout(() => navigate('/graph-chat'), 2000);
+      setIsLoading(false);
     } catch (error) {
+      console.error('Upload error:', error);
       setMessage('Error uploading repository');
       setIsLoading(false);
+      // Stay on graph page, show error there
     }
   };
 

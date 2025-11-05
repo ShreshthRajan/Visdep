@@ -140,3 +140,9 @@ cython_debug/
 
 # Windows
 Thumbs.db
+
+# Visdep-specific: Database and indexes (too large for git)
+data_storage.db
+faiss_indexes/
+*.faiss
+*.pkl
