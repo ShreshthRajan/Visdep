@@ -27,6 +27,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(4);
   const [loadingState, setLoadingState] = useState({ isLoading: false, message: '', progress: 0 });
+  const [megaRepoWarning, setMegaRepoWarning] = useState(null);
 
 
   const renderGraph = useCallback((data, level) => {
@@ -347,6 +348,13 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         const response = await API.get('/api/dependency_graph');
         const data = response.data;
         setLoadingState({ isLoading: true, message: 'Analyzing graph structure...', progress: 30 });
+
+        // Check for mega-repo warning from backend
+        if (data.mega_repo_warning) {
+          setMegaRepoWarning(data.mega_repo_warning);
+          console.warn('⚠️ MEGA-REPO:', data.mega_repo_warning);
+        }
+
         setGraphData(data);
 
         // Adaptive defaults based on repository size
@@ -547,6 +555,16 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
 
   return (
     <div className="h-full flex flex-col relative">
+      {/* Mega-Repo Warning */}
+      {megaRepoWarning && (
+        <div className="bg-yellow-50 border-b-2 border-yellow-400 p-2 text-center">
+          <span className="text-sm font-semibold text-yellow-900">
+            ⚠️ Large Repository ({megaRepoWarning.chunk_count.toLocaleString()} chunks) - {megaRepoWarning.message}
+          </span>
+          <span className="text-xs text-yellow-700 ml-2">{megaRepoWarning.example}</span>
+          <button onClick={() => setMegaRepoWarning(null)} className="ml-3 text-yellow-700 hover:text-yellow-900 font-bold">✕</button>
+        </div>
+      )}
       <div className="flex justify-between items-center p-4 bg-gray-100 border-b">
         <div className="flex items-center flex-grow mr-4">
           {/* View Mode Toggle */}

@@ -3,6 +3,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
+import API from '../api';
 
 const GraphChat = () => {
   const [graphWidth, setGraphWidth] = useState(65);
