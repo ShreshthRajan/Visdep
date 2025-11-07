@@ -130,3 +130,17 @@ input[type="text"]:focus {
   margin: 0 auto;
   padding: 1rem;
 }
+
+/* Smart Chain-of-Thought Progress Animation */
+@keyframes progress {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-progress {
+  animation: progress 2s ease-in-out;
+}

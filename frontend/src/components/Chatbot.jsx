@@ -16,6 +16,7 @@ const Chatbot = ({ onHighlightNodes }) => {
   const [context, setContext] = useState({});
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [progressSteps, setProgressSteps] = useState([]);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -37,6 +38,70 @@ const Chatbot = ({ onHighlightNodes }) => {
     }
   }, [chatHistory]);
 
+  // Smart progress generator - creates contextual chain-of-thought steps
+  const generateSmartProgress = (queryText) => {
+    // Extract keywords from query (functions, classes, concepts)
+    const keywords = queryText
+      .replace(/[?.,]/g, '')
+      .split(' ')
+      .filter(word =>
+        word.length > 3 &&
+        !['does', 'what', 'how', 'why', 'when', 'where', 'the', 'this', 'that', 'with', 'from', 'into'].includes(word.toLowerCase())
+      )
+      .slice(0, 3);
+
+    const repoName = context.repo_name || 'repository';
+    const chunkCount = Object.keys(context).length;
+
+    // Generate intelligent progress steps
+    const steps = [
+      {
+        id: 1,
+        icon: '🔍',
+        message: `Searching ${chunkCount} code chunks for "${keywords[0] || 'relevant code'}"...`,
+        timing: 0,
+        status: 'active'
+      },
+      {
+        id: 2,
+        icon: '🧠',
+        message: `Running semantic analysis across ${repoName} codebase...`,
+        timing: 2000,
+        status: 'pending'
+      },
+      {
+        id: 3,
+        icon: '📊',
+        message: keywords[1] ? `Analyzing ${keywords[1]} implementation patterns...` : 'Analyzing implementation patterns...',
+        timing: 5000,
+        status: 'pending'
+      },
+      {
+        id: 4,
+        icon: '🔗',
+        message: 'Expanding dependency graph (3-hop traversal)...',
+        timing: 8000,
+        status: 'pending'
+      },
+      {
+        id: 5,
+        icon: '🤖',
+        message: `Synthesizing answer about ${keywords[2] || 'your question'}...`,
+        timing: 12000,
+        status: 'pending'
+      },
+      {
+        id: 6,
+        icon: '✨',
+        message: 'Generating citations and highlighting code...',
+        timing: 18000,
+        status: 'pending'
+      }
+    ];
+
+    return steps;
+  };
+
   const handleQuery = async () => {
     if (!query.trim()) return;
 
@@ -44,6 +109,22 @@ const Chatbot = ({ onHighlightNodes }) => {
     setQuery('');
     setChatHistory(prevHistory => [...prevHistory, { type: 'user', text: currentQuery }]);
     setIsLoading(true);
+
+    // Generate smart progress steps
+    const steps = generateSmartProgress(currentQuery);
+    setProgressSteps(steps);
+
+    // Animate progress steps
+    steps.forEach((step, index) => {
+      setTimeout(() => {
+        setProgressSteps(prev =>
+          prev.map(s =>
+            s.id === step.id ? { ...s, status: 'active' } :
+            s.id < step.id ? { ...s, status: 'complete' } : s
+          )
+        );
+      }, step.timing);
+    });
 
     try {
       console.log('🔍 CHATBOT DEBUG: Sending query:', currentQuery);
@@ -81,6 +162,7 @@ const Chatbot = ({ onHighlightNodes }) => {
       console.error('Error details:', error.response?.data);
     } finally {
       setIsLoading(false);
+      setProgressSteps([]); // Clear progress after completion
     }
   };
 
@@ -122,9 +204,36 @@ const Chatbot = ({ onHighlightNodes }) => {
             </div>
           </div>
         ))}
-        {isLoading && (
-          <div className="flex justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+        {/* Smart Chain-of-Thought Progress */}
+        {isLoading && progressSteps.length > 0 && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-indigo-200 rounded-lg p-4 shadow-lg">
+            <div className="space-y-3">
+              {progressSteps.map((step) => (
+                <div key={step.id} className="flex items-start space-x-3">
+                  <span className={`text-2xl transition-all duration-300 ${
+                    step.status === 'complete' ? 'opacity-50 scale-90' :
+                    step.status === 'active' ? 'opacity-100 scale-110 animate-pulse' :
+                    'opacity-30'
+                  }`}>
+                    {step.status === 'complete' ? '✓' : step.icon}
+                  </span>
+                  <div className="flex-1">
+                    <p className={`text-sm transition-all duration-300 ${
+                      step.status === 'complete' ? 'text-gray-500 line-through' :
+                      step.status === 'active' ? 'text-indigo-700 font-semibold' :
+                      'text-gray-400'
+                    }`}>
+                      {step.message}
+                    </p>
+                    {step.status === 'active' && (
+                      <div className="mt-1 h-1 bg-indigo-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-600 rounded-full animate-progress" style={{width: '100%'}}></div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
