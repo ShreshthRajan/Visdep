@@ -66,7 +66,7 @@ class RepoLink(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
-    context: dict  # Adjust to accept dictionary context
+    context: Optional[dict] = None  # Optional: backend loads from DB server-side
 
 def store_repo_data(repo_metadata):
     # Log the storage action for debugging
@@ -419,11 +419,29 @@ async def get_dependency_graph():
 async def query_jamba(request: QueryRequest):
     try:
         query = request.query
-        context = request.context
+
+        # ENTERPRISE FIX: Load chunks from database server-side (eliminates race condition)
+        # This approach is:
+        # 1. More robust - no dependency on frontend timing
+        # 2. Faster - avoids transferring 3MB+ JSON over network
+        # 3. More secure - backend controls data source
+        global latest_repo_id
+
+        if not latest_repo_id:
+            raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
+
+        # Load chunks from database (same pattern as query_stream endpoint)
+        chunks = retrieve_chunks(latest_repo_id)
+
+        if not chunks:
+            raise HTTPException(status_code=400, detail=f"No chunks found for repository. Please re-upload the repository.")
+
+        # Convert to context format expected by langchain_integration
+        context = {chunk['chunk_id']: chunk for chunk in chunks}
+
+        logging.info(f"Loaded {len(chunks)} chunks from database for query (server-side)")
 
         # Get response from Jamba model with caching (Task 2.1)
-        # Pass latest_repo_id for cache lookup
-        global latest_repo_id
         response = await get_jamba_response(query, context, repo_id=latest_repo_id)
 
         if response:

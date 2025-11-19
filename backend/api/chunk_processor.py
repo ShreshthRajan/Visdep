@@ -334,6 +334,26 @@ def chunk_file(file_path: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]
     if not file_content:
         return chunks
 
+    # PHASE 1: Handle parse error fallback (create single chunk from full file)
+    if ast_info.get('fallback') == 'full_file':
+        logging.info(f"📄 Creating fallback chunk for {file_path} (parser error, using full file)")
+        chunk_id = generate_chunk_id(file_path, os.path.basename(file_path), 1)
+        chunks.append({
+            'chunk_id': chunk_id,
+            'file_path': file_path,
+            'type': 'file',
+            'name': os.path.basename(file_path),
+            'code': file_content,
+            'start_line': 1,
+            'end_line': len(file_content.split('\n')),
+            'tokens': count_tokens(file_content),
+            'metadata': {
+                'parse_error': ast_info.get('error', 'Unknown error'),
+                'fallback': True
+            }
+        })
+        return chunks
+
     # Check if we have NEW structured data (dicts) or OLD flat data (strings)
     functions = ast_info.get('functions', [])
     classes = ast_info.get('classes', [])

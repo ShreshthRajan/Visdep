@@ -13,24 +13,18 @@ const ListRenderer = ({ items }) => (
 
 const Chatbot = ({ onHighlightNodes }) => {
   const [query, setQuery] = useState('');
-  const [context, setContext] = useState({});
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressSteps, setProgressSteps] = useState([]);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
 
-  useEffect(() => {
-    const fetchContext = async () => {
-      try {
-        const contextResponse = await API.get('/api/context');
-        setContext(contextResponse.data);
-      } catch (error) {
-        console.error('Error fetching context:', error);
-      }
-    };
-    fetchContext();
-  }, []);
+  // ENTERPRISE FIX: Removed context fetching - backend loads from DB server-side
+  // Benefits:
+  // 1. Eliminates race condition (no timing dependency)
+  // 2. Reduces network traffic (no 3MB+ JSON transfer)
+  // 3. Faster queries (backend has direct DB access)
+  // 4. More secure (backend controls data source)
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -50,22 +44,19 @@ const Chatbot = ({ onHighlightNodes }) => {
       )
       .slice(0, 3);
 
-    const repoName = context.repo_name || 'repository';
-    const chunkCount = Object.keys(context).length;
-
     // Generate intelligent progress steps
     const steps = [
       {
         id: 1,
         icon: '🔍',
-        message: `Searching ${chunkCount} code chunks for "${keywords[0] || 'relevant code'}"...`,
+        message: `Searching codebase for "${keywords[0] || 'relevant code'}"...`,
         timing: 0,
         status: 'active'
       },
       {
         id: 2,
         icon: '🧠',
-        message: `Running semantic analysis across ${repoName} codebase...`,
+        message: 'Running semantic analysis across codebase...',
         timing: 2000,
         status: 'pending'
       },
@@ -128,7 +119,9 @@ const Chatbot = ({ onHighlightNodes }) => {
 
     try {
       console.log('🔍 CHATBOT DEBUG: Sending query:', currentQuery);
-      const res = await API.post('/api/query', { query: currentQuery, context });
+      // ENTERPRISE FIX: Backend loads chunks from database server-side
+      // No need to send 3MB+ context over network (faster, more robust)
+      const res = await API.post('/api/query', { query: currentQuery });
 
       console.log('📦 CHATBOT DEBUG: Received response:', {
         hasResponse: !!res.data.response,
@@ -157,7 +150,20 @@ const Chatbot = ({ onHighlightNodes }) => {
         console.log('📑 CHATBOT: Citations:', res.data.citations);
       }
     } catch (error) {
-      setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: 'Error querying Visdep' }]);
+      // ENTERPRISE ERROR HANDLING: Provide specific, actionable error messages
+      let errorMessage = 'Error querying Visdep';
+
+      if (error.response?.status === 400) {
+        // Bad request - likely no repo loaded
+        errorMessage = error.response.data?.detail || 'Please upload a repository first before asking questions.';
+      } else if (error.response?.status === 500) {
+        // Server error
+        errorMessage = 'Server error. Please try again or contact support if the issue persists.';
+      } else if (error.message) {
+        errorMessage = `Error: ${error.message}`;
+      }
+
+      setChatHistory(prevHistory => [...prevHistory, { type: 'bot', text: errorMessage }]);
       console.error('❌ CHATBOT ERROR:', error);
       console.error('Error details:', error.response?.data);
     } finally {
