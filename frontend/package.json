@@ -8,9 +8,11 @@
     "nth-check": "^2.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.25.1",
     "react-scripts": "^5.0.1",
     "react-syntax-highlighter": "^15.5.0",
+    "remark-gfm": "^4.0.1",
     "svgo": "^2.8.0",
     "vis-network": "^9.1.9"
   },

@@ -1,15 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import API from '../api';
-import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-
-const ListRenderer = ({ items }) => (
-  <ul className="list-disc list-inside pl-4 space-y-1">
-    {items.map((item, index) => (
-      <li key={index}>{item}</li>
-    ))}
-  </ul>
-);
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const Chatbot = ({ onHighlightNodes }) => {
   const [query, setQuery] = useState('');
@@ -180,39 +174,126 @@ const Chatbot = ({ onHighlightNodes }) => {
   };
 
   const renderMessage = (msg) => {
-    const lines = msg.text.split('\n');
-    return lines.map((line, index) => {
-      if (line.startsWith('```')) {
-        const code = lines.slice(index + 1, lines.findIndex((l, i) => i > index && l.startsWith('```'))).join('\n');
-        return (
-          <SyntaxHighlighter language="javascript" style={docco} className="rounded-md my-2">
-            {code}
-          </SyntaxHighlighter>
-        );
-      } else if (line.match(/^\d+\.\s/)) {
-        const listItems = lines.filter(l => l.match(/^\d+\.\s/)).map(l => l.replace(/^\d+\.\s/, ''));
-        return <ListRenderer items={listItems} />;
-      } else {
-        return <p className="mb-2">{line}</p>;
-      }
-    });
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ node, inline, className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || '');
+            const language = match ? match[1] : 'text';
+
+            return !inline ? (
+              <SyntaxHighlighter
+                style={vscDarkPlus}
+                language={language}
+                PreTag="div"
+                customStyle={{
+                  backgroundColor: 'var(--code-bg)',
+                  padding: '1rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  margin: '0.5rem 0',
+                  border: '1px solid var(--border-default)'
+                }}
+                {...props}
+              >
+                {String(children).replace(/\n$/, '')}
+              </SyntaxHighlighter>
+            ) : (
+              <code
+                className="px-1.5 py-0.5 rounded text-sm"
+                style={{
+                  backgroundColor: 'var(--elevated)',
+                  color: 'var(--accent)',
+                  fontFamily: "'JetBrains Mono', monospace"
+                }}
+                {...props}
+              >
+                {children}
+              </code>
+            );
+          },
+          p({ children }) {
+            return <p className="mb-3" style={{ color: 'var(--text-primary)', lineHeight: '1.6' }}>{children}</p>;
+          },
+          h1({ children }) {
+            return <h1 className="text-2xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>{children}</h1>;
+          },
+          h2({ children }) {
+            return <h2 className="text-xl font-semibold mb-2 mt-4" style={{ color: 'var(--text-primary)' }}>{children}</h2>;
+          },
+          h3({ children }) {
+            return <h3 className="text-lg font-semibold mb-2 mt-3" style={{ color: 'var(--text-primary)' }}>{children}</h3>;
+          },
+          ul({ children }) {
+            return <ul className="list-disc list-inside pl-4 mb-3 space-y-1" style={{ color: 'var(--text-primary)' }}>{children}</ul>;
+          },
+          ol({ children }) {
+            return <ol className="list-decimal list-inside pl-4 mb-3 space-y-1" style={{ color: 'var(--text-primary)' }}>{children}</ol>;
+          },
+          li({ children }) {
+            return <li className="mb-1" style={{ color: 'var(--text-primary)' }}>{children}</li>;
+          },
+          strong({ children }) {
+            return <strong className="font-semibold" style={{ color: 'var(--text-primary)' }}>{children}</strong>;
+          },
+          em({ children }) {
+            return <em className="italic" style={{ color: 'var(--text-secondary)' }}>{children}</em>;
+          },
+          a({ href, children }) {
+            return <a href={href} className="underline" style={{ color: 'var(--accent)' }} target="_blank" rel="noopener noreferrer">{children}</a>;
+          },
+          blockquote({ children }) {
+            return (
+              <blockquote
+                className="pl-4 my-3"
+                style={{
+                  borderLeft: '3px solid var(--class)',
+                  color: 'var(--text-secondary)',
+                  fontStyle: 'italic'
+                }}
+              >
+                {children}
+              </blockquote>
+            );
+          }
+        }}
+      >
+        {msg.text}
+      </ReactMarkdown>
+    );
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--near-black)' }}>
       <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {chatHistory.map((msg, index) => (
           <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-xs lg:max-w-2xl px-4 py-2 rounded-lg ${
-              msg.type === 'user' ? 'bg-indigo-500 text-white' : 'bg-white text-gray-800 shadow-md'
-            }`}>
+            <div
+              className="max-w-xs lg:max-w-2xl px-4 py-3 rounded-lg"
+              style={{
+                backgroundColor: msg.type === 'user' ? 'var(--elevated)' : 'var(--card-bg)',
+                color: 'var(--text-primary)',
+                border: msg.type === 'bot' ? '1px solid var(--border-default)' : 'none',
+                borderLeft: msg.type === 'bot' ? '3px solid var(--class)' : 'none',
+                boxShadow: msg.type === 'bot' ? '0 4px 12px rgba(0, 0, 0, 0.3)' : 'none'
+              }}
+            >
               {renderMessage(msg)}
             </div>
           </div>
         ))}
         {/* Smart Chain-of-Thought Progress */}
         {isLoading && progressSteps.length > 0 && (
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-indigo-200 rounded-lg p-4 shadow-lg">
+          <div
+            className="border rounded-lg p-4 shadow-lg"
+            style={{
+              backgroundColor: 'var(--card-bg)',
+              borderColor: 'var(--function)',
+              borderWidth: '1px'
+            }}
+          >
             <div className="space-y-3">
               {progressSteps.map((step) => (
                 <div key={step.id} className="flex items-start space-x-3">
@@ -224,16 +305,21 @@ const Chatbot = ({ onHighlightNodes }) => {
                     {step.status === 'complete' ? '✓' : step.icon}
                   </span>
                   <div className="flex-1">
-                    <p className={`text-sm transition-all duration-300 ${
-                      step.status === 'complete' ? 'text-gray-500 line-through' :
-                      step.status === 'active' ? 'text-indigo-700 font-semibold' :
-                      'text-gray-400'
-                    }`}>
+                    <p className="text-sm transition-all duration-300" style={{
+                      color: step.status === 'complete' ? 'var(--text-secondary)' :
+                             step.status === 'active' ? 'var(--accent)' :
+                             'var(--text-tertiary)',
+                      textDecoration: step.status === 'complete' ? 'line-through' : 'none',
+                      fontWeight: step.status === 'active' ? 600 : 400
+                    }}>
                       {step.message}
                     </p>
                     {step.status === 'active' && (
-                      <div className="mt-1 h-1 bg-indigo-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-indigo-600 rounded-full animate-progress" style={{width: '100%'}}></div>
+                      <div className="mt-1 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--border-default)' }}>
+                        <div className="h-full rounded-full animate-progress" style={{
+                          width: '100%',
+                          background: 'linear-gradient(90deg, var(--function) 0%, var(--accent) 100%)'
+                        }}></div>
                       </div>
                     )}
                   </div>
@@ -243,21 +329,38 @@ const Chatbot = ({ onHighlightNodes }) => {
           </div>
         )}
       </div>
-      <div className="border-t p-4 bg-white">
+      <div className="p-4" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--near-black)' }}>
         <div className="flex rounded-md shadow-sm">
           <textarea
             ref={textareaRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="flex-1 px-4 py-2 border-gray-300 rounded-l-md focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+            className="flex-1 px-4 py-2 rounded-l-md resize-none focus:outline-none transition-all"
             placeholder="Ask about the codebase... (Shift+Enter for new line)"
             rows="1"
-            style={{ minHeight: '40px', maxHeight: '120px' }}
+            style={{
+              minHeight: '40px',
+              maxHeight: '120px',
+              backgroundColor: 'var(--input-bg)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-default)',
+              fontFamily: "'Inter', sans-serif"
+            }}
+            onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
+            onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
           />
           <button
             onClick={handleQuery}
-            className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            className="px-4 py-2 font-medium rounded-r-md focus:outline-none transition-all"
+            style={{
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+            onMouseEnter={(e) => e.target.style.opacity = '0.9'}
+            onMouseLeave={(e) => e.target.style.opacity = '1'}
           >
             Ask
           </button>

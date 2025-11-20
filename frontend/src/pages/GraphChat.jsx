@@ -34,27 +34,43 @@ const GraphChat = () => {
   }, [handleResize]);
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100 font-sans">
-      <header className="bg-indigo-700 text-white p-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Visdep</h1>
-        <button 
-          onClick={() => navigate('/')} 
-          className="bg-white text-indigo-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-100 transition-colors"
+    <div className="flex flex-col h-screen font-sans" style={{ backgroundColor: 'var(--black)', color: 'var(--text-primary)' }}>
+      <header className="p-4 flex justify-between items-center" style={{
+        backgroundColor: 'var(--near-black)',
+        borderBottom: '1px solid var(--border-subtle)',
+        height: '56px'
+      }}>
+        <h1 className="text-lg font-semibold" style={{ color: 'var(--accent)' }}>⚡ Visdep</h1>
+        <button
+          onClick={() => navigate('/')}
+          className="px-4 py-2 rounded-md text-sm font-medium transition-all"
+          style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: '#ffffff',
+            border: 'none',
+            cursor: 'pointer'
+          }}
+          onMouseEnter={(e) => e.target.style.opacity = '0.9'}
+          onMouseLeave={(e) => e.target.style.opacity = '1'}
         >
           Upload New Repo
         </button>
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <div style={{ width: `${graphWidth}%` }} className="bg-white shadow-lg">
+        <div style={{ width: `${graphWidth}%`, backgroundColor: 'var(--black)' }} className="shadow-lg">
           <div className="h-full">
             <DependencyGraph highlightedNodes={highlightedNodes} />
           </div>
         </div>
         <div
-          className="w-1 bg-gray-300 cursor-col-resize hover:bg-gray-400 transition-colors"
+          className="w-1 cursor-col-resize hover:opacity-100 transition-opacity"
+          style={{
+            backgroundColor: 'var(--border-default)',
+            opacity: 0.5
+          }}
           onMouseDown={() => document.addEventListener('mousemove', handleResize)}
         />
-        <div style={{ width: `${100 - graphWidth}%` }} className="bg-white shadow-lg flex flex-col">
+        <div style={{ width: `${100 - graphWidth}%`, backgroundColor: 'var(--near-black)' }} className="shadow-lg flex flex-col">
           <Chatbot onHighlightNodes={handleHighlightNodes} />
         </div>
       </div>

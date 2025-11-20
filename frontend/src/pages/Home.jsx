@@ -68,9 +68,13 @@ const Home = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 font-sans">
-      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-        <h1 className="text-4xl font-bold mb-6 text-center text-indigo-700">Visdep</h1>
+    <div className="flex flex-col items-center justify-center min-h-screen font-sans" style={{ backgroundColor: 'var(--black)' }}>
+      <div className="p-8 rounded-lg shadow-md w-full max-w-md" style={{
+        backgroundColor: 'var(--card-bg)',
+        border: '1px solid var(--border-default)',
+        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)'
+      }}>
+        <h1 className="text-4xl font-bold mb-6 text-center" style={{ color: 'var(--accent)' }}>⚡ Visdep</h1>
         {/* Smart Filter Notifications */}
         {filterNotifications.length > 0 && !isLoading && (
           <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -120,14 +124,30 @@ const Home = () => {
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
               placeholder="Enter GitHub repository URL"
-              className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full p-3 rounded-lg mb-4 focus:outline-none transition-all"
+              style={{
+                backgroundColor: 'var(--input-bg)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-default)',
+                fontFamily: "'Inter', sans-serif"
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
             />
             <input
               type="text"
               value={subDirectory}
               onChange={(e) => setSubDirectory(e.target.value)}
               placeholder="Enter subdirectory (optional)"
-              className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full p-3 rounded-lg mb-4 focus:outline-none transition-all"
+              style={{
+                backgroundColor: 'var(--input-bg)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-default)',
+                fontFamily: "'Inter', sans-serif"
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
             />
             {/* Advanced Options - Collapsible */}
             <div className="mb-4">
@@ -208,17 +228,27 @@ const Home = () => {
 
             <button
               onClick={handleUpload}
-              className="w-full bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full p-3 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isLoading || !repoUrl.trim()}
+              style={{
+                background: isLoading || !repoUrl.trim() ? 'var(--border-strong)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: isLoading || !repoUrl.trim() ? 'not-allowed' : 'pointer'
+              }}
+              onMouseEnter={(e) => {
+                if (!isLoading && repoUrl.trim()) e.target.style.opacity = '0.9';
+              }}
+              onMouseLeave={(e) => e.target.style.opacity = '1'}
             >
               Upload Repository
             </button>
           </>
         )}
-        {message && <p className="mt-4 text-center text-red-500">{message}</p>}
+        {message && <p className="mt-4 text-center" style={{ color: 'var(--error)' }}>{message}</p>}
       </div>
-      <p className="mt-8 text-center text-gray-600">
-        Visdep is a tool to visualize and interact with the dependencies in your codebase.
+      <p className="mt-8 text-center" style={{ color: 'var(--text-secondary)' }}>
+        Visdep: Enterprise-grade code understanding with visual dependency graphs
       </p>
     </div>
   );

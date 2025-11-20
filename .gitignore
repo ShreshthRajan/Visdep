@@ -146,3 +146,6 @@ data_storage.db
 faiss_indexes/
 *.faiss
 *.pkl
+
+context.json
+dependency_graph.json
