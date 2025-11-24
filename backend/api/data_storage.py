@@ -12,6 +12,46 @@ DATABASE_PATH = os.getenv('DATABASE_PATH', 'data_storage.db')
 # FAISS indexes directory - also on persistent volume in production
 FAISS_DIR = os.getenv('FAISS_DIR', 'faiss_indexes')
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def initialize_database():
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
