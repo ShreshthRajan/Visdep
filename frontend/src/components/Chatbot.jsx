@@ -5,13 +5,16 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-const Chatbot = ({ onHighlightNodes }) => {
+const Chatbot = ({ onHighlightNodes, nodeQuery, onQueryProcessed }) => {
   const [query, setQuery] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressSteps, setProgressSteps] = useState([]);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
+
+  // Node queries are now handled by inline panel, not main chat
+  // This effect is disabled - inline node chat panel handles node-specific queries
 
   // ENTERPRISE FIX: Removed context fetching - backend loads from DB server-side
   // Benefits:
@@ -276,8 +279,8 @@ const Chatbot = ({ onHighlightNodes }) => {
                 backgroundColor: msg.type === 'user' ? 'var(--elevated)' : 'var(--card-bg)',
                 color: 'var(--text-primary)',
                 border: msg.type === 'bot' ? '1px solid var(--border-default)' : 'none',
-                borderLeft: msg.type === 'bot' ? '3px solid var(--class)' : 'none',
-                boxShadow: msg.type === 'bot' ? '0 4px 12px rgba(0, 0, 0, 0.3)' : 'none'
+                borderLeft: msg.type === 'bot' ? '3px solid var(--accent-alt)' : 'none',
+                boxShadow: msg.type === 'bot' ? '0 2px 8px rgba(0, 0, 0, 0.1)' : 'none'
               }}
             >
               {renderMessage(msg)}
@@ -318,7 +321,7 @@ const Chatbot = ({ onHighlightNodes }) => {
                       <div className="mt-1 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--border-default)' }}>
                         <div className="h-full rounded-full animate-progress" style={{
                           width: '100%',
-                          background: 'linear-gradient(90deg, var(--function) 0%, var(--accent) 100%)'
+                          backgroundColor: 'var(--accent)'
                         }}></div>
                       </div>
                     )}
@@ -354,7 +357,7 @@ const Chatbot = ({ onHighlightNodes }) => {
             onClick={handleQuery}
             className="px-4 py-2 font-medium rounded-r-md focus:outline-none transition-all"
             style={{
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              backgroundColor: '#84a07c',
               color: '#ffffff',
               border: 'none',
               cursor: 'pointer'

@@ -231,7 +231,7 @@ const Home = () => {
               className="w-full p-3 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isLoading || !repoUrl.trim()}
               style={{
-                background: isLoading || !repoUrl.trim() ? 'var(--border-strong)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                backgroundColor: isLoading || !repoUrl.trim() ? 'var(--border-strong)' : '#84a07c',
                 color: '#ffffff',
                 border: 'none',
                 cursor: isLoading || !repoUrl.trim() ? 'not-allowed' : 'pointer'

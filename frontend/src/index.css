@@ -6,23 +6,24 @@
 @tailwind utilities;
 
 :root {
-  /* PHASE 1: Professional Dark Theme Color Palette */
+  /* Custom Color Scheme - Blue-Gray Theme */
   /* Backgrounds */
-  --black: #000000;
-  --near-black: #0A0A0A;
-  --card-bg: #1A1A1A;
-  --elevated: #242424;
-  --input-bg: #1A1A1A;
-  --code-bg: #0D1117;
+  --black: #8A919C;
+  --near-black: #6A7080;
+  --card-bg: #FFFFFF;
+  --elevated: #F5F7FA;
+  --input-bg: #FFFFFF;
+  --code-bg: #F6F8FA;
 
-  /* Text */
-  --text-primary: #E0E0E0;
-  --text-secondary: #A0A0A0;
-  --text-tertiary: #666666;
-  --text-code: #D4D4D4;
+  /* Text - Dark for light backgrounds */
+  --text-primary: #1A1A1A;
+  --text-secondary: #4A4A4A;
+  --text-tertiary: #737373;
+  --text-code: #24292F;
 
-  /* Semantic Colors */
-  --accent: #00D4FF;
+  /* Semantic Colors - Keep node colors, change accents */
+  --accent: #84a07c;
+  --accent-alt: #575D90;
   --function: #3B82F6;
   --class: #8B5CF6;
   --method: #A855F7;
@@ -32,9 +33,9 @@
   --error: #EF4444;
 
   /* Borders */
-  --border-subtle: #1A1A1A;
-  --border-default: #333333;
-  --border-strong: #4B5563;
+  --border-subtle: #E5E7EB;
+  --border-default: #D1D5DB;
+  --border-strong: #9CA3AF;
 }
 
 html, body, #root, .graph-container {

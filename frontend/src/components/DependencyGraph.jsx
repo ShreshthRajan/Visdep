@@ -2,13 +2,16 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
 import API from '../api';
+import NodeChatPanel from './NodeChatPanel';
 
-const DependencyGraph = ({ highlightedNodes = [] }) => {
+const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
   const [viewMode, setViewMode] = useState('full');  // 'full' or 'focused'
   const [repoSize, setRepoSize] = useState('medium');  // 'small', 'medium', 'large'
+  const [contextMenu, setContextMenu] = useState(null);  // { x, y, node }
+  const [activeChatNode, setActiveChatNode] = useState(null);  // Node with inline chat open
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
@@ -96,7 +99,7 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
 
       // Get base color
       const baseColor = isHighlighted
-        ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted (always full opacity)
+        ? { background: '#F59E0B', border: '#D97706' }  // Amber for highlighted (always full opacity)
         : getNodeColor(node.type);
 
       // Apply opacity to color
@@ -119,9 +122,9 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
         color: colorWithOpacity,
         opacity: opacity,  // Set node opacity
         font: {
-          size: isFaded ? 10 : 12,  // Smaller font for faded nodes
-          face: 'system-ui, -apple-system, sans-serif',
-          color: isFaded ? '#666666' : '#000000',  // Gray text for faded
+          size: isFaded ? 11 : 13,  // Slightly larger
+          face: "'Inter', system-ui, -apple-system, sans-serif",
+          color: isFaded ? '#999999' : '#E0E0E0',  // Light text for dark nodes
           multi: true,
           align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
           valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
@@ -136,16 +139,24 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       const toNode = filteredNodes.find(node => node.id === edge.target);
       return fromNode && toNode;
     });
-    const edges = new DataSet(filteredEdges.map(edge => ({
-      from: edge.source,
-      to: edge.target,
-      arrows: edge.relation === 'imports' ? 'to' : '',
-      color: getEdgeColor(edge.relation),
-      width: edge.relation === 'multiple' ? Math.log(edge.count) + 1 : 1,
-      smooth: { type: 'continuous', roundness: 0.2 },
-      font: { size: 12, align: 'middle', background: '#FFFFFF' },
-      label: edge.relation === 'multiple' ? `${edge.count} connections` : edge.label || '',
-    })));
+    const edges = new DataSet(filteredEdges.map(edge => {
+      const edgeColor = getEdgeColor(edge.relation);
+      return {
+        from: edge.source,
+        to: edge.target,
+        arrows: edge.relation === 'imports' ? 'to' : '',
+        color: {
+          color: edgeColor.color,
+          opacity: edgeColor.opacity,
+          highlight: edgeColor.color,
+          hover: edgeColor.color
+        },
+        width: edge.relation === 'multiple' ? Math.log(edge.count) + 1 : 1.5,
+        smooth: { type: 'continuous', roundness: 0.2 },
+        font: { size: 11, align: 'middle', background: 'transparent', color: 'var(--text-secondary)' },
+        label: edge.relation === 'multiple' ? `${edge.count} connections` : edge.label || '',
+      };
+    }));
   
     const container = networkRef.current;
     const graphData = { nodes, edges };
@@ -197,12 +208,13 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
           valign: 'center',
         },
         font: {
-          size: 13,  // Larger base font
-          face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-          color: '#1a1a1a',
+          size: 13,
+          face: "'Inter', system-ui, -apple-system, sans-serif",
+          color: '#E0E0E0',
           bold: {
             size: 14,
-            face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+            face: "'Inter', system-ui, -apple-system, sans-serif",
+            color: '#E0E0E0'
           },
         },
       },
@@ -271,11 +283,30 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     });
 
     newNetwork.on('click', (params) => {
+      // Close context menu on any click
+      setContextMenu(null);
+
       if (params.nodes.length > 0) {
         const clickedNodeId = params.nodes[0];
         highlightConnectedNodes(clickedNodeId, newNetwork, nodes, edges);
       } else {
         resetHighlight(newNetwork, nodes, edges);
+      }
+    });
+
+    // Right-click context menu
+    newNetwork.on('oncontext', (params) => {
+      params.event.preventDefault();
+
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = nodes.get(nodeId);
+
+        setContextMenu({
+          x: params.pointer.DOM.x,
+          y: params.pointer.DOM.y,
+          node: node
+        });
       }
     });
 
@@ -406,14 +437,45 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     fetchGraphData();
   }, []);  // Only run once on mount - removed circular dependencies
 
-  const highlightConnectedNodes = (nodeId, network) => {
+  const highlightConnectedNodes = (nodeId, network, nodes, edges) => {
     const connectedNodeIds = network.getConnectedNodes(nodeId);
     connectedNodeIds.push(nodeId);
     network.selectNodes(connectedNodeIds);
+
+    // Highlight edges connected to this node in green
+    const connectedEdgeIds = network.getConnectedEdges(nodeId);
+    const edgeUpdates = connectedEdgeIds.map(edgeId => ({
+      id: edgeId,
+      color: {
+        color: '#10B981',
+        opacity: 1.0,
+        highlight: '#10B981',
+        hover: '#10B981'
+      },
+      width: 2
+    }));
+    edges.update(edgeUpdates);
   };
 
-  const resetHighlight = (network) => {
+  const resetHighlight = (network, nodes, edges) => {
     network.unselectAll();
+
+    // Reset all edges to original colors
+    const allEdges = edges.get();
+    const edgeResets = allEdges.map(edge => {
+      const edgeColor = getEdgeColor(edge.relation || 'default');
+      return {
+        id: edge.id,
+        color: {
+          color: edgeColor.color,
+          opacity: edgeColor.opacity,
+          highlight: edgeColor.color,
+          hover: edgeColor.color
+        },
+        width: edge.relation === 'multiple' ? Math.log(edge.count || 1) + 1 : 1.5
+      };
+    });
+    edges.update(edgeResets);
   };
 
   // Handle search separately from regular rendering
@@ -521,11 +583,11 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
 
   const getEdgeColor = (relation) => {
     switch (relation) {
-      case 'contains': return '#A9A9A9';
-      case 'imports': return '#4169E1';
-      case 'exports': return '#32CD32';
-      case 'multiple': return '#FF4500';
-      default: return '#000000';
+      case 'contains': return { color: '#4B5563', opacity: 0.5 };
+      case 'imports': return { color: '#10B981', opacity: 0.7 };
+      case 'exports': return { color: '#3B82F6', opacity: 0.7 };
+      case 'multiple': return { color: '#F59E0B', opacity: 0.8 };
+      default: return { color: '#4B5563', opacity: 0.4 };
     }
   };
 
@@ -553,6 +615,14 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
     setIsLegendMinimized(!isLegendMinimized);
   };
 
+  const handleAskAboutNode = (node) => {
+    // Close context menu
+    setContextMenu(null);
+
+    // Open inline chat panel for this node
+    setActiveChatNode(node);
+  };
+
   return (
     <div className="h-full flex flex-col relative">
       {/* Mega-Repo Warning */}
@@ -565,18 +635,25 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
           <button onClick={() => setMegaRepoWarning(null)} className="ml-3 text-yellow-700 hover:text-yellow-900 font-bold">✕</button>
         </div>
       )}
-      <div className="flex justify-between items-center p-4 bg-gray-100 border-b">
+      <div className="flex justify-between items-center p-4" style={{
+        backgroundColor: 'var(--near-black)',
+        borderBottom: '1px solid var(--border-subtle)'
+      }}>
         <div className="flex items-center flex-grow mr-4">
           {/* View Mode Toggle */}
           {highlightedNodes.length > 0 && (
             <button
               onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
-              className={`mr-4 px-4 py-2 rounded font-medium transition-colors ${
-                viewMode === 'focused'
-                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+              className="mr-4 px-4 py-2 rounded font-medium transition-all"
+              style={{
+                backgroundColor: viewMode === 'focused' ? 'var(--highlight)' : 'var(--elevated)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer'
+              }}
               title={viewMode === 'focused' ? 'Show full repository structure' : 'Focus on highlighted results'}
+              onMouseEnter={(e) => e.target.style.opacity = '0.9'}
+              onMouseLeave={(e) => e.target.style.opacity = '1'}
             >
               {viewMode === 'focused' ? '🎯 Focused View' : '📊 Full Structure'}
             </button>
@@ -587,37 +664,91 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
             placeholder="Search nodes..."
             value={searchTerm}
             onChange={handleSearch}
-            className="w-full px-4 py-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full px-4 py-2 rounded-l focus:outline-none transition-all"
+            style={{
+              backgroundColor: 'var(--input-bg)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-default)',
+              fontFamily: "'Inter', sans-serif"
+            }}
+            onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
+            onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
           />
-          <button onClick={handleSearch} className="px-4 py-2 bg-indigo-600 text-white rounded-r hover:bg-indigo-700 transition-colors">
+          <button
+            onClick={handleSearch}
+            className="px-4 py-2 rounded-r transition-all font-medium"
+            style={{
+              backgroundColor: '#84a07c',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+            onMouseEnter={(e) => e.target.style.opacity = '0.9'}
+            onMouseLeave={(e) => e.target.style.opacity = '1'}
+          >
             Search
           </button>
         </div>
         <div className="flex">
-          <button onClick={handleFitGraph} className="p-2 bg-gray-200 rounded-l hover:bg-gray-300 transition-colors" title="Fit Graph">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <button
+            onClick={handleFitGraph}
+            className="p-2 rounded-l transition-all"
+            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
+            title="Fit Graph"
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
+            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
           </button>
-          <button onClick={handleZoomIn} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Zoom In">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <button
+            onClick={handleZoomIn}
+            className="p-2 transition-all"
+            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
+            title="Zoom In"
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
+            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
             </svg>
           </button>
-          <button onClick={handleZoomOut} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Zoom Out">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <button
+            onClick={handleZoomOut}
+            className="p-2 transition-all"
+            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
+            title="Zoom Out"
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
+            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
             </svg>
           </button>
         </div>
         <div className="flex items-center ml-4">
-          <button onClick={() => setCurrentLevel(prev => prev + 1)} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Increase Level">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <button
+            onClick={() => setCurrentLevel(prev => prev + 1)}
+            className="p-2 transition-all"
+            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
+            title="Increase Level"
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
+            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
           </button>
-          <button onClick={() => setCurrentLevel(prev => Math.max(prev - 1, 1))} className="p-2 bg-gray-200 hover:bg-gray-300 transition-colors" title="Decrease Level">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <button
+            onClick={() => setCurrentLevel(prev => Math.max(prev - 1, 1))}
+            className="p-2 transition-all"
+            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
+            title="Decrease Level"
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
+            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
             </svg>
           </button>
@@ -626,28 +757,57 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
       <div className="flex-1 relative">
         {/* Loading Overlay */}
         {loadingState.isLoading && (
-          <div className="absolute inset-0 bg-white bg-opacity-90 z-50 flex flex-col items-center justify-center">
-            <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{
+            backgroundColor: 'rgba(0, 0, 0, 0.95)',
+            backdropFilter: 'blur(8px)'
+          }}>
+            <div className="p-6 rounded-lg shadow-lg max-w-md w-full" style={{
+              backgroundColor: 'var(--card-bg)',
+              border: '1px solid var(--border-default)'
+            }}>
               <div className="flex items-center justify-center mb-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                <div className="animate-spin rounded-full h-12 w-12" style={{
+                  borderWidth: '3px',
+                  borderStyle: 'solid',
+                  borderColor: 'var(--border-default)',
+                  borderTopColor: 'var(--accent)'
+                }}></div>
               </div>
-              <p className="text-center text-gray-700 font-medium mb-2">{loadingState.message}</p>
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <p className="text-center font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                {loadingState.message}
+              </p>
+              <div className="w-full rounded-full h-2.5" style={{ backgroundColor: 'var(--border-default)' }}>
                 <div
-                  className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
-                  style={{ width: `${loadingState.progress}%` }}
+                  className="h-2.5 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${loadingState.progress}%`,
+                    backgroundColor: 'var(--accent)'
+                  }}
                 ></div>
               </div>
-              <p className="text-center text-gray-500 text-sm mt-2">{loadingState.progress}%</p>
+              <p className="text-center text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>
+                {loadingState.progress}%
+              </p>
             </div>
           </div>
         )}
         <div ref={networkRef} className="absolute inset-0" />
-        <div className={`absolute bottom-4 right-4 bg-white rounded-lg shadow-md transition-all ${isLegendMinimized ? 'w-8 h-8' : 'w-40'}`}>
-          <button 
-            onClick={toggleLegend} 
-            className="absolute top-1 right-1 text-gray-500 hover:text-gray-700"
+        <div
+          className={`absolute bottom-4 right-4 rounded-lg shadow-md transition-all ${isLegendMinimized ? 'w-10 h-10' : 'w-64'}`}
+          style={{
+            backgroundColor: 'rgba(26, 26, 26, 0.95)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8)'
+          }}
+        >
+          <button
+            onClick={toggleLegend}
+            className="absolute top-2 right-2 transition-colors"
+            style={{ color: 'var(--text-secondary)' }}
             title={isLegendMinimized ? "Expand Legend" : "Minimize Legend"}
+            onMouseEnter={(e) => e.target.style.color = 'var(--text-primary)'}
+            onMouseLeave={(e) => e.target.style.color = 'var(--text-secondary)'}
           >
             {isLegendMinimized ? (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -660,44 +820,47 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
             )}
           </button>
           {!isLegendMinimized && (
-            <div className="p-2 pt-6">
-              <div className="text-xs font-semibold text-gray-600 mb-2">
+            <div className="p-3 pt-8">
+              <div className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>
                 Repo: {repoSize} ({graphData?.nodes.length} nodes)
               </div>
               {Object.entries(nodeTypes).map(([type, color]) => (
-                <div key={type} className="mb-1">
+                <div key={type} className="mb-2">
                   <div className="flex items-center cursor-pointer" onClick={() => handleNodeTypeToggle(type)}>
                     <input
                       type="checkbox"
                       checked={selectedNodeTypes[type]}
                       onChange={() => {}}
                       className="mr-2 cursor-pointer"
+                      style={{ accentColor: 'var(--accent)' }}
                     />
                     <span
-                      className={`w-3 h-3 rounded-full mr-1`}
+                      className="w-3 h-3 rounded mr-1"
                       style={{
                         backgroundColor: color.background,
-                        borderColor: color.border,
-                        borderWidth: 1,
+                        border: `2px solid ${color.border}`,
                         opacity: selectedNodeTypes[type] ? (nodeFading[type] ? 0.35 : 1.0) : 0.2
                       }}
                     />
-                    <span className={`text-xs ${selectedNodeTypes[type] ? 'text-gray-800' : 'text-gray-400'}`}>
+                    <span className="text-xs" style={{
+                      color: selectedNodeTypes[type] ? 'var(--text-primary)' : 'var(--text-tertiary)'
+                    }}>
                       {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
                       {selectedNodeTypes[type] && nodeFading[type] && (
-                        <span className="text-gray-500 ml-1">(faded)</span>
+                        <span style={{ color: 'var(--text-tertiary)' }} className="ml-1">(faded)</span>
                       )}
                     </span>
                   </div>
                   {/* Fading toggle for classes and functions */}
                   {selectedNodeTypes[type] && (type === 'class_definition' || type === 'function') && (
                     <div className="ml-6 mt-1">
-                      <label className="flex items-center cursor-pointer text-xs text-gray-600">
+                      <label className="flex items-center cursor-pointer text-xs" style={{ color: 'var(--text-secondary)' }}>
                         <input
                           type="checkbox"
                           checked={!nodeFading[type]}
                           onChange={() => setNodeFading(prev => ({ ...prev, [type]: !prev[type] }))}
                           className="mr-1 cursor-pointer"
+                          style={{ accentColor: 'var(--accent)' }}
                           onClick={(e) => e.stopPropagation()}
                         />
                         Full opacity
@@ -709,21 +872,107 @@ const DependencyGraph = ({ highlightedNodes = [] }) => {
             </div>
           )}
         </div>
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div
+            className="absolute rounded-lg shadow-lg py-1 z-50"
+            style={{
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+              backgroundColor: 'var(--card-bg)',
+              border: '1px solid var(--border-default)',
+              minWidth: '220px',
+              boxShadow: '0 12px 48px rgba(0, 0, 0, 0.9)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => handleAskAboutNode(contextMenu.node)}
+              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: '0.875rem',
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span className="mr-2">💬</span>
+              Ask about {contextMenu.node.label.split('\n')[0]}
+            </button>
+            <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '0.25rem 0' }} />
+            <button
+              onClick={() => {
+                setContextMenu(null);
+                if (network) {
+                  network.selectNodes([contextMenu.node.id]);
+                  highlightConnectedNodes(contextMenu.node.id, network);
+                }
+              }}
+              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: '0.875rem',
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span className="mr-2">🔍</span>
+              Show dependencies
+            </button>
+            <button
+              onClick={() => {
+                setContextMenu(null);
+                console.log('Full node data:', contextMenu.node);
+              }}
+              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: '0.875rem',
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span className="mr-2">📄</span>
+              View full info
+            </button>
+          </div>
+        )}
+
+        {/* Inline Node Chat Panel */}
+        {activeChatNode && (
+          <NodeChatPanel
+            node={activeChatNode}
+            onClose={() => setActiveChatNode(null)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 const nodeTypes = {
-  directory: { border: '#34495e', background: '#ecf0f1' },
-  file: { border: '#2980b9', background: '#e0f7fa' },
-  import: { border: '#27ae60', background: '#e9f7ef' },
-  package: { border: '#f39c12', background: '#fef5e7' },
-  class_definition: { border: '#8e44ad', background: '#f4ecf7' },
-  function: { border: '#3498db', background: '#ebf5fb' },
-  method: { border: '#e74c3c', background: '#fadbd8' },
-  module_variable: { border: '#16a085', background: '#d1f2eb' },
-  default: { border: '#95a5a6', background: '#f4f6f6' },
+  directory: { border: '#4B5563', background: '#374151' },
+  file: { border: '#4B5563', background: '#1F2937' },
+  import: { border: '#10B981', background: '#065F46' },
+  package: { border: '#10B981', background: '#064E3B' },
+  class_definition: { border: '#8B5CF6', background: '#6B21A8' },
+  function: { border: '#3B82F6', background: '#1E40AF' },
+  method: { border: '#A855F7', background: '#7E22CE' },
+  module_variable: { border: '#10B981', background: '#065F46' },
+  default: { border: '#4B5563', background: '#374151' },
 };
 
 export default DependencyGraph;

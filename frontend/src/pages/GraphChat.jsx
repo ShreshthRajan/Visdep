@@ -8,11 +8,19 @@ import API from '../api';
 const GraphChat = () => {
   const [graphWidth, setGraphWidth] = useState(65);
   const [highlightedNodes, setHighlightedNodes] = useState([]);
+  const [nodeQuery, setNodeQuery] = useState(null);  // { query, node }
   const navigate = useNavigate();
 
   const handleHighlightNodes = useCallback((nodeIds) => {
     console.log('GraphChat: Highlighting nodes:', nodeIds);
     setHighlightedNodes(nodeIds || []);
+  }, []);
+
+  const handleNodeQuery = useCallback((query, node) => {
+    console.log('GraphChat: Node query triggered:', query, node);
+    setNodeQuery({ query, node });
+    // Highlight the queried node
+    setHighlightedNodes([node.id]);
   }, []);
 
   const handleResize = useCallback((e) => {
@@ -45,7 +53,7 @@ const GraphChat = () => {
           onClick={() => navigate('/')}
           className="px-4 py-2 rounded-md text-sm font-medium transition-all"
           style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            backgroundColor: '#84a07c',
             color: '#ffffff',
             border: 'none',
             cursor: 'pointer'
@@ -59,7 +67,10 @@ const GraphChat = () => {
       <div className="flex flex-1 overflow-hidden">
         <div style={{ width: `${graphWidth}%`, backgroundColor: 'var(--black)' }} className="shadow-lg">
           <div className="h-full">
-            <DependencyGraph highlightedNodes={highlightedNodes} />
+            <DependencyGraph
+              highlightedNodes={highlightedNodes}
+              onNodeQuery={handleNodeQuery}
+            />
           </div>
         </div>
         <div
@@ -71,7 +82,11 @@ const GraphChat = () => {
           onMouseDown={() => document.addEventListener('mousemove', handleResize)}
         />
         <div style={{ width: `${100 - graphWidth}%`, backgroundColor: 'var(--near-black)' }} className="shadow-lg flex flex-col">
-          <Chatbot onHighlightNodes={handleHighlightNodes} />
+          <Chatbot
+            onHighlightNodes={handleHighlightNodes}
+            nodeQuery={nodeQuery}
+            onQueryProcessed={() => setNodeQuery(null)}
+          />
         </div>
       </div>
     </div>
