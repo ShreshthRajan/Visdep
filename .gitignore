@@ -149,3 +149,9 @@ faiss_indexes/
 
 context.json
 dependency_graph.json
+# Generated data files (too large for git)
+context.json
+dependency_graph.json
+data_storage.db
+*.db
+faiss_indexes/
