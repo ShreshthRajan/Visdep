@@ -1,7 +1,7 @@
 // frontend/src/pages/graphchat.jsx
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import DependencyGraph from '../components/DependencyGraph';
+import ReactFlowGraph from '../components/ReactFlowGraph';
 import Chatbot from '../components/Chatbot';
 import API from '../api';
 
@@ -67,7 +67,7 @@ const GraphChat = () => {
       <div className="flex flex-1 overflow-hidden">
         <div style={{ width: `${graphWidth}%`, backgroundColor: 'var(--black)' }} className="shadow-lg">
           <div className="h-full">
-            <DependencyGraph
+            <ReactFlowGraph
               highlightedNodes={highlightedNodes}
               onNodeQuery={handleNodeQuery}
             />
