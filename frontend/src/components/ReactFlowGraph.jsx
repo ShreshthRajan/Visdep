@@ -43,12 +43,12 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
-    import: false,
-    package: false,
+    import: true,
+    package: true,
     class_definition: true,
     function: true,
-    method: false,
-    module_variable: false,
+    method: true,
+    module_variable: true,
   });
 
   // Dagre layout configuration
@@ -59,35 +59,71 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     return g;
   }, []);
 
-  // Auto-layout nodes with Dagre
-  const getLayoutedElements = useCallback((nodes, edges) => {
-    // Reset graph
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 120 });
+  // Simple grid layout for initial graph (fast, handles large graphs)
+  const getSimpleLayout = useCallback((nodes) => {
+    console.log('📐 SIMPLE LAYOUT: Positioning', nodes.length, 'nodes in grid');
 
-    nodes.forEach((node) => {
-      g.setNode(node.id, { width: node.width || 180, height: node.height || 80 });
-    });
+    const cols = Math.ceil(Math.sqrt(nodes.length));
+    const nodeWidth = 200;
+    const nodeHeight = 100;
 
-    edges.forEach((edge) => {
-      g.setEdge(edge.source, edge.target);
-    });
+    return nodes.map((node, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
 
-    dagre.layout(g);
-
-    const layoutedNodes = nodes.map((node) => {
-      const nodeWithPosition = g.node(node.id);
       return {
         ...node,
         position: {
-          x: nodeWithPosition.x - (node.width || 180) / 2,
-          y: nodeWithPosition.y - (node.height || 80) / 2,
-        },
+          x: col * nodeWidth,
+          y: row * nodeHeight
+        }
       };
     });
+  }, []);
 
-    return { nodes: layoutedNodes, edges };
+  // Dagre layout for query/answer nodes ONLY (small incremental updates)
+  const layoutQuerySubtree = useCallback((allNodes, allEdges, newNodeIds) => {
+    console.log('🎨 DAGRE SUBTREE: Layouting query nodes:', newNodeIds);
+
+    // Only layout the query node and its children
+    const subtreeNodes = allNodes.filter(n =>
+      newNodeIds.includes(n.id) ||
+      allEdges.some(e => newNodeIds.includes(e.source) && e.target === n.id)
+    );
+
+    if (subtreeNodes.length === 0) return { nodes: allNodes, edges: allEdges };
+
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80 });
+
+    subtreeNodes.forEach(node => {
+      g.setNode(node.id, { width: node.width || 180, height: node.height || 80 });
+    });
+
+    allEdges
+      .filter(e => subtreeNodes.some(n => n.id === e.source) && subtreeNodes.some(n => n.id === e.target))
+      .forEach(edge => {
+        g.setEdge(edge.source, edge.target);
+      });
+
+    dagre.layout(g);
+
+    const layoutedNodes = allNodes.map(node => {
+      if (subtreeNodes.some(n => n.id === node.id)) {
+        const positioned = g.node(node.id);
+        return {
+          ...node,
+          position: {
+            x: positioned.x - (node.width || 180) / 2,
+            y: positioned.y - (node.height || 80) / 2
+          }
+        };
+      }
+      return node;
+    });
+
+    return { nodes: layoutedNodes, edges: allEdges };
   }, []);
 
   // Fetch and convert graph data
@@ -128,38 +164,56 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
             };
           });
 
-        const reactFlowEdges = rawEdges.map(edge => ({
-          id: edge.id || `${edge.source}-${edge.target}`,
-          source: edge.source,
-          target: edge.target,
-          type: 'default',
-          animated: edge.relation === 'imports',
-          style: {
-            stroke: getEdgeColor(edge.relation).color,
-            strokeWidth: 1.5
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: getEdgeColor(edge.relation).color
-          }
-        }));
+        // Create node ID set for edge validation
+        const nodeIdSet = new Set(reactFlowNodes.map(n => n.id));
+
+        const reactFlowEdges = rawEdges
+          .filter(edge => {
+            // Only include edges where both source and target nodes exist
+            return nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target);
+          })
+          .map(edge => ({
+            id: edge.id || `${edge.source}-${edge.target}`,
+            source: edge.source,
+            target: edge.target,
+            type: 'default',
+            animated: edge.relation === 'imports',
+            style: {
+              stroke: getEdgeColor(edge.relation).color,
+              strokeWidth: 1.5
+            },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: getEdgeColor(edge.relation).color
+            }
+          }));
 
         console.log('✅ Converted to ReactFlow format:', {
           nodes: reactFlowNodes.length,
           edges: reactFlowEdges.length
         });
 
-        // Apply Dagre layout
-        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-          reactFlowNodes,
-          reactFlowEdges
-        );
+        console.log('📐 Sample node:', reactFlowNodes[0]);
+        console.log('📐 Sample edge:', reactFlowEdges[0]);
 
+        // Use simple grid layout for initial load (fast for large graphs)
+        console.log('🔄 Using simple grid layout for initial load...');
+        const layoutedNodes = getSimpleLayout(reactFlowNodes);
+
+        console.log('✅ Layout complete:', {
+          nodes: layoutedNodes.length,
+          edges: reactFlowEdges.length
+        });
+        console.log('📐 Sample positioned node:', layoutedNodes[0]);
+
+        console.log('🎨 Setting nodes and edges in state...');
         setNodes(layoutedNodes);
-        setEdges(layoutedEdges);
+        setEdges(reactFlowEdges);
+
+        console.log('✅ State updated, setting isLoading = false');
         setIsLoading(false);
 
-        console.log('✅ Graph ready with Dagre layout');
+        console.log('✅ Graph ready with simple layout');
       } catch (error) {
         console.error('Error fetching graph:', error);
         setIsLoading(false);
@@ -167,7 +221,7 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     };
 
     fetchGraphData();
-  }, [selectedNodeTypes, getLayoutedElements]);
+  }, [selectedNodeTypes, getSimpleLayout]);
 
   // Create query node under parent
   const createQueryNode = useCallback((parentNode) => {
@@ -198,18 +252,23 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
       style: { stroke: '#9CA3AF', strokeWidth: 2 }
     };
 
-    // Add nodes and edges, then re-layout
+    // Add nodes and edges, then use Dagre to position ONLY the query node
     const newNodes = [...nodes, queryNode];
     const newEdges = [...edges, queryEdge];
 
-    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(newNodes, newEdges);
+    // Use Dagre for small subtree layout (query node positioning)
+    const { nodes: layoutedNodes, edges: layoutedEdges } = layoutQuerySubtree(
+      newNodes,
+      newEdges,
+      [queryId]
+    );
 
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
     setContextMenu(null);
 
     console.log('✅ Created query node:', queryId);
-  }, [nodes, edges, getLayoutedElements]);
+  }, [nodes, edges, layoutQuerySubtree]);
 
   // Handle answer from query node
   const handleQueryAnswer = useCallback((queryId, question, answer) => {
@@ -240,13 +299,18 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     const newNodes = [...nodes, answerNode];
     const newEdges = [...edges, answerEdge];
 
-    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(newNodes, newEdges);
+    // Use Dagre to position answer node under query
+    const { nodes: layoutedNodes, edges: layoutedEdges } = layoutQuerySubtree(
+      newNodes,
+      newEdges,
+      [answerId]
+    );
 
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
 
     console.log('✅ Created answer node:', answerId);
-  }, [nodes, edges, getLayoutedElements]);
+  }, [nodes, edges, layoutQuerySubtree]);
 
   // Handle query node minimize
   const handleQueryMinimize = useCallback((queryId, conversation) => {
@@ -269,13 +333,13 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
       })
     );
 
-    // Re-layout
+    // Re-layout using Dagre (small update)
     setTimeout(() => {
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges);
+      const { nodes: layoutedNodes, edges: layoutedEdges } = layoutQuerySubtree(nodes, edges, [queryId]);
       setNodes(layoutedNodes);
       setEdges(layoutedEdges);
     }, 100);
-  }, [nodes, edges, getLayoutedElements]);
+  }, [nodes, edges, layoutQuerySubtree]);
 
   // Handle node click
   const onNodeClick = useCallback((event, node) => {
@@ -299,7 +363,7 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
       );
 
       setTimeout(() => {
-        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges);
+        const { nodes: layoutedNodes, edges: layoutedEdges } = layoutQuerySubtree(nodes, edges, [node.id]);
         setNodes(layoutedNodes);
         setEdges(layoutedEdges);
       }, 100);
@@ -324,7 +388,7 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
         };
       })
     );
-  }, [edges, nodes, getLayoutedElements]);
+  }, [edges, nodes, layoutQuerySubtree]);
 
   // Handle right-click for context menu
   const onNodeContextMenu = useCallback((event, node) => {
@@ -340,7 +404,10 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     });
   }, []);
 
+  console.log('🎨 RENDER: isLoading =', isLoading, 'nodes =', nodes.length, 'edges =', edges.length);
+
   if (isLoading) {
+    console.log('🔄 Showing loading screen...');
     return (
       <div className="flex items-center justify-center h-full" style={{ backgroundColor: 'var(--black)' }}>
         <div className="text-center">
@@ -358,6 +425,8 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
       </div>
     );
   }
+
+  console.log('🎨 Rendering ReactFlow with:', { nodes: nodes.length, edges: edges.length, nodeTypes: Object.keys(nodeTypes) });
 
   return (
     <div style={{ width: '100%', height: '100%', backgroundColor: 'var(--black)' }}>
