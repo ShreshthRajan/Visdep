@@ -1,17 +1,19 @@
 // frontend/src/components/dependencygraph.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, DataSet } from 'vis-network/standalone';
+import { Rnd } from 'react-rnd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
-import NodeChatPanel from './NodeChatPanel';
 
-const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
+const DependencyGraph = ({ highlightedNodes = [], onOpenNodeChat }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
   const [viewMode, setViewMode] = useState('full');  // 'full' or 'focused'
   const [repoSize, setRepoSize] = useState('medium');  // 'small', 'medium', 'large'
-  const [contextMenu, setContextMenu] = useState(null);  // { x, y, node }
-  const [activeChatNode, setActiveChatNode] = useState(null);  // Node with inline chat open
   const [selectedNodeTypes, setSelectedNodeTypes] = useState({
     directory: true,
     file: true,
@@ -26,16 +28,46 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
     class_definition: true,  // Show faded by default for medium repos
     function: true,  // Show faded by default for medium repos
   });
-  const [isLegendMinimized, setIsLegendMinimized] = useState(false);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(4);
   const [loadingState, setLoadingState] = useState({ isLoading: false, message: '', progress: 0 });
   const [megaRepoWarning, setMegaRepoWarning] = useState(null);
 
+  // Query node system state
+  const [queryNodes, setQueryNodes] = useState({});  // { nodeId: { parentId, conversation, badgePosition } }
+  const [activeQueryInput, setActiveQueryInput] = useState(null);  // { nodeId, position }
+  const [selectedNodeButtons, setSelectedNodeButtons] = useState(null);  // { nodeId, position }
+  const [explanationTooltip, setExplanationTooltip] = useState(null);  // { nodeId, text, position }
+  const [responsePanels, setResponsePanels] = useState({});  // { nodeId: { position, size, isVisible } }
+
 
   const renderGraph = useCallback((data, level) => {
     // Set initial rendering state
     setLoadingState({ isLoading: true, message: 'Preparing graph...', progress: 40 });
+
+    // CRITICAL: Preserve existing query nodes before rebuild
+    let existingQueryNodes = [];
+    let existingQueryEdges = [];
+
+    if (network && network.body && network.body.data) {
+      const currentNodes = network.body.data.nodes;
+      const currentEdges = network.body.data.edges;
+
+      if (currentNodes && currentEdges) {
+        // Extract query nodes
+        existingQueryNodes = currentNodes.get({
+          filter: (node) => node.type === 'query_node'
+        });
+
+        // Extract query edges
+        existingQueryEdges = currentEdges.get({
+          filter: (edge) => edge.id && edge.id.startsWith('edge_query_')
+        });
+
+        console.log(`💾 Preserving ${existingQueryNodes.length} query nodes and ${existingQueryEdges.length} query edges`);
+      }
+    }
 
     // Adaptive stabilization iterations based on graph complexity
     // Research: Force-Atlas2 converges exponentially (80% settled in first 30%)
@@ -99,32 +131,37 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
 
       // Get base color
       const baseColor = isHighlighted
-        ? { background: '#F59E0B', border: '#D97706' }  // Amber for highlighted (always full opacity)
+        ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted (always full opacity)
         : getNodeColor(node.type);
 
-      // Apply opacity to color
+      // Apply opacity to color + selection styling
       const colorWithOpacity = {
         background: baseColor.background,
         border: baseColor.border,
         highlight: {
-          background: baseColor.background,
-          border: baseColor.border,
+          background: '#84a07c',  // Sage green when selected (matches button color)
+          border: '#5a7054',  // Darker sage border
         },
         hover: {
           background: baseColor.background,
-          border: baseColor.border,
+          border: '#000000',  // Black border on hover for clarity
         },
       };
 
       return {
         ...node,
         shape: getNodeShape(node.type),
+        shapeProperties: {
+          borderRadius: 6,  // Enterprise-grade rounded corners (6px)
+        },
         color: colorWithOpacity,
         opacity: opacity,  // Set node opacity
+        borderWidth: 2,  // Base border width
+        borderWidthSelected: 4,  // Thicker border when selected (more obvious)
         font: {
-          size: isFaded ? 11 : 13,  // Slightly larger
-          face: "'Inter', system-ui, -apple-system, sans-serif",
-          color: isFaded ? '#999999' : '#E0E0E0',  // Light text for dark nodes
+          size: isFaded ? 10 : 12,  // Smaller font for faded nodes
+          face: 'system-ui, -apple-system, sans-serif',
+          color: isFaded ? '#666666' : '#000000',  // Gray text for faded
           multi: true,
           align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
           valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
@@ -133,31 +170,57 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
         label: getNodeLabel(node),
       };
     }));
-  
+
+    // RE-ADD preserved query nodes after creating base nodes
+    if (existingQueryNodes.length > 0) {
+      nodes.add(existingQueryNodes);
+      console.log(`✅ Re-added ${existingQueryNodes.length} query nodes`);
+    }
+
     const filteredEdges = data.edges.filter(edge => {
       const fromNode = filteredNodes.find(node => node.id === edge.source);
       const toNode = filteredNodes.find(node => node.id === edge.target);
       return fromNode && toNode;
     });
     const edges = new DataSet(filteredEdges.map(edge => {
-      const edgeColor = getEdgeColor(edge.relation);
+      const baseColor = getEdgeColor(edge.relation);
       return {
         from: edge.source,
         to: edge.target,
-        arrows: edge.relation === 'imports' ? 'to' : '',
+        arrows: edge.relation === 'imports' ? { to: { enabled: true, scaleFactor: 0.8 } } : '',
         color: {
-          color: edgeColor.color,
-          opacity: edgeColor.opacity,
-          highlight: edgeColor.color,
-          hover: edgeColor.color
+          color: baseColor,
+          highlight: '#84a07c',  // Sage green when edge is highlighted (matches brand)
+          hover: '#000000',  // Black on hover for visibility
+          opacity: 0.7,  // Slightly transparent by default
         },
         width: edge.relation === 'multiple' ? Math.log(edge.count) + 1 : 1.5,
-        smooth: { type: 'continuous', roundness: 0.2 },
-        font: { size: 11, align: 'middle', background: 'transparent', color: 'var(--text-secondary)' },
-        label: edge.relation === 'multiple' ? `${edge.count} connections` : edge.label || '',
+        selectionWidth: 3,  // Thicker when selected (enterprise-grade feedback)
+        smooth: {
+          type: 'continuous',
+          roundness: 0.2,
+          forceDirection: 'none',
+        },
+        font: {
+          size: 11,
+          align: 'middle',
+          background: 'rgba(255, 255, 255, 0.8)',
+          strokeWidth: 0,
+        },
+        label: edge.relation === 'multiple' ? `${edge.count}×` : '',
+        chosen: {
+          edge: true,  // Enable custom styling when selected
+          label: false,
+        },
       };
     }));
-  
+
+    // RE-ADD preserved query edges after creating base edges
+    if (existingQueryEdges.length > 0) {
+      edges.add(existingQueryEdges);
+      console.log(`✅ Re-added ${existingQueryEdges.length} query edges`);
+    }
+
     const container = networkRef.current;
     const graphData = { nodes, edges };
     const options = {
@@ -188,10 +251,16 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
       interaction: {
         hover: true,
         hoverConnectedEdges: true,
-        selectConnectedEdges: false,
+        selectConnectedEdges: true,  // Auto-select connected edges (enterprise feature)
         dragNodes: true,
         dragView: true,
         zoomView: true,
+        multiselect: false,  // Single selection only (cleaner UX)
+        navigationButtons: false,
+        keyboard: {
+          enabled: true,
+          bindToWindow: false,
+        },
       },
       nodes: {
         scaling: {
@@ -208,13 +277,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
           valign: 'center',
         },
         font: {
-          size: 13,
-          face: "'Inter', system-ui, -apple-system, sans-serif",
-          color: '#E0E0E0',
+          size: 13,  // Larger base font
+          face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+          color: '#1a1a1a',
           bold: {
             size: 14,
-            face: "'Inter', system-ui, -apple-system, sans-serif",
-            color: '#E0E0E0'
+            face: 'system-ui, -apple-system, "Segoe UI", sans-serif',
           },
         },
       },
@@ -224,6 +292,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
           forceDirection: 'none',
           roundness: 0.2,
         },
+        color: {
+          opacity: 0.7,  // Default transparency
+        },
+        width: 1.5,  // Slightly thicker default
+        selectionWidth: 3,  // Even thicker when selected
+        hoverWidth: 2,  // Increase on hover
       },
     };
 
@@ -256,57 +330,66 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
       }, 1000);
     });
 
-    newNetwork.on('hoverNode', (params) => {
-      const nodeId = params.node;
-      const node = nodes.get(nodeId);
-      const connectedNodes = newNetwork.getConnectedNodes(nodeId);
-      const imports = connectedNodes.filter(id => {
-        const edge = edges.get(newNetwork.getConnectedEdges(nodeId, id)[0]);
-        return edge && edge.arrows === 'to' && edge.to === nodeId;
-      });
-      const fileStructure = connectedNodes.filter(id => {
-        const connectedNode = nodes.get(id);
-        return connectedNode.type === 'directory';
-      });
+    // REMOVED: Hover tooltips disabled - they show ugly HTML and aren't useful
+    // Click interaction will open clean chat panel instead
 
-      const tooltipContent = `
-        <div style="font-size: 14px; padding: 10px;">
-          <strong>File Name: ${node.label}</strong><br>
-          Type: ${node.type}<br>
-          Level: ${node.level}<br>
-          Imports: ${imports.map(id => nodes.get(id).label).join(', ')}<br>
-          File structure: /${fileStructure.map(id => nodes.get(id).label).join('/')}
-        </div>
-      `;
-
-      newNetwork.body.nodes[nodeId].options.title = tooltipContent;
-    });
-
+    // Enterprise-grade click handler with connected highlighting
     newNetwork.on('click', (params) => {
-      // Close context menu on any click
-      setContextMenu(null);
-
       if (params.nodes.length > 0) {
         const clickedNodeId = params.nodes[0];
-        highlightConnectedNodes(clickedNodeId, newNetwork, nodes, edges);
-      } else {
-        resetHighlight(newNetwork, nodes, edges);
-      }
-    });
+        const clickedNode = nodes.get(clickedNodeId);
 
-    // Right-click context menu
-    newNetwork.on('oncontext', (params) => {
-      params.event.preventDefault();
+        // Get connected nodes and edges for full context visualization
+        const connectedNodeIds = newNetwork.getConnectedNodes(clickedNodeId);
+        const connectedEdgeIds = newNetwork.getConnectedEdges(clickedNodeId);
 
-      if (params.nodes.length > 0) {
-        const nodeId = params.nodes[0];
-        const node = nodes.get(nodeId);
+        // Highlight: selected node + connected nodes + connecting edges
+        // This uses vis-network's native selection with highlightEdges = true
+        newNetwork.selectNodes([clickedNodeId], true);
 
-        setContextMenu({
-          x: params.pointer.DOM.x,
-          y: params.pointer.DOM.y,
-          node: node
+        // Enterprise feature: Dim non-connected nodes for focus
+        // Performance optimization: batch update with single pass
+        const allNodeIds = nodes.getIds();
+        const highlightedNodeIds = new Set([clickedNodeId, ...connectedNodeIds]);
+
+        const nodesToUpdate = allNodeIds.map(nodeId => ({
+          id: nodeId,
+          opacity: highlightedNodeIds.has(nodeId) ? 1.0 : 0.3,
+        }));
+
+        nodes.update(nodesToUpdate);  // Batch update for performance
+
+        // Log for debugging
+        console.log('🖱️ Node clicked:', clickedNode.label, clickedNode.type);
+        console.log('📊 Connected:', connectedNodeIds.length, 'nodes,', connectedEdgeIds.length, 'edges');
+
+        // Show action buttons for all code nodes
+        const canvasPos = newNetwork.getPositions([clickedNodeId])[clickedNodeId];
+        const screenPos = newNetwork.canvasToDOM(canvasPos);
+
+        setSelectedNodeButtons({
+          nodeId: clickedNodeId,
+          node: clickedNode,
+          position: {
+            x: screenPos.x,
+            y: screenPos.y + 50
+          }
         });
+      } else {
+        // Clicked on empty canvas - restore all nodes and deselect
+        const allNodeIds = nodes.getIds();
+        allNodeIds.forEach(nodeId => {
+          const nodeData = nodes.get(nodeId);
+          // Restore original opacity based on fading state
+          const originalOpacity = (nodeFading[nodeData.type] && !highlightedNodes.includes(nodeId)) ? 0.35 : 1.0;
+          nodes.update({
+            id: nodeId,
+            opacity: originalOpacity,
+          });
+        });
+        newNetwork.unselectAll();
+        setSelectedNodeButtons(null);
+        setActiveQueryInput(null);
       }
     });
 
@@ -437,46 +520,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
     fetchGraphData();
   }, []);  // Only run once on mount - removed circular dependencies
 
-  const highlightConnectedNodes = (nodeId, network, nodes, edges) => {
-    const connectedNodeIds = network.getConnectedNodes(nodeId);
-    connectedNodeIds.push(nodeId);
-    network.selectNodes(connectedNodeIds);
-
-    // Highlight edges connected to this node in green
-    const connectedEdgeIds = network.getConnectedEdges(nodeId);
-    const edgeUpdates = connectedEdgeIds.map(edgeId => ({
-      id: edgeId,
-      color: {
-        color: '#10B981',
-        opacity: 1.0,
-        highlight: '#10B981',
-        hover: '#10B981'
-      },
-      width: 2
-    }));
-    edges.update(edgeUpdates);
-  };
-
-  const resetHighlight = (network, nodes, edges) => {
-    network.unselectAll();
-
-    // Reset all edges to original colors
-    const allEdges = edges.get();
-    const edgeResets = allEdges.map(edge => {
-      const edgeColor = getEdgeColor(edge.relation || 'default');
-      return {
-        id: edge.id,
-        color: {
-          color: edgeColor.color,
-          opacity: edgeColor.opacity,
-          highlight: edgeColor.color,
-          hover: edgeColor.color
-        },
-        width: edge.relation === 'multiple' ? Math.log(edge.count || 1) + 1 : 1.5
-      };
-    });
-    edges.update(edgeResets);
-  };
+  // Node selection is now handled inline in click handler (see renderGraph)
 
   // Handle search separately from regular rendering
   useEffect(() => {
@@ -544,12 +588,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
   };
 
   const getNodeShape = (type) => {
+    // Enterprise-grade: All nodes use 'box' shape with rounded corners
+    // Circles only for small connector nodes (imports/packages)
     switch (type) {
-      case 'directory': return 'box';
-      case 'file': return 'ellipse';
-      case 'import': return 'circle';
-      case 'package': return 'circle';
-      default: return 'ellipse';
+      case 'import': return 'dot';  // Small circular dot for imports
+      case 'package': return 'dot';  // Small circular dot for packages
+      default: return 'box';  // All code entities use rounded boxes
     }
   };
   
@@ -573,21 +617,16 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
     return `${node.label}\n${node.type}`;
   };
 
-  const getNodeTooltip = (node) => {
-    return `<div style="font-size: 14px; padding: 10px;">
-      <strong>${node.label}</strong><br>
-      Type: ${node.type}<br>
-      Level: ${node.level}
-    </div>`;
-  };
+  // Tooltip function removed - was causing ugly HTML display on hover
+  // Node interaction now uses clean click-to-query pattern
 
   const getEdgeColor = (relation) => {
     switch (relation) {
-      case 'contains': return { color: '#4B5563', opacity: 0.5 };
-      case 'imports': return { color: '#10B981', opacity: 0.7 };
-      case 'exports': return { color: '#3B82F6', opacity: 0.7 };
-      case 'multiple': return { color: '#F59E0B', opacity: 0.8 };
-      default: return { color: '#4B5563', opacity: 0.4 };
+      case 'contains': return '#A9A9A9';
+      case 'imports': return '#4169E1';
+      case 'exports': return '#32CD32';
+      case 'multiple': return '#FF4500';
+      default: return '#000000';
     }
   };
 
@@ -611,352 +650,752 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
     }
   };
 
-  const toggleLegend = () => {
-    setIsLegendMinimized(!isLegendMinimized);
+  const toggleFilter = () => {
+    setIsFilterOpen(!isFilterOpen);
   };
 
-  const handleAskAboutNode = (node) => {
-    // Close context menu
-    setContextMenu(null);
+  // Query node system handlers
+  const createQueryNode = useCallback((parentNode) => {
+    if (!network) return;
 
-    // Open inline chat panel for this node
-    setActiveChatNode(node);
-  };
+    const parentPos = network.getPositions([parentNode.id])[parentNode.id];
+    const screenPos = network.canvasToDOM(parentPos);
+    const queryNodeId = `query_${parentNode.id}_${Date.now()}`;
+
+    // Store parent position for later
+    setQueryNodes(prev => ({
+      ...prev,
+      [queryNodeId]: {
+        parentId: parentNode.id,
+        parentPosition: parentPos,
+        conversation: []
+      }
+    }));
+
+    // Show search bar input immediately (attached under node)
+    setActiveQueryInput({
+      nodeId: queryNodeId,
+      parentNode: parentNode,
+      position: {
+        x: screenPos.x,
+        y: screenPos.y + 55
+      }
+    });
+
+    setSelectedNodeButtons(null);
+  }, [network]);
+
+  // No query node clicks needed - panels are HTML, not graph nodes
+
+  const handleQuerySubmit = useCallback(async (queryNodeId, question, parentNode) => {
+    if (!question.trim()) return;
+
+    const parentPos = network.getPositions([parentNode.id])[parentNode.id];
+    const screenPos = network.canvasToDOM(parentPos);
+
+    // Show thinking panel immediately (NO graph node)
+    setResponsePanels(prev => ({
+      ...prev,
+      [queryNodeId]: {
+        position: { x: screenPos.x + 60, y: screenPos.y - 50 },
+        size: { width: 400, height: 500 },
+        isVisible: true,
+        isThinking: true,
+        parentNodeId: parentNode.id,
+        parentPosition: parentPos
+      }
+    }));
+
+    setActiveQueryInput(null);
+
+    try {
+      // OPTION C: Send node context for focused retrieval
+      const response = await API.post('/api/query', {
+        query: question,
+        node_context: {
+          chunk_id: parentNode.id,
+          name: parentNode.label?.split('\n')[0] || parentNode.id,
+          type: parentNode.type
+        }
+      });
+      const answer = response.data.response || response.data;
+
+      // Update panel with response
+      setResponsePanels(prev => ({
+        ...prev,
+        [queryNodeId]: {
+          ...prev[queryNodeId],
+          isThinking: false
+        }
+      }));
+
+      // Store conversation
+      setQueryNodes(prev => ({
+        ...prev,
+        [queryNodeId]: {
+          ...prev[queryNodeId],
+          conversation: [...(prev[queryNodeId]?.conversation || []), { q: question, a: answer }]
+        }
+      }));
+    } catch (error) {
+      console.error('Query error:', error);
+      setResponsePanels(prev => ({
+        ...prev,
+        [queryNodeId]: {
+          ...prev[queryNodeId],
+          isThinking: false,
+          error: true
+        }
+      }));
+
+      setQueryNodes(prev => ({
+        ...prev,
+        [queryNodeId]: {
+          ...prev[queryNodeId],
+          conversation: [{ q: question, a: 'Error: Could not process query' }]
+        }
+      }));
+    }
+  }, [network, queryNodes]);
+
+  // Old functions removed - using HTML panels now
+
+  const handleQuickExplain = useCallback(async (node) => {
+    if (!network) return;
+
+    const canvasPos = network.getPositions([node.id])[node.id];
+    const screenPos = network.canvasToDOM(canvasPos);
+
+    // Show loading tooltip immediately
+    setExplanationTooltip({
+      nodeId: node.id,
+      position: { x: screenPos.x, y: screenPos.y + 60 },
+      text: 'Analyzing...',
+      loading: true
+    });
+
+    setSelectedNodeButtons(null);
+
+    try {
+      // Fast explain endpoint with full node context
+      const response = await API.post('/api/explain_node', {
+        chunk_id: node.id,
+        name: node.label?.split('\n')[0] || node.id,  // Clean name (first line only)
+        type: node.type,
+        file_path: node.id  // chunk_id contains file path
+      });
+
+      setExplanationTooltip({
+        nodeId: node.id,
+        position: { x: screenPos.x, y: screenPos.y + 60 },
+        text: response.data.explanation,
+        loading: false
+      });
+
+      // Auto-dismiss after 10 seconds
+      setTimeout(() => {
+        setExplanationTooltip(null);
+      }, 10000);
+    } catch (error) {
+      console.error('Explain error:', error);
+      setExplanationTooltip({
+        nodeId: node.id,
+        position: { x: screenPos.x, y: screenPos.y + 60 },
+        text: 'Error: Could not generate explanation',
+        loading: false
+      });
+    }
+  }, [network]);
+
+  // Panels are react-rnd managed, no position tracking needed
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (isFilterOpen && !e.target.closest('.filter-dropdown-container')) {
+        setIsFilterOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isFilterOpen]);
 
   return (
     <div className="h-full flex flex-col relative">
       {/* Mega-Repo Warning */}
+      {/* Modern 2025 Toolbar */}
       {megaRepoWarning && (
-        <div className="bg-yellow-50 border-b-2 border-yellow-400 p-2 text-center">
-          <span className="text-sm font-semibold text-yellow-900">
-            ⚠️ Large Repository ({megaRepoWarning.chunk_count.toLocaleString()} chunks) - {megaRepoWarning.message}
+        <div style={{ backgroundColor: 'var(--elevated)', borderBottom: '1px solid var(--border-default)' }} className="p-2 text-center">
+          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
+            Large Repository ({megaRepoWarning.chunk_count.toLocaleString()} chunks) - {megaRepoWarning.message}
           </span>
-          <span className="text-xs text-yellow-700 ml-2">{megaRepoWarning.example}</span>
-          <button onClick={() => setMegaRepoWarning(null)} className="ml-3 text-yellow-700 hover:text-yellow-900 font-bold">✕</button>
+          <button onClick={() => setMegaRepoWarning(null)} className="ml-3 hover:opacity-75 font-medium" style={{ color: 'var(--text-secondary)' }}>×</button>
         </div>
       )}
-      <div className="flex justify-between items-center p-4" style={{
-        backgroundColor: 'var(--near-black)',
-        borderBottom: '1px solid var(--border-subtle)'
-      }}>
-        <div className="flex items-center flex-grow mr-4">
-          {/* View Mode Toggle */}
-          {highlightedNodes.length > 0 && (
-            <button
-              onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
-              className="mr-4 px-4 py-2 rounded font-medium transition-all"
+      <div className="absolute top-0 left-0 z-10 flex items-center gap-2 px-4 py-2">
+        {/* View Mode Toggle */}
+        {highlightedNodes.length > 0 && (
+          <button
+            onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
+            className="px-3 py-1.5 rounded-md text-sm font-medium transition-all"
+            style={{
+              backgroundColor: viewMode === 'focused' ? 'var(--accent)' : 'rgba(83, 95, 107, 0.7)',
+              color: viewMode === 'focused' ? '#FFFFFF' : 'var(--text-secondary)',
+              fontFamily: "'Inter', sans-serif",
+              border: `1px solid ${viewMode === 'focused' ? 'var(--accent)' : 'rgba(90, 101, 112, 0.4)'}`,
+              backdropFilter: 'blur(8px)'
+            }}
+            title={viewMode === 'focused' ? 'Show full repository structure' : 'Focus on highlighted results'}
+          >
+            {viewMode === 'focused' ? 'Focused' : 'Full'}
+          </button>
+        )}
+
+        <input
+          type="text"
+          placeholder="Search nodes..."
+          value={searchTerm}
+          onChange={handleSearch}
+          className="px-3 py-1.5 rounded-md text-sm focus:outline-none transition-all"
+          style={{
+            width: '280px',
+            backgroundColor: 'rgba(61, 72, 80, 0.6)',
+            color: 'var(--text-primary)',
+            border: '1px solid rgba(90, 101, 112, 0.4)',
+            fontFamily: "'Inter', sans-serif",
+            backdropFilter: 'blur(8px)'
+          }}
+          onFocus={(e) => {
+            e.target.style.backgroundColor = 'rgba(61, 72, 80, 0.9)';
+            e.target.style.borderColor = 'var(--accent)';
+          }}
+          onBlur={(e) => {
+            e.target.style.backgroundColor = 'rgba(61, 72, 80, 0.6)';
+            e.target.style.borderColor = 'rgba(90, 101, 112, 0.4)';
+          }}
+        />
+
+        <div className="flex gap-1 items-center relative filter-dropdown-container">
+          {/* Filter Dropdown */}
+          <button
+            onClick={toggleFilter}
+            className="px-2.5 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5"
+            style={{
+              backgroundColor: isFilterOpen ? 'var(--accent)' : 'rgba(83, 95, 107, 0.7)',
+              color: isFilterOpen ? '#FFFFFF' : 'var(--text-primary)',
+              fontFamily: "'Inter', sans-serif",
+              border: `1px solid ${isFilterOpen ? 'var(--accent)' : 'rgba(90, 101, 112, 0.4)'}`,
+              backdropFilter: 'blur(8px)'
+            }}
+            title="Filter node types"
+          >
+            Filters
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Filter Dropdown Panel */}
+          {isFilterOpen && (
+            <div
+              className="absolute top-full right-0 mt-2 rounded-lg shadow-xl z-50"
               style={{
-                backgroundColor: viewMode === 'focused' ? 'var(--highlight)' : 'var(--elevated)',
-                color: '#ffffff',
-                border: 'none',
-                cursor: 'pointer'
+                backgroundColor: 'var(--card-bg)',
+                border: '1px solid var(--border-default)',
+                minWidth: '220px',
+                maxHeight: '400px',
+                overflowY: 'auto'
               }}
-              title={viewMode === 'focused' ? 'Show full repository structure' : 'Focus on highlighted results'}
-              onMouseEnter={(e) => e.target.style.opacity = '0.9'}
-              onMouseLeave={(e) => e.target.style.opacity = '1'}
             >
-              {viewMode === 'focused' ? '🎯 Focused View' : '📊 Full Structure'}
-            </button>
+              <div className="p-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="text-xs font-semibold mb-1" style={{ color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
+                  Node Types
+                </div>
+                <div className="text-xs" style={{ color: 'var(--text-tertiary)', fontFamily: "'Inter', sans-serif" }}>
+                  {repoSize} repo • {graphData?.nodes.length || 0} nodes
+                </div>
+              </div>
+              <div className="p-2">
+                {Object.entries(nodeTypes).map(([type, color]) => (
+                  <div key={type} className="mb-1">
+                    <div
+                      className="flex items-center cursor-pointer px-2 py-1.5 rounded hover:opacity-80 transition-all"
+                      onClick={() => handleNodeTypeToggle(type)}
+                      style={{ backgroundColor: selectedNodeTypes[type] ? 'var(--elevated)' : 'transparent' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedNodeTypes[type]}
+                        onChange={() => {}}
+                        className="mr-2 cursor-pointer"
+                        style={{ accentColor: 'var(--accent)' }}
+                      />
+                      <span
+                        className="w-2.5 h-2.5 rounded mr-2"
+                        style={{
+                          backgroundColor: color.background,
+                          borderColor: color.border,
+                          borderWidth: 1,
+                          opacity: selectedNodeTypes[type] ? (nodeFading[type] ? 0.35 : 1.0) : 0.2
+                        }}
+                      />
+                      <span
+                        className="text-xs flex-1"
+                        style={{
+                          color: selectedNodeTypes[type] ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                          fontFamily: "'Inter', sans-serif"
+                        }}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
+                        {selectedNodeTypes[type] && nodeFading[type] && (
+                          <span style={{ color: 'var(--text-tertiary)' }}> (faded)</span>
+                        )}
+                      </span>
+                    </div>
+                    {selectedNodeTypes[type] && (type === 'class_definition' || type === 'function') && (
+                      <div className="ml-8 mt-1">
+                        <label className="flex items-center cursor-pointer text-xs" style={{ color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+                          <input
+                            type="checkbox"
+                            checked={!nodeFading[type]}
+                            onChange={() => setNodeFading(prev => ({ ...prev, [type]: !prev[type] }))}
+                            className="mr-1.5 cursor-pointer"
+                            style={{ accentColor: 'var(--accent)' }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          Full opacity
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
-          <input
-            type="text"
-            placeholder="Search nodes..."
-            value={searchTerm}
-            onChange={handleSearch}
-            className="w-full px-4 py-2 rounded-l focus:outline-none transition-all"
-            style={{
-              backgroundColor: 'var(--input-bg)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-default)',
-              fontFamily: "'Inter', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
-            onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
-          />
-          <button
-            onClick={handleSearch}
-            className="px-4 py-2 rounded-r transition-all font-medium"
-            style={{
-              backgroundColor: '#84a07c',
-              color: '#ffffff',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-            onMouseEnter={(e) => e.target.style.opacity = '0.9'}
-            onMouseLeave={(e) => e.target.style.opacity = '1'}
-          >
-            Search
-          </button>
-        </div>
-        <div className="flex">
-          <button
-            onClick={handleFitGraph}
-            className="p-2 rounded-l transition-all"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
-            title="Fit Graph"
-            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button onClick={handleFitGraph} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Fit Graph">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
           </button>
-          <button
-            onClick={handleZoomIn}
-            className="p-2 transition-all"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
-            title="Zoom In"
-            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button onClick={handleZoomIn} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Zoom In">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
             </svg>
           </button>
-          <button
-            onClick={handleZoomOut}
-            className="p-2 transition-all"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
-            title="Zoom Out"
-            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button onClick={handleZoomOut} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Zoom Out">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
             </svg>
           </button>
-        </div>
-        <div className="flex items-center ml-4">
-          <button
-            onClick={() => setCurrentLevel(prev => prev + 1)}
-            className="p-2 transition-all"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
-            title="Increase Level"
-            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setCurrentLevel(prev => Math.max(prev - 1, 1))}
-            className="p-2 transition-all"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-primary)' }}
-            title="Decrease Level"
-            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--card-bg)'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-            </svg>
-          </button>
+
+          <span className="text-xs font-medium px-2" style={{ color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+            {repoSize} ({graphData?.nodes.length || 0} nodes)
+          </span>
         </div>
       </div>
       <div className="flex-1 relative">
         {/* Loading Overlay */}
         {loadingState.isLoading && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.95)',
-            backdropFilter: 'blur(8px)'
-          }}>
-            <div className="p-6 rounded-lg shadow-lg max-w-md w-full" style={{
-              backgroundColor: 'var(--card-bg)',
-              border: '1px solid var(--border-default)'
-            }}>
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{ backgroundColor: 'rgba(66, 77, 87, 0.95)', backdropFilter: 'blur(4px)' }}>
+            <div className="p-6 rounded-lg shadow-lg max-w-md w-full" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-default)' }}>
               <div className="flex items-center justify-center mb-4">
-                <div className="animate-spin rounded-full h-12 w-12" style={{
-                  borderWidth: '3px',
-                  borderStyle: 'solid',
-                  borderColor: 'var(--border-default)',
-                  borderTopColor: 'var(--accent)'
-                }}></div>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2" style={{ borderColor: 'var(--accent)' }}></div>
               </div>
-              <p className="text-center font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
-                {loadingState.message}
-              </p>
-              <div className="w-full rounded-full h-2.5" style={{ backgroundColor: 'var(--border-default)' }}>
+              <p className="text-center font-medium mb-2" style={{ color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>{loadingState.message}</p>
+              <div className="w-full rounded-full h-2.5" style={{ backgroundColor: 'var(--elevated)' }}>
                 <div
                   className="h-2.5 rounded-full transition-all duration-300"
-                  style={{
-                    width: `${loadingState.progress}%`,
-                    backgroundColor: 'var(--accent)'
-                  }}
+                  style={{ width: `${loadingState.progress}%`, backgroundColor: 'var(--accent)' }}
                 ></div>
               </div>
-              <p className="text-center text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>
-                {loadingState.progress}%
-              </p>
+              <p className="text-center text-sm mt-2" style={{ color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>{loadingState.progress}%</p>
             </div>
           </div>
         )}
         <div ref={networkRef} className="absolute inset-0" />
-        <div
-          className={`absolute bottom-4 right-4 rounded-lg shadow-md transition-all ${isLegendMinimized ? 'w-10 h-10' : 'w-64'}`}
-          style={{
-            backgroundColor: 'rgba(26, 26, 26, 0.95)',
-            backdropFilter: 'blur(12px)',
-            border: '1px solid var(--border-default)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8)'
-          }}
-        >
-          <button
-            onClick={toggleLegend}
-            className="absolute top-2 right-2 transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            title={isLegendMinimized ? "Expand Legend" : "Minimize Legend"}
-            onMouseEnter={(e) => e.target.style.color = 'var(--text-primary)'}
-            onMouseLeave={(e) => e.target.style.color = 'var(--text-secondary)'}
-          >
-            {isLegendMinimized ? (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-          </button>
-          {!isLegendMinimized && (
-            <div className="p-3 pt-8">
-              <div className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>
-                Repo: {repoSize} ({graphData?.nodes.length} nodes)
-              </div>
-              {Object.entries(nodeTypes).map(([type, color]) => (
-                <div key={type} className="mb-2">
-                  <div className="flex items-center cursor-pointer" onClick={() => handleNodeTypeToggle(type)}>
-                    <input
-                      type="checkbox"
-                      checked={selectedNodeTypes[type]}
-                      onChange={() => {}}
-                      className="mr-2 cursor-pointer"
-                      style={{ accentColor: 'var(--accent)' }}
-                    />
-                    <span
-                      className="w-3 h-3 rounded mr-1"
-                      style={{
-                        backgroundColor: color.background,
-                        border: `2px solid ${color.border}`,
-                        opacity: selectedNodeTypes[type] ? (nodeFading[type] ? 0.35 : 1.0) : 0.2
-                      }}
-                    />
-                    <span className="text-xs" style={{
-                      color: selectedNodeTypes[type] ? 'var(--text-primary)' : 'var(--text-tertiary)'
-                    }}>
-                      {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
-                      {selectedNodeTypes[type] && nodeFading[type] && (
-                        <span style={{ color: 'var(--text-tertiary)' }} className="ml-1">(faded)</span>
-                      )}
-                    </span>
-                  </div>
-                  {/* Fading toggle for classes and functions */}
-                  {selectedNodeTypes[type] && (type === 'class_definition' || type === 'function') && (
-                    <div className="ml-6 mt-1">
-                      <label className="flex items-center cursor-pointer text-xs" style={{ color: 'var(--text-secondary)' }}>
-                        <input
-                          type="checkbox"
-                          checked={!nodeFading[type]}
-                          onChange={() => setNodeFading(prev => ({ ...prev, [type]: !prev[type] }))}
-                          className="mr-1 cursor-pointer"
-                          style={{ accentColor: 'var(--accent)' }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        Full opacity
-                      </label>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* Context Menu */}
-        {contextMenu && (
+        {/* Action buttons for selected node */}
+        {selectedNodeButtons && (
           <div
-            className="absolute rounded-lg shadow-lg py-1 z-50"
             style={{
-              left: `${contextMenu.x}px`,
-              top: `${contextMenu.y}px`,
-              backgroundColor: 'var(--card-bg)',
-              border: '1px solid var(--border-default)',
-              minWidth: '220px',
-              boxShadow: '0 12px 48px rgba(0, 0, 0, 0.9)'
+              position: 'absolute',
+              left: selectedNodeButtons.position.x,
+              top: selectedNodeButtons.position.y,
+              transform: 'translate(-50%, 0)',
+              display: 'flex',
+              gap: '8px',
+              zIndex: 1000
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <button
-              onClick={() => handleAskAboutNode(contextMenu.node)}
-              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
+              onClick={() => handleQuickExplain(selectedNodeButtons.node)}
               style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(74, 86, 98, 0.95)',
+                border: '1px solid rgba(132, 160, 124, 0.5)',
                 color: 'var(--text-primary)',
-                fontFamily: "'Inter', sans-serif",
-                fontSize: '0.875rem',
-                border: 'none',
-                background: 'none',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                backdropFilter: 'blur(8px)',
+                fontSize: '16px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
               }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              title="Quick explain"
             >
-              <span className="mr-2">💬</span>
-              Ask about {contextMenu.node.label.split('\n')[0]}
-            </button>
-            <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '0.25rem 0' }} />
-            <button
-              onClick={() => {
-                setContextMenu(null);
-                if (network) {
-                  network.selectNodes([contextMenu.node.id]);
-                  highlightConnectedNodes(contextMenu.node.id, network);
-                }
-              }}
-              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
-              style={{
-                color: 'var(--text-primary)',
-                fontFamily: "'Inter', sans-serif",
-                fontSize: '0.875rem',
-                border: 'none',
-                background: 'none',
-                cursor: 'pointer'
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-            >
-              <span className="mr-2">🔍</span>
-              Show dependencies
+              ?
             </button>
             <button
-              onClick={() => {
-                setContextMenu(null);
-                console.log('Full node data:', contextMenu.node);
-              }}
-              className="w-full text-left px-4 py-2.5 transition-colors flex items-center"
+              onClick={() => createQueryNode(selectedNodeButtons.node)}
               style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(74, 86, 98, 0.95)',
+                border: '1px solid rgba(132, 160, 124, 0.5)',
                 color: 'var(--text-primary)',
-                fontFamily: "'Inter', sans-serif",
-                fontSize: '0.875rem',
-                border: 'none',
-                background: 'none',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                backdropFilter: 'blur(8px)',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
               }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--elevated)'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              title="Ask question"
             >
-              <span className="mr-2">📄</span>
-              View full info
+              💬
             </button>
           </div>
         )}
 
-        {/* Inline Node Chat Panel */}
-        {activeChatNode && (
-          <NodeChatPanel
-            node={activeChatNode}
-            onClose={() => setActiveChatNode(null)}
-          />
+        {/* Minimal search bar attached under node */}
+        {activeQueryInput && (
+          <div
+            style={{
+              position: 'absolute',
+              left: activeQueryInput.position.x,
+              top: activeQueryInput.position.y,
+              transform: 'translateX(-50%)',
+              zIndex: 2000
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: 'rgba(74, 86, 98, 0.98)',
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: '1px solid rgba(132, 160, 124, 0.5)',
+              backdropFilter: 'blur(12px)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)'
+            }}>
+              <span style={{
+                fontSize: '11px',
+                color: 'var(--text-secondary)',
+                fontFamily: "'Inter', sans-serif",
+                fontWeight: 500,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }}>
+                Agent
+              </span>
+              <input
+                autoFocus
+                type="text"
+                placeholder="Search..."
+                className="focus:outline-none"
+                style={{
+                  width: '240px',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-primary)',
+                  border: 'none',
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: '13px'
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.target.value.trim()) {
+                    handleQuerySubmit(activeQueryInput.nodeId, e.target.value, activeQueryInput.parentNode);
+                  } else if (e.key === 'Escape') {
+                    setActiveQueryInput(null);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SVG connection lines for response panels */}
+        <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1900 }}>
+          {Object.entries(responsePanels).map(([nodeId, panel]) => {
+            if (!panel.isVisible || !panel.parentNodeId || !network) return null;
+
+            const parentPos = network.getPositions([panel.parentNodeId])?.[panel.parentNodeId];
+            if (!parentPos) return null;
+
+            const parentScreen = network.canvasToDOM(parentPos);
+
+            return (
+              <line
+                key={`line_${nodeId}`}
+                x1={parentScreen.x}
+                y1={parentScreen.y + 30}
+                x2={panel.position.x}
+                y2={panel.position.y + 50}
+                stroke="rgba(132, 160, 124, 0.4)"
+                strokeWidth="2"
+                strokeDasharray="5,5"
+              />
+            );
+          })}
+        </svg>
+
+        {/* Draggable, resizable response panels */}
+        {Object.entries(responsePanels).map(([nodeId, panel]) => {
+          if (!panel.isVisible) return null;
+
+          const queryData = queryNodes[nodeId];
+          const lastConv = queryData?.conversation?.[queryData.conversation.length - 1];
+
+          return (
+            <Rnd
+              key={nodeId}
+              size={{ width: panel.size.width, height: panel.size.height }}
+              position={{ x: panel.position.x, y: panel.position.y }}
+              onDragStop={(e, d) => {
+                setResponsePanels(prev => ({
+                  ...prev,
+                  [nodeId]: { ...prev[nodeId], position: { x: d.x, y: d.y } }
+                }));
+              }}
+              onResizeStop={(e, direction, ref, delta, position) => {
+                setResponsePanels(prev => ({
+                  ...prev,
+                  [nodeId]: {
+                    ...prev[nodeId],
+                    size: {
+                      width: parseInt(ref.style.width),
+                      height: parseInt(ref.style.height)
+                    },
+                    position
+                  }
+                }));
+              }}
+              minWidth={300}
+              minHeight={200}
+              maxWidth={600}
+              maxHeight={800}
+              style={{ zIndex: 2000 }}
+              enableResizing={{
+                top: true,
+                right: true,
+                bottom: true,
+                left: true,
+                topRight: true,
+                bottomRight: true,
+                bottomLeft: true,
+                topLeft: true
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#3D4850',
+                  border: '2px solid #84a07c',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }}
+              >
+                {/* Header */}
+                <div
+                  style={{
+                    padding: '12px',
+                    borderBottom: '1px solid rgba(132, 160, 124, 0.3)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    cursor: 'move',
+                    backgroundColor: 'rgba(83, 95, 107, 0.5)'
+                  }}
+                >
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>
+                    Response
+                  </span>
+                  <button
+                    onClick={() => {
+                      setResponsePanels(prev => ({
+                        ...prev,
+                        [nodeId]: { ...prev[nodeId], isVisible: false }
+                      }));
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      padding: 0
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div
+                  style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    padding: '16px',
+                    backgroundColor: '#424D57'
+                  }}
+                >
+                  {/* Thinking state */}
+                  {panel.isThinking ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '20px' }}>
+                      <div
+                        className="animate-pulse"
+                        style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          backgroundColor: '#84a07c'
+                        }}
+                      />
+                      <span style={{
+                        fontSize: '14px',
+                        color: 'var(--text-secondary)',
+                        fontFamily: "'Inter', sans-serif"
+                      }}>
+                        Thinking...
+                      </span>
+                    </div>
+                  ) : lastConv ? (
+                    <>
+                      {/* Question */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#B8C5D0', marginBottom: '4px', fontFamily: "'Inter', sans-serif" }}>
+                          Question:
+                        </p>
+                        <p style={{ fontSize: '14px', color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
+                          {lastConv.q}
+                        </p>
+                      </div>
+
+                      {/* Answer with full markdown */}
+                      <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      code({ node, inline, className, children, ...props }) {
+                        const match = /language-(\w+)/.exec(className || '');
+                        return !inline ? (
+                          <SyntaxHighlighter
+                            style={vscDarkPlus}
+                            language={match ? match[1] : 'text'}
+                            PreTag="div"
+                            customStyle={{
+                              backgroundColor: '#2F3840',
+                              padding: '12px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              margin: '8px 0'
+                            }}
+                            {...props}
+                          >
+                            {String(children).replace(/\n$/, '')}
+                          </SyntaxHighlighter>
+                        ) : (
+                          <code style={{
+                            backgroundColor: 'rgba(132, 160, 124, 0.2)',
+                            color: '#84a07c',
+                            padding: '2px 4px',
+                            borderRadius: '3px',
+                            fontSize: '13px',
+                            fontFamily: 'JetBrains Mono'
+                          }}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      p: ({ children }) => <p style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '12px', color: 'var(--text-primary)' }}>{children}</p>,
+                      h2: ({ children }) => <h2 style={{ fontSize: '16px', fontWeight: 600, marginTop: '16px', marginBottom: '8px', color: 'var(--text-primary)' }}>{children}</h2>,
+                      ul: ({ children }) => <ul style={{ paddingLeft: '20px', marginBottom: '12px' }}>{children}</ul>,
+                      li: ({ children }) => <li style={{ fontSize: '14px', marginBottom: '6px', color: 'var(--text-primary)' }}>{children}</li>,
+                      strong: ({ children }) => <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{children}</strong>
+                    }}
+                      >
+                        {lastConv.a}
+                      </ReactMarkdown>
+                    </>
+                  ) : panel.error ? (
+                    <p style={{ color: 'var(--error)', fontSize: '14px', padding: '20px' }}>
+                      Error processing query
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </Rnd>
+          );
+        })}
+
+
+        {/* Explanation tooltip */}
+        {explanationTooltip && (
+          <div
+            style={{
+              position: 'absolute',
+              left: explanationTooltip.position.x,
+              top: explanationTooltip.position.y,
+              transform: 'translateX(-50%)',
+              maxWidth: '320px',
+              padding: '12px',
+              backgroundColor: 'rgba(74, 86, 98, 0.98)',
+              border: '1px solid rgba(132, 160, 124, 0.3)',
+              borderRadius: '8px',
+              backdropFilter: 'blur(12px)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+              zIndex: 1500
+            }}
+            onClick={() => setExplanationTooltip(null)}
+          >
+            {explanationTooltip.loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div
+                  className="animate-spin"
+                  style={{
+                    width: '12px',
+                    height: '12px',
+                    border: '2px solid var(--accent)',
+                    borderTopColor: 'transparent',
+                    borderRadius: '50%'
+                  }}
+                />
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+                  Analyzing...
+                </span>
+              </div>
+            ) : (
+              <p style={{
+                fontSize: '13px',
+                lineHeight: '1.6',
+                color: 'var(--text-primary)',
+                margin: 0,
+                fontFamily: "'Inter', sans-serif"
+              }}>
+                {explanationTooltip.text}
+              </p>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -964,15 +1403,15 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeQuery }) => {
 }
 
 const nodeTypes = {
-  directory: { border: '#4B5563', background: '#374151' },
-  file: { border: '#4B5563', background: '#1F2937' },
-  import: { border: '#10B981', background: '#065F46' },
-  package: { border: '#10B981', background: '#064E3B' },
-  class_definition: { border: '#8B5CF6', background: '#6B21A8' },
-  function: { border: '#3B82F6', background: '#1E40AF' },
-  method: { border: '#A855F7', background: '#7E22CE' },
-  module_variable: { border: '#10B981', background: '#065F46' },
-  default: { border: '#4B5563', background: '#374151' },
+  directory: { border: '#6B7B8C', background: '#535F6B' },
+  file: { border: '#5B9BD5', background: '#4A7BA7' },
+  import: { border: '#6BBF8D', background: '#5A9F75' },
+  package: { border: '#E8A550', background: '#C88A3F' },
+  class_definition: { border: '#9B7EDE', background: '#7D63B8' },
+  function: { border: '#5B9BD5', background: '#4A7BA7' },
+  method: { border: '#8A7BC5', background: '#6E5FA1' },  // Reduced vibrancy
+  module_variable: { border: '#6BBF8D', background: '#5A9F75' },
+  default: { border: '#6A7580', background: '#535F6B' },
 };
 
 export default DependencyGraph;

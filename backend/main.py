@@ -67,6 +67,7 @@ class RepoLink(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     context: Optional[dict] = None  # Optional: backend loads from DB server-side
+    node_context: Optional[dict] = None  # NEW: For per-node queries (chunk_id, name, type)
 
 def store_repo_data(repo_metadata):
     # Log the storage action for debugging
@@ -442,7 +443,13 @@ async def query_jamba(request: QueryRequest):
         logging.info(f"Loaded {len(chunks)} chunks from database for query (server-side)")
 
         # Get response from Jamba model with caching (Task 2.1)
-        response = await get_jamba_response(query, context, repo_id=latest_repo_id)
+        # OPTION C: Pass node_context for per-node queries
+        response = await get_jamba_response(
+            query,
+            context,
+            repo_id=latest_repo_id,
+            node_context=request.node_context
+        )
 
         if response:
             # Handle both dict (new format with citations) and string (legacy format)
@@ -457,6 +464,61 @@ async def query_jamba(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+@app.post("/api/explain_node")
+async def explain_node(request: dict):
+    """
+    Fast explanation endpoint using Claude Haiku for <2s latency
+
+    Returns a concise 2-3 sentence explanation of a code chunk.
+    Optimized for speed over comprehensiveness.
+    """
+    try:
+        chunk_id = request.get('chunk_id')
+        name = request.get('name', 'this code')
+        chunk_type = request.get('type', 'code')
+
+        global latest_repo_id
+        if not latest_repo_id:
+            raise HTTPException(status_code=400, detail="No repository loaded.")
+
+        # Get chunk from database
+        chunks = retrieve_chunks(latest_repo_id)
+        chunk = next((c for c in chunks if c['chunk_id'] == chunk_id), None)
+
+        if not chunk:
+            # Fallback: use name for generic explanation
+            code_snippet = f"Code entity: {name} ({chunk_type})"
+        else:
+            # Truncate code for faster processing
+            code_snippet = chunk['code'][:800]  # Max 800 chars for speed
+
+        # Use Haiku for fast response
+        from anthropic import Anthropic
+        anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+        prompt = f"""Explain what this {chunk_type} does in 2-3 concise sentences:
+
+{code_snippet}
+
+Be technical but clear. Focus on purpose and key functionality."""
+
+        response = anthropic_client.messages.create(
+            model="claude-3-haiku-20240307",  # Fast model
+            max_tokens=150,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        explanation = response.content[0].text
+
+        logging.info(f"✅ Quick explain for {name}: {len(explanation)} chars")
+
+        return {"explanation": explanation}
+
+    except Exception as e:
+        logging.error(f"Explain error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 @app.get("/api/query_stream")
 async def query_stream(query: str):

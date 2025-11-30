@@ -287,7 +287,7 @@ class ChatSession:
                 try:
                     embeddings = OpenAIEmbeddings(
                         api_key=os.getenv("OPENAI_API_KEY"),
-                        model="text-embedding-3-large"
+                        model="text-embedding-3-small"  # Must match creation model
                     )
                     vector_store = FAISS.load_local(faiss_path, embeddings, allow_dangerous_deserialization=True)
                     logging.info(f"Loaded FAISS index from disk: {faiss_path} (fast path)")
@@ -675,19 +675,23 @@ class ChatSession:
                     summary += f"  Content Preview: {file_info['content'][:100]}...\n"
         return summary
 
-    async def chat(self, query: str) -> str:
+    async def chat(self, query: str, node_context: dict = None) -> str:
         """
         Chat with LLM using retrieved context (batch mode)
 
         NEW (Step 3): Uses Claude + reranking + smart context assembly
         OLD: Falls back to AI21 if Claude not available
+
+        Args:
+            query: User question
+            node_context: Optional node context for per-node queries (OPTION C)
         """
         try:
             # NEW: Use Claude if available (even without hybrid retriever)
             if self.claude_client:
                 # If hybrid retriever available, use full pipeline
                 if self.hybrid_retriever and self.reranker:
-                    return await self._chat_with_claude(query)
+                    return await self._chat_with_claude(query, node_context=node_context)
                 else:
                     # Claude available but hybrid not (old context format)
                     # Use Claude with legacy retrieval
@@ -810,7 +814,7 @@ class ChatSession:
         async for token in self._query_claude_stream(prompt):
             yield token
 
-    async def _chat_with_claude(self, query: str) -> str:
+    async def _chat_with_claude(self, query: str, node_context: dict = None) -> str:
         """
         NEW: Chat using Claude with full Step 1-3 pipeline
 
@@ -820,8 +824,13 @@ class ChatSession:
         3. Context assembly (Step 3)
         4. Claude LLM (Step 3)
         5. Citation extraction (Step 3)
+
+        OPTION C: If node_context provided, force that chunk into results
         """
-        logging.info("Using Claude with full retrieval pipeline (Steps 1-3)")
+        if node_context:
+            logging.info(f"Using Claude with NODE-FOCUSED retrieval for: {node_context.get('name')}")
+        else:
+            logging.info("Using Claude with full retrieval pipeline (Steps 1-3)")
 
         # Detect query complexity
         query_lower = query.lower()
@@ -890,6 +899,34 @@ class ChatSession:
 
         if not top_chunks:
             return "I couldn't find relevant information in the codebase to answer your question."
+
+        # OPTION C: Force clicked node into context if provided
+        if node_context and node_context.get('chunk_id'):
+            target_chunk_id = node_context['chunk_id']
+            logging.info(f"🎯 OPTION C: Forcing node into context: {target_chunk_id}")
+
+            # Find target chunk in full context
+            target_chunk = None
+            chunks_list = list(self.full_context.values()) if isinstance(self.full_context, dict) else []
+            for chunk in chunks_list:
+                if chunk.get('chunk_id') == target_chunk_id:
+                    target_chunk = chunk
+                    break
+
+            if target_chunk:
+                # Check if already in retrieved chunks
+                retrieved_ids = [c['chunk_id'] for c in top_chunks]
+
+                if target_chunk_id not in retrieved_ids:
+                    # Not retrieved - add as first
+                    top_chunks = [target_chunk] + top_chunks[:19]
+                    logging.info(f"✅ Added clicked node as PRIMARY (not in retrieval)")
+                else:
+                    # Already retrieved - move to first position
+                    top_chunks = [target_chunk] + [c for c in top_chunks if c['chunk_id'] != target_chunk_id][:19]
+                    logging.info(f"✅ Moved clicked node to PRIMARY position")
+            else:
+                logging.warning(f"⚠️ Could not find target chunk: {target_chunk_id}")
 
         logging.info(f"📊 SOTA retrieval returned {len(top_chunks)} chunks")
 
@@ -1187,7 +1224,7 @@ async def get_jamba_response_stream(query: str, context: Dict[str, Any], repo_id
         yield f"Error: {str(e)}"
 
 
-async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None) -> str:
+async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None, node_context: dict = None) -> str:
     try:
         logging.debug(f"Entering get_jamba_response with query: {query}")
         logging.debug(f"API Key: {os.getenv('AI21_API_KEY')[:5] if os.getenv('AI21_API_KEY') else 'Not set'}...")
@@ -1222,7 +1259,8 @@ async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int =
             logging.debug(f"Updating cached session repo_id: {chat_session.repo_id} → {repo_id}")
             chat_session.repo_id = repo_id
 
-        response = await chat_session.chat(query)
+        # OPTION C: Pass node_context through to chat
+        response = await chat_session.chat(query, node_context=node_context)
         logging.debug(f"Final response: {response}")
 
         # Task 2.1: Store in cache after generating (if repo_id available)

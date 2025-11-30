@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
+import * as d3 from 'd3-force';
 import API from '../api';
 import CodeNode from './nodes/CodeNode';
 import FileNode from './nodes/FileNode';
@@ -59,26 +60,60 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     return g;
   }, []);
 
-  // Simple grid layout for initial graph (fast, handles large graphs)
-  const getSimpleLayout = useCallback((nodes) => {
-    console.log('📐 SIMPLE LAYOUT: Positioning', nodes.length, 'nodes in grid');
+  // Force-directed layout using d3-force (handles large graphs, creates natural clustering)
+  const getForceLayout = useCallback((nodes, edges) => {
+    console.log('⚡ D3-FORCE: Starting force simulation with', nodes.length, 'nodes');
 
-    const cols = Math.ceil(Math.sqrt(nodes.length));
-    const nodeWidth = 200;
-    const nodeHeight = 100;
+    // Create d3 simulation nodes
+    const simulationNodes = nodes.map(n => ({
+      ...n,
+      x: Math.random() * 1000,
+      y: Math.random() * 1000
+    }));
 
-    return nodes.map((node, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
+    // Create d3 simulation links
+    const simulationLinks = edges.map(e => ({
+      source: e.source,
+      target: e.target
+    }));
 
-      return {
-        ...node,
-        position: {
-          x: col * nodeWidth,
-          y: row * nodeHeight
-        }
-      };
-    });
+    // Run d3-force simulation
+    const simulation = d3.forceSimulation(simulationNodes)
+      .force('link', d3.forceLink(simulationLinks)
+        .id(d => d.id)
+        .distance(150)
+        .strength(0.1)
+      )
+      .force('charge', d3.forceManyBody()
+        .strength(-300)
+        .distanceMax(500)
+      )
+      .force('center', d3.forceCenter(500, 400))
+      .force('collide', d3.forceCollide()
+        .radius(100)
+        .strength(0.7)
+      )
+      .stop();
+
+    // Run simulation synchronously
+    console.log('🔄 D3-FORCE: Running 300 iterations...');
+    for (let i = 0; i < 300; i++) {
+      simulation.tick();
+      if (i % 50 === 0) {
+        console.log(`   Iteration ${i}/300...`);
+      }
+    }
+
+    console.log('✅ D3-FORCE: Simulation complete');
+
+    // Apply positions
+    return nodes.map((node, i) => ({
+      ...node,
+      position: {
+        x: simulationNodes[i].x,
+        y: simulationNodes[i].y
+      }
+    }));
   }, []);
 
   // Dagre layout for query/answer nodes ONLY (small incremental updates)
@@ -196,9 +231,9 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
         console.log('📐 Sample node:', reactFlowNodes[0]);
         console.log('📐 Sample edge:', reactFlowEdges[0]);
 
-        // Use simple grid layout for initial load (fast for large graphs)
-        console.log('🔄 Using simple grid layout for initial load...');
-        const layoutedNodes = getSimpleLayout(reactFlowNodes);
+        // Use d3-force layout for initial load (natural clustering, handles large graphs)
+        console.log('🔄 Using d3-force layout for initial load...');
+        const layoutedNodes = getForceLayout(reactFlowNodes, reactFlowEdges);
 
         console.log('✅ Layout complete:', {
           nodes: layoutedNodes.length,
@@ -213,7 +248,7 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
         console.log('✅ State updated, setting isLoading = false');
         setIsLoading(false);
 
-        console.log('✅ Graph ready with simple layout');
+        console.log('✅ Graph ready with d3-force layout');
       } catch (error) {
         console.error('Error fetching graph:', error);
         setIsLoading(false);
@@ -221,7 +256,7 @@ const ReactFlowGraph = ({ highlightedNodes = [] }) => {
     };
 
     fetchGraphData();
-  }, [selectedNodeTypes, getSimpleLayout]);
+  }, [selectedNodeTypes, getForceLayout]);
 
   // Create query node under parent
   const createQueryNode = useCallback((parentNode) => {

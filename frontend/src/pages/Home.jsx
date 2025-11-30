@@ -68,63 +68,67 @@ const Home = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen font-sans" style={{ backgroundColor: 'var(--black)' }}>
-      <div className="p-8 rounded-lg shadow-md w-full max-w-md" style={{
-        backgroundColor: 'var(--card-bg)',
-        border: '1px solid var(--border-default)',
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)'
-      }}>
-        <h1 className="text-4xl font-bold mb-6 text-center" style={{ color: 'var(--accent)' }}>⚡ Visdep</h1>
-        {/* Smart Filter Notifications */}
+    <div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: 'var(--black)', fontFamily: "'Inter', sans-serif" }}>
+      {/* Modern 2025 Hero Section */}
+      <div className="w-full max-w-2xl px-8">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-5xl font-semibold mb-3 tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            Meet Visdep
+          </h1>
+          <p className="text-base" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>
+            Enterprise-grade code understanding with visual dependency graphs
+          </p>
+        </div>
+
+        {/* Filter Notifications */}
         {filterNotifications.length > 0 && !isLoading && (
-          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-start">
-              <span className="text-2xl mr-3">⚡</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-blue-900 mb-2">Smart Filtering Applied</p>
-                {filterNotifications.map((notif, idx) => (
-                  <div key={idx} className="mb-2 text-xs text-blue-800">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">
-                        ✂️ {notif.directory} ({notif.files_excluded.toLocaleString()} files)
-                      </span>
-                      <span className="text-blue-600 font-semibold">
-                        saves {notif.savings_pct}% time
-                      </span>
-                    </div>
-                    <p className="text-blue-700 mt-1">{notif.reason}</p>
-                    {notif.can_override && (
-                      <button
-                        onClick={() => {
-                          // Re-upload with tests included
-                          setExcludeTests(false);
-                          setFilterNotifications([]);
-                        }}
-                        className="mt-1 text-xs text-indigo-600 hover:text-indigo-800 underline"
-                      >
-                        Include anyway (slower)
-                      </button>
-                    )}
+          <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: 'var(--elevated)', border: '1px solid var(--border-default)' }}>
+            <div className="flex-1">
+              <p className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Smart Filtering Applied</p>
+              {filterNotifications.map((notif, idx) => (
+                <div key={idx} className="mb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium">
+                      {notif.directory} ({notif.files_excluded.toLocaleString()} files)
+                    </span>
+                    <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                      {notif.savings_pct}% faster
+                    </span>
                   </div>
-                ))}
-              </div>
+                  <p style={{ color: 'var(--text-tertiary)' }}>{notif.reason}</p>
+                  {notif.can_override && (
+                    <button
+                      onClick={() => {
+                        setExcludeTests(false);
+                        setFilterNotifications([]);
+                      }}
+                      className="mt-1 text-xs hover:opacity-80 underline"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      Include anyway
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}
 
         {isLoading ? (
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-700 mx-auto mb-4"></div>
-            <p className="text-indigo-700 font-medium">{getLoadingMessage()}</p>
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4" style={{ borderColor: 'var(--accent)' }}></div>
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{getLoadingMessage()}</p>
           </div>
         ) : (
-          <>
+          <div className="space-y-4">
+            {/* Main Input */}
             <input
               type="text"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
-              placeholder="Enter GitHub repository URL"
-              className="w-full p-3 rounded-lg mb-4 focus:outline-none transition-all"
+              placeholder="https://github.com/username/repository"
+              className="w-full px-4 py-3.5 rounded-lg text-base focus:outline-none transition-all"
               style={{
                 backgroundColor: 'var(--input-bg)',
                 color: 'var(--text-primary)',
@@ -134,122 +138,125 @@ const Home = () => {
               onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
               onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
             />
-            <input
-              type="text"
-              value={subDirectory}
-              onChange={(e) => setSubDirectory(e.target.value)}
-              placeholder="Enter subdirectory (optional)"
-              className="w-full p-3 rounded-lg mb-4 focus:outline-none transition-all"
-              style={{
-                backgroundColor: 'var(--input-bg)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-default)',
-                fontFamily: "'Inter', sans-serif"
-              }}
-              onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
-              onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
-            />
-            {/* Advanced Options - Collapsible */}
-            <div className="mb-4">
+
+            {/* Subdirectory Input - Inline with Advanced */}
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={subDirectory}
+                onChange={(e) => setSubDirectory(e.target.value)}
+                placeholder="Subdirectory (optional)"
+                className="flex-1 px-4 py-3 rounded-lg text-sm focus:outline-none transition-all"
+                style={{
+                  backgroundColor: 'var(--input-bg)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border-default)',
+                  fontFamily: "'Inter', sans-serif"
+                }}
+                onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={(e) => e.target.style.borderColor = 'var(--border-default)'}
+              />
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="w-full text-left text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center justify-between"
+                className="px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 transition-all"
+                style={{
+                  backgroundColor: showAdvanced ? 'var(--accent)' : 'var(--elevated)',
+                  color: showAdvanced ? '#FFFFFF' : 'var(--text-secondary)',
+                  border: `1px solid ${showAdvanced ? 'var(--accent)' : 'var(--border-default)'}`,
+                  fontFamily: "'Inter', sans-serif"
+                }}
               >
-                <span>⚙️ Advanced Options</span>
-                <span>{showAdvanced ? '▼' : '▶'}</span>
+                Advanced
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
-
-              {showAdvanced && (
-                <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                  <p className="text-xs text-gray-600 mb-3">
-                    Enterprise-grade smart filtering: Auto-excludes non-essential directories for faster analysis.
-                  </p>
-
-                  <div className="space-y-2">
-                    <p className="text-xs font-semibold text-gray-700">Tier 1: Always Auto-Exclude</p>
-
-                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
-                      <input
-                        type="checkbox"
-                        checked={excludeDocs === true}
-                        onChange={(e) => setExcludeDocs(e.target.checked ? true : null)}
-                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <span className="text-sm text-gray-700">
-                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">docs/</code>
-                        <span className="text-xs text-gray-500 ml-1">(auto if >500 files)</span>
-                      </span>
-                    </label>
-
-                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
-                      <input
-                        type="checkbox"
-                        checked={excludeExamples === true}
-                        onChange={(e) => setExcludeExamples(e.target.checked ? true : null)}
-                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <span className="text-sm text-gray-700">
-                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">examples/</code>
-                        <span className="text-xs text-gray-500 ml-1">(auto if >500 files)</span>
-                      </span>
-                    </label>
-                  </div>
-
-                  <div className="space-y-2 pt-2 border-t border-gray-300">
-                    <p className="text-xs font-semibold text-gray-700">Tier 2: Smart Auto-Exclude</p>
-
-                    <label className="flex items-center space-x-2 cursor-pointer ml-2">
-                      <input
-                        type="checkbox"
-                        checked={excludeTests === true}
-                        onChange={(e) => setExcludeTests(e.target.checked ? true : null)}
-                        className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <span className="text-sm text-gray-700">
-                        Exclude <code className="px-1 bg-gray-200 rounded text-xs">tests/</code>
-                        <span className="text-xs text-gray-500 ml-1">(auto if >40% of repo)</span>
-                      </span>
-                    </label>
-
-                    <p className="text-xs text-gray-500 ml-2 mt-1">
-                      💡 Also auto-excludes: migrations/ (>20%), locale/ (>200 files)
-                    </p>
-                  </div>
-
-                  <div className="mt-3 pt-2 border-t border-gray-300">
-                    <p className="text-xs text-gray-500">
-                      ℹ️ Smart filtering saves 60-80% time on large repos like Django, FastAPI, React
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
 
+            {/* Advanced Options Panel */}
+            {showAdvanced && (
+              <div className="p-4 rounded-lg space-y-4" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-default)' }}>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
+                  Smart filtering auto-excludes non-essential directories for faster analysis
+                </p>
+
+                <div className="space-y-2.5">
+                  <label className="flex items-center space-x-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={excludeDocs === true}
+                      onChange={(e) => setExcludeDocs(e.target.checked ? true : null)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                      style={{ accentColor: 'var(--accent)' }}
+                    />
+                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                      Exclude <code className="px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-secondary)' }}>docs/</code>
+                      <span className="text-xs ml-2" style={{ color: 'var(--text-tertiary)' }}>(auto if &gt;500 files)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-center space-x-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={excludeExamples === true}
+                      onChange={(e) => setExcludeExamples(e.target.checked ? true : null)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                      style={{ accentColor: 'var(--accent)' }}
+                    />
+                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                      Exclude <code className="px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-secondary)' }}>examples/</code>
+                      <span className="text-xs ml-2" style={{ color: 'var(--text-tertiary)' }}>(auto if &gt;500 files)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-center space-x-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={excludeTests === true}
+                      onChange={(e) => setExcludeTests(e.target.checked ? true : null)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                      style={{ accentColor: 'var(--accent)' }}
+                    />
+                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                      Exclude <code className="px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--elevated)', color: 'var(--text-secondary)' }}>tests/</code>
+                      <span className="text-xs ml-2" style={{ color: 'var(--text-tertiary)' }}>(auto if &gt;40%)</span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                  <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                    Also auto-excludes: migrations/, locale/, static/ based on size
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Button */}
             <button
               onClick={handleUpload}
-              className="w-full p-3 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3.5 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isLoading || !repoUrl.trim()}
               style={{
-                backgroundColor: isLoading || !repoUrl.trim() ? 'var(--border-strong)' : '#84a07c',
-                color: '#ffffff',
+                backgroundColor: isLoading || !repoUrl.trim() ? 'var(--border-strong)' : 'var(--accent)',
+                color: '#FFFFFF',
                 border: 'none',
-                cursor: isLoading || !repoUrl.trim() ? 'not-allowed' : 'pointer'
+                cursor: isLoading || !repoUrl.trim() ? 'not-allowed' : 'pointer',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: '15px'
               }}
               onMouseEnter={(e) => {
-                if (!isLoading && repoUrl.trim()) e.target.style.opacity = '0.9';
+                if (!isLoading && repoUrl.trim()) e.target.style.opacity = '0.85';
               }}
               onMouseLeave={(e) => e.target.style.opacity = '1'}
             >
-              Upload Repository
+              Analyze Repository
             </button>
-          </>
+          </div>
         )}
-        {message && <p className="mt-4 text-center" style={{ color: 'var(--error)' }}>{message}</p>}
+        {message && <p className="mt-4 text-center text-sm" style={{ color: 'var(--error)' }}>{message}</p>}
       </div>
-      <p className="mt-8 text-center" style={{ color: 'var(--text-secondary)' }}>
-        Visdep: Enterprise-grade code understanding with visual dependency graphs
-      </p>
     </div>
   );
 };
