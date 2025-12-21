@@ -68,7 +68,7 @@ const Home = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: 'var(--black)', fontFamily: "'Inter', sans-serif" }}>
+    <div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: '#050505', fontFamily: "'Inter', sans-serif" }}>
       {/* Modern 2025 Hero Section */}
       <div className="w-full max-w-2xl px-8">
         {/* Header */}

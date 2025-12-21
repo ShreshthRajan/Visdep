@@ -849,91 +849,173 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
           <button onClick={() => setMegaRepoWarning(null)} className="ml-3 hover:opacity-75 font-medium" style={{ color: 'var(--text-secondary)' }}>×</button>
         </div>
       )}
-      {/* Floating Island Control - Top Center */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-2 rounded-full" style={{
-        backgroundColor: 'rgba(9, 9, 11, 0.4)',
+      <div className="absolute top-4 left-20 z-10 flex items-center gap-2 px-4 py-2" style={{
+        backgroundColor: 'rgba(9, 9, 11, 0.7)',
         backdropFilter: 'blur(16px)',
-        border: '1px solid rgba(255, 255, 255, 0.1)'
+        borderRadius: '8px',
+        border: '1px solid rgba(255, 255, 255, 0.08)'
       }}>
-        {/* Quick Filters - Segmented Control */}
-        <button
-          onClick={() => handleNodeTypeToggle('directory')}
-          className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
-          style={{
-            backgroundColor: selectedNodeTypes['directory'] ? 'rgba(113, 113, 122, 0.2)' : 'transparent',
-            color: selectedNodeTypes['directory'] ? '#f4f4f5' : '#52525b',
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px'
-          }}
-          title="Toggle directories"
-        >
-          DIR
-        </button>
-        <button
-          onClick={() => handleNodeTypeToggle('file')}
-          className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
-          style={{
-            backgroundColor: selectedNodeTypes['file'] ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
-            color: selectedNodeTypes['file'] ? '#3b82f6' : '#52525b',
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px'
-          }}
-          title="Toggle files"
-        >
-          FILE
-        </button>
-        <button
-          onClick={() => handleNodeTypeToggle('class_definition')}
-          className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
-          style={{
-            backgroundColor: selectedNodeTypes['class_definition'] ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
-            color: selectedNodeTypes['class_definition'] ? '#8b5cf6' : '#52525b',
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px'
-          }}
-          title="Toggle classes"
-        >
-          CLASS
-        </button>
-        <button
-          onClick={() => handleNodeTypeToggle('method')}
-          className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
-          style={{
-            backgroundColor: selectedNodeTypes['method'] ? 'rgba(167, 139, 250, 0.2)' : 'transparent',
-            color: selectedNodeTypes['method'] ? '#a78bfa' : '#52525b',
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px'
-          }}
-          title="Toggle methods"
-        >
-          METH
-        </button>
-
-        {/* Full/Focus appears when highlighted */}
+        {/* View Mode Toggle */}
         {highlightedNodes.length > 0 && (
-          <>
-            <div style={{ width: '1px', height: '14px', backgroundColor: 'rgba(255, 255, 255, 0.08)', margin: '0 4px' }} />
-            <button
-              onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
-              className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
+          <button
+            onClick={() => setViewMode(viewMode === 'full' ? 'focused' : 'full')}
+            className="px-3 py-1.5 rounded-md text-sm font-medium transition-all"
+            style={{
+              backgroundColor: viewMode === 'focused' ? 'var(--accent)' : 'rgba(83, 95, 107, 0.7)',
+              color: viewMode === 'focused' ? '#FFFFFF' : 'var(--text-secondary)',
+              fontFamily: "'Inter', sans-serif",
+              border: `1px solid ${viewMode === 'focused' ? 'var(--accent)' : 'rgba(90, 101, 112, 0.4)'}`,
+              backdropFilter: 'blur(8px)'
+            }}
+            title={viewMode === 'focused' ? 'Show full repository structure' : 'Focus on highlighted results'}
+          >
+            {viewMode === 'focused' ? 'Focused' : 'Full'}
+          </button>
+        )}
+
+        <input
+          type="text"
+          placeholder="Search nodes..."
+          value={searchTerm}
+          onChange={handleSearch}
+          className="px-3 py-1.5 rounded-md text-sm focus:outline-none transition-all"
+          style={{
+            width: '280px',
+            backgroundColor: 'rgba(61, 72, 80, 0.6)',
+            color: 'var(--text-primary)',
+            border: '1px solid rgba(90, 101, 112, 0.4)',
+            fontFamily: "'Inter', sans-serif",
+            backdropFilter: 'blur(8px)'
+          }}
+          onFocus={(e) => {
+            e.target.style.backgroundColor = 'rgba(61, 72, 80, 0.9)';
+            e.target.style.borderColor = 'var(--accent)';
+          }}
+          onBlur={(e) => {
+            e.target.style.backgroundColor = 'rgba(61, 72, 80, 0.6)';
+            e.target.style.borderColor = 'rgba(90, 101, 112, 0.4)';
+          }}
+        />
+
+        <div className="flex gap-1 items-center relative filter-dropdown-container">
+          {/* Filter Dropdown */}
+          <button
+            onClick={toggleFilter}
+            className="px-2.5 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5"
+            style={{
+              backgroundColor: isFilterOpen ? 'var(--accent)' : 'rgba(83, 95, 107, 0.7)',
+              color: isFilterOpen ? '#FFFFFF' : 'var(--text-primary)',
+              fontFamily: "'Inter', sans-serif",
+              border: `1px solid ${isFilterOpen ? 'var(--accent)' : 'rgba(90, 101, 112, 0.4)'}`,
+              backdropFilter: 'blur(8px)'
+            }}
+            title="Filter node types"
+          >
+            Filters
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Filter Dropdown Panel */}
+          {isFilterOpen && (
+            <div
+              className="absolute top-full right-0 mt-2 rounded-lg shadow-xl z-50"
               style={{
-                backgroundColor: viewMode === 'focused' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                color: viewMode === 'focused' ? '#3b82f6' : '#71717a',
-                border: viewMode === 'focused' ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                fontFamily: "'JetBrains Mono', monospace",
-                textTransform: 'uppercase'
+                backgroundColor: 'var(--card-bg)',
+                border: '1px solid var(--border-default)',
+                minWidth: '220px',
+                maxHeight: '400px',
+                overflowY: 'auto'
               }}
             >
-              {viewMode === 'focused' ? '✕ FOCUS' : 'FOCUS'}
-            </button>
-          </>
-        )}
-      </div>
+              <div className="p-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="text-xs font-semibold mb-1" style={{ color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
+                  Node Types
+                </div>
+                <div className="text-xs" style={{ color: 'var(--text-tertiary)', fontFamily: "'Inter', sans-serif" }}>
+                  {repoSize} repo • {graphData?.nodes.length || 0} nodes
+                </div>
+              </div>
+              <div className="p-2">
+                {Object.entries(nodeTypes).map(([type, color]) => (
+                  <div key={type} className="mb-1">
+                    <div
+                      className="flex items-center cursor-pointer px-2 py-1.5 rounded hover:opacity-80 transition-all"
+                      onClick={() => handleNodeTypeToggle(type)}
+                      style={{ backgroundColor: selectedNodeTypes[type] ? 'var(--elevated)' : 'transparent' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedNodeTypes[type]}
+                        onChange={() => {}}
+                        className="mr-2 cursor-pointer"
+                        style={{ accentColor: 'var(--accent)' }}
+                      />
+                      <span
+                        className="w-2.5 h-2.5 rounded mr-2"
+                        style={{
+                          backgroundColor: color.background,
+                          borderColor: color.border,
+                          borderWidth: 1,
+                          opacity: selectedNodeTypes[type] ? (nodeFading[type] ? 0.35 : 1.0) : 0.2
+                        }}
+                      />
+                      <span
+                        className="text-xs flex-1"
+                        style={{
+                          color: selectedNodeTypes[type] ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                          fontFamily: "'Inter', sans-serif"
+                        }}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
+                        {selectedNodeTypes[type] && nodeFading[type] && (
+                          <span style={{ color: 'var(--text-tertiary)' }}> (faded)</span>
+                        )}
+                      </span>
+                    </div>
+                    {selectedNodeTypes[type] && (type === 'class_definition' || type === 'function') && (
+                      <div className="ml-8 mt-1">
+                        <label className="flex items-center cursor-pointer text-xs" style={{ color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+                          <input
+                            type="checkbox"
+                            checked={!nodeFading[type]}
+                            onChange={() => setNodeFading(prev => ({ ...prev, [type]: !prev[type] }))}
+                            className="mr-1.5 cursor-pointer"
+                            style={{ accentColor: 'var(--accent)' }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          Full opacity
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
+          <button onClick={handleFitGraph} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Fit Graph">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+          <button onClick={handleZoomIn} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Zoom In">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+            </svg>
+          </button>
+          <button onClick={handleZoomOut} className="p-1.5 rounded-md hover:opacity-80 transition-all" style={{ backgroundColor: 'rgba(83, 95, 107, 0.7)', backdropFilter: 'blur(8px)' }} title="Zoom Out">
+            <svg className="w-4 h-4" fill="none" stroke="var(--text-primary)" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+            </svg>
+          </button>
+
+          <span className="text-xs font-medium px-2" style={{ color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+            {repoSize} ({graphData?.nodes.length || 0} nodes)
+          </span>
+        </div>
+      </div>
       <div className="flex-1 relative">
         {/* Loading Overlay */}
         {loadingState.isLoading && (
@@ -954,7 +1036,389 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
           </div>
         )}
         <div ref={networkRef} className="absolute inset-0" />
-        {/* All floating elements removed - using HUD */}
+
+        {/* Action buttons for selected node */}
+        {selectedNodeButtons && (
+          <div
+            style={{
+              position: 'absolute',
+              left: selectedNodeButtons.position.x,
+              top: selectedNodeButtons.position.y,
+              transform: 'translate(-50%, 0)',
+              display: 'flex',
+              gap: '8px',
+              zIndex: 1000
+            }}
+          >
+            <button
+              onClick={() => handleQuickExplain(selectedNodeButtons.node)}
+              style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(74, 86, 98, 0.95)',
+                border: '1px solid rgba(132, 160, 124, 0.5)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                backdropFilter: 'blur(8px)',
+                fontSize: '16px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Quick explain"
+            >
+              ?
+            </button>
+            <button
+              onClick={() => createQueryNode(selectedNodeButtons.node)}
+              style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(74, 86, 98, 0.95)',
+                border: '1px solid rgba(132, 160, 124, 0.5)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                backdropFilter: 'blur(8px)',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Ask question"
+            >
+              💬
+            </button>
+          </div>
+        )}
+
+        {/* Minimal search bar attached under node */}
+        {activeQueryInput && (
+          <div
+            style={{
+              position: 'absolute',
+              left: activeQueryInput.position.x,
+              top: activeQueryInput.position.y,
+              transform: 'translateX(-50%)',
+              zIndex: 2000
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: 'rgba(74, 86, 98, 0.98)',
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: '1px solid rgba(132, 160, 124, 0.5)',
+              backdropFilter: 'blur(12px)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)'
+            }}>
+              <span style={{
+                fontSize: '11px',
+                color: 'var(--text-secondary)',
+                fontFamily: "'Inter', sans-serif",
+                fontWeight: 500,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }}>
+                Agent
+              </span>
+              <input
+                autoFocus
+                type="text"
+                placeholder="Search..."
+                className="focus:outline-none"
+                style={{
+                  width: '240px',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-primary)',
+                  border: 'none',
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: '13px'
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.target.value.trim()) {
+                    handleQuerySubmit(activeQueryInput.nodeId, e.target.value, activeQueryInput.parentNode);
+                  } else if (e.key === 'Escape') {
+                    setActiveQueryInput(null);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* SVG connection lines for response panels */}
+        <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1900 }}>
+          {Object.entries(responsePanels).map(([nodeId, panel]) => {
+            if (!panel.isVisible || !panel.parentNodeId || !network) return null;
+
+            const parentPos = network.getPositions([panel.parentNodeId])?.[panel.parentNodeId];
+            if (!parentPos) return null;
+
+            const parentScreen = network.canvasToDOM(parentPos);
+
+            return (
+              <line
+                key={`line_${nodeId}`}
+                x1={parentScreen.x}
+                y1={parentScreen.y + 30}
+                x2={panel.position.x}
+                y2={panel.position.y + 50}
+                stroke="rgba(132, 160, 124, 0.4)"
+                strokeWidth="2"
+                strokeDasharray="5,5"
+              />
+            );
+          })}
+        </svg>
+
+        {/* Draggable, resizable response panels */}
+        {Object.entries(responsePanels).map(([nodeId, panel]) => {
+          if (!panel.isVisible) return null;
+
+          const queryData = queryNodes[nodeId];
+          const lastConv = queryData?.conversation?.[queryData.conversation.length - 1];
+
+          return (
+            <Rnd
+              key={nodeId}
+              size={{ width: panel.size.width, height: panel.size.height }}
+              position={{ x: panel.position.x, y: panel.position.y }}
+              onDragStop={(e, d) => {
+                setResponsePanels(prev => ({
+                  ...prev,
+                  [nodeId]: { ...prev[nodeId], position: { x: d.x, y: d.y } }
+                }));
+              }}
+              onResizeStop={(e, direction, ref, delta, position) => {
+                setResponsePanels(prev => ({
+                  ...prev,
+                  [nodeId]: {
+                    ...prev[nodeId],
+                    size: {
+                      width: parseInt(ref.style.width),
+                      height: parseInt(ref.style.height)
+                    },
+                    position
+                  }
+                }));
+              }}
+              minWidth={300}
+              minHeight={200}
+              maxWidth={600}
+              maxHeight={800}
+              style={{ zIndex: 2000 }}
+              enableResizing={{
+                top: true,
+                right: true,
+                bottom: true,
+                left: true,
+                topRight: true,
+                bottomRight: true,
+                bottomLeft: true,
+                topLeft: true
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#3D4850',
+                  border: '2px solid #84a07c',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }}
+              >
+                {/* Header */}
+                <div
+                  style={{
+                    padding: '12px',
+                    borderBottom: '1px solid rgba(132, 160, 124, 0.3)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    cursor: 'move',
+                    backgroundColor: 'rgba(83, 95, 107, 0.5)'
+                  }}
+                >
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>
+                    Response
+                  </span>
+                  <button
+                    onClick={() => {
+                      setResponsePanels(prev => ({
+                        ...prev,
+                        [nodeId]: { ...prev[nodeId], isVisible: false }
+                      }));
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      padding: 0
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div
+                  style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    padding: '16px',
+                    backgroundColor: '#424D57'
+                  }}
+                >
+                  {/* Thinking state */}
+                  {panel.isThinking ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '20px' }}>
+                      <div
+                        className="animate-pulse"
+                        style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          backgroundColor: '#84a07c'
+                        }}
+                      />
+                      <span style={{
+                        fontSize: '14px',
+                        color: 'var(--text-secondary)',
+                        fontFamily: "'Inter', sans-serif"
+                      }}>
+                        Thinking...
+                      </span>
+                    </div>
+                  ) : lastConv ? (
+                    <>
+                      {/* Question */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#B8C5D0', marginBottom: '4px', fontFamily: "'Inter', sans-serif" }}>
+                          Question:
+                        </p>
+                        <p style={{ fontSize: '14px', color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
+                          {lastConv.q}
+                        </p>
+                      </div>
+
+                      {/* Answer with full markdown */}
+                      <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      code({ node, inline, className, children, ...props }) {
+                        const match = /language-(\w+)/.exec(className || '');
+                        return !inline ? (
+                          <SyntaxHighlighter
+                            style={vscDarkPlus}
+                            language={match ? match[1] : 'text'}
+                            PreTag="div"
+                            customStyle={{
+                              backgroundColor: '#2F3840',
+                              padding: '12px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              margin: '8px 0'
+                            }}
+                            {...props}
+                          >
+                            {String(children).replace(/\n$/, '')}
+                          </SyntaxHighlighter>
+                        ) : (
+                          <code style={{
+                            backgroundColor: 'rgba(132, 160, 124, 0.2)',
+                            color: '#84a07c',
+                            padding: '2px 4px',
+                            borderRadius: '3px',
+                            fontSize: '13px',
+                            fontFamily: 'JetBrains Mono'
+                          }}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      p: ({ children }) => <p style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '12px', color: 'var(--text-primary)' }}>{children}</p>,
+                      h2: ({ children }) => <h2 style={{ fontSize: '16px', fontWeight: 600, marginTop: '16px', marginBottom: '8px', color: 'var(--text-primary)' }}>{children}</h2>,
+                      ul: ({ children }) => <ul style={{ paddingLeft: '20px', marginBottom: '12px' }}>{children}</ul>,
+                      li: ({ children }) => <li style={{ fontSize: '14px', marginBottom: '6px', color: 'var(--text-primary)' }}>{children}</li>,
+                      strong: ({ children }) => <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{children}</strong>
+                    }}
+                      >
+                        {lastConv.a}
+                      </ReactMarkdown>
+                    </>
+                  ) : panel.error ? (
+                    <p style={{ color: 'var(--error)', fontSize: '14px', padding: '20px' }}>
+                      Error processing query
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </Rnd>
+          );
+        })}
+
+
+        {/* Explanation tooltip */}
+        {explanationTooltip && (
+          <div
+            style={{
+              position: 'absolute',
+              left: explanationTooltip.position.x,
+              top: explanationTooltip.position.y,
+              transform: 'translateX(-50%)',
+              maxWidth: '320px',
+              padding: '12px',
+              backgroundColor: 'rgba(74, 86, 98, 0.98)',
+              border: '1px solid rgba(132, 160, 124, 0.3)',
+              borderRadius: '8px',
+              backdropFilter: 'blur(12px)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+              zIndex: 1500
+            }}
+            onClick={() => setExplanationTooltip(null)}
+          >
+            {explanationTooltip.loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div
+                  className="animate-spin"
+                  style={{
+                    width: '12px',
+                    height: '12px',
+                    border: '2px solid var(--accent)',
+                    borderTopColor: 'transparent',
+                    borderRadius: '50%'
+                  }}
+                />
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: "'Inter', sans-serif" }}>
+                  Analyzing...
+                </span>
+              </div>
+            ) : (
+              <p style={{
+                fontSize: '13px',
+                lineHeight: '1.6',
+                color: 'var(--text-primary)',
+                margin: 0,
+                fontFamily: "'Inter', sans-serif"
+              }}>
+                {explanationTooltip.text}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

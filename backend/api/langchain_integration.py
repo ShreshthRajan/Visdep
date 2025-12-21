@@ -903,30 +903,62 @@ class ChatSession:
         # OPTION C: Force clicked node into context if provided
         if node_context and node_context.get('chunk_id'):
             target_chunk_id = node_context['chunk_id']
-            logging.info(f"🎯 OPTION C: Forcing node into context: {target_chunk_id}")
+            node_type = node_context.get('type', 'unknown')
+            logging.info(f"🎯 OPTION C: Forcing node into context: {target_chunk_id} (type: {node_type})")
 
-            # Find target chunk in full context
-            target_chunk = None
             chunks_list = list(self.full_context.values()) if isinstance(self.full_context, dict) else []
-            for chunk in chunks_list:
-                if chunk.get('chunk_id') == target_chunk_id:
-                    target_chunk = chunk
-                    break
 
-            if target_chunk:
-                # Check if already in retrieved chunks
-                retrieved_ids = [c['chunk_id'] for c in top_chunks]
+            # Handle file/directory nodes differently (get ALL chunks from file)
+            if node_type in ['file', 'directory']:
+                logging.info(f"📁 File node detected - getting all chunks from {target_chunk_id}")
 
-                if target_chunk_id not in retrieved_ids:
-                    # Not retrieved - add as first
-                    top_chunks = [target_chunk] + top_chunks[:19]
-                    logging.info(f"✅ Added clicked node as PRIMARY (not in retrieval)")
+                # Get all chunks from this file
+                file_chunks = [
+                    c for c in chunks_list
+                    if c.get('file_path') == target_chunk_id or
+                       c.get('chunk_id', '').startswith(target_chunk_id + '::')
+                ]
+
+                if file_chunks:
+                    # Prioritize: classes first, then functions, then methods
+                    def chunk_priority(chunk):
+                        type_priority = {
+                            'class_definition': 3,
+                            'function': 2,
+                            'method': 1
+                        }
+                        return type_priority.get(chunk.get('type'), 0)
+
+                    sorted_file_chunks = sorted(file_chunks, key=chunk_priority, reverse=True)
+
+                    # Take top 15 from file, add 5 from retrieval for related context
+                    top_chunks = sorted_file_chunks[:15] + top_chunks[:5]
+                    logging.info(f"✅ Added {len(sorted_file_chunks[:15])} chunks from {target_chunk_id} as PRIMARY")
                 else:
-                    # Already retrieved - move to first position
-                    top_chunks = [target_chunk] + [c for c in top_chunks if c['chunk_id'] != target_chunk_id][:19]
-                    logging.info(f"✅ Moved clicked node to PRIMARY position")
+                    logging.warning(f"⚠️ No chunks found for file: {target_chunk_id}")
+
             else:
-                logging.warning(f"⚠️ Could not find target chunk: {target_chunk_id}")
+                # Handle method/function/class nodes (original Option C logic)
+                target_chunk = None
+                for chunk in chunks_list:
+                    if chunk.get('chunk_id') == target_chunk_id:
+                        target_chunk = chunk
+                        break
+
+                if target_chunk:
+                    # Check if already in retrieved chunks
+                    retrieved_ids = [c['chunk_id'] for c in top_chunks]
+
+                    if target_chunk_id not in retrieved_ids:
+                        # Not retrieved - add as first
+                        top_chunks = [target_chunk] + top_chunks[:19]
+                        logging.info(f"✅ Added clicked node as PRIMARY (not in retrieval)")
+                    else:
+                        # Already retrieved - move to first position
+                        top_chunks = [target_chunk] + [c for c in top_chunks if c['chunk_id'] != target_chunk_id][:19]
+                        logging.info(f"✅ Moved clicked node to PRIMARY position")
+                else:
+                    logging.warning(f"⚠️ Could not find target chunk: {target_chunk_id}")
 
         logging.info(f"📊 SOTA retrieval returned {len(top_chunks)} chunks")
 
@@ -957,7 +989,7 @@ class ChatSession:
         logging.info(f"Assembled context: {assembled['chunks_included']} chunks, {assembled['total_tokens']} tokens")
 
         # Step 4: Build prompt for Claude
-        prompt = self._build_claude_prompt(query, context_text, assembled)
+        prompt = self._build_claude_prompt(query, context_text, assembled, node_context)
 
         # Step 5: Query Claude
         response_text = await self._query_claude(prompt)
@@ -1064,7 +1096,7 @@ Your answer:"""
         response = await self.conversation_chain.ainvoke({"input": input_text})
         return response['text']
 
-    def _build_claude_prompt(self, query: str, context_text: str, assembled: Dict) -> str:
+    def _build_claude_prompt(self, query: str, context_text: str, assembled: Dict, node_context: dict = None) -> str:
         """
         Build structured prompt for Claude
 
@@ -1096,7 +1128,25 @@ RELEVANT CODE CONTEXT:
                 prompt += f"{role}: {content}\n"
             prompt += "\n"
 
-        prompt += f"""USER QUESTION:
+        # Add node-focused instructions if this is a per-node query
+        if node_context and node_context.get('name'):
+            prompt += f"""IMPORTANT CONTEXT:
+The user clicked on {node_context['name']} ({node_context['type']}) and is asking specifically about this code.
+Focus your answer EXCLUSIVELY on {node_context['name']}. Other code in the context is for reference only.
+
+USER QUESTION:
+{query}
+
+INSTRUCTIONS:
+1. Answer specifically about {node_context['name']} - this is what the user clicked
+2. Reference the exact file and line numbers for {node_context['name']}
+3. Only mention other code if it directly relates to {node_context['name']}
+4. Be concise and focused on this specific code entity
+5. Use a confident, knowledgeable tone
+
+Your answer:"""
+        else:
+            prompt += f"""USER QUESTION:
 {query}
 
 INSTRUCTIONS:

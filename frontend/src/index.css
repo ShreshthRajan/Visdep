@@ -6,36 +6,36 @@
 @tailwind utilities;
 
 :root {
-  /* 2025 Modern Dark Theme - #424D57 Base */
+  /* Enterprise HUD Theme - Deep Black Base */
   /* Backgrounds */
-  --black: #424D57;
-  --near-black: #373F47;
-  --card-bg: #4A5662;
-  --elevated: #535F6B;
-  --input-bg: #3D4850;
-  --code-bg: #2F3840;
+  --black: #050505;
+  --near-black: #09090b;
+  --card-bg: #18181b;
+  --elevated: #27272a;
+  --input-bg: #18181b;
+  --code-bg: #0a0a0a;
 
-  /* Text - Light for dark backgrounds */
-  --text-primary: #E8EDF2;
-  --text-secondary: #B8C5D0;
-  --text-tertiary: #8A9AA8;
-  --text-code: #D4E0EC;
+  /* Text - High Contrast */
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-code: #e4e4e7;
 
-  /* Semantic Colors - Modern 2025 palette */
-  --accent: #84a07c;
-  --accent-alt: #6B8E7F;
-  --function: #5B9BD5;
-  --class: #9B7EDE;
-  --method: #8A7BC5;  /* Reduced vibrancy from #A855F7 */
-  --file: #6B7B8C;
-  --highlight: #E8A550;
-  --success: #6BBF8D;
-  --error: #D66B6B;
+  /* Semantic Colors - Electric Accents */
+  --accent: #3b82f6;
+  --accent-alt: #2563eb;
+  --function: #3b82f6;
+  --class: #8b5cf6;
+  --method: #a78bfa;
+  --file: #71717a;
+  --highlight: #fbbf24;
+  --success: #22c55e;
+  --error: #ef4444;
 
-  /* Borders */
-  --border-subtle: #4F5A65;
-  --border-default: #5A6570;
-  --border-strong: #6A7580;
+  /* Borders - Glass Effect */
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
 }
 
 html, body, #root, .graph-container {

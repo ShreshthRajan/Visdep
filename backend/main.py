@@ -465,6 +465,38 @@ async def query_jamba(request: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
+@app.get("/api/node_code/{chunk_id:path}")
+async def get_node_code(chunk_id: str):
+    """
+    Get code for a specific node/chunk
+    Returns the actual code content for display in Inspector
+    """
+    try:
+        global latest_repo_id
+        if not latest_repo_id:
+            raise HTTPException(status_code=400, detail="No repository loaded.")
+
+        chunks = retrieve_chunks(latest_repo_id)
+
+        # Try exact match first
+        chunk = next((c for c in chunks if c['chunk_id'] == chunk_id), None)
+
+        # If no exact match and it's a file/directory, get first chunk from that file
+        if not chunk:
+            file_chunks = [c for c in chunks if c.get('file_path') == chunk_id or c.get('chunk_id', '').startswith(chunk_id + '::')]
+            if file_chunks:
+                # Return first class or function from file
+                chunk = next((c for c in file_chunks if c.get('type') in ['class_definition', 'function']), file_chunks[0])
+
+        if chunk and chunk.get('code'):
+            return {"code": chunk['code']}  # Full code, no limit
+        else:
+            return {"code": None}
+
+    except Exception as e:
+        logging.error(f"Error fetching node code: {e}")
+        return {"code": None}
+
 @app.post("/api/explain_node")
 async def explain_node(request: dict):
     """
