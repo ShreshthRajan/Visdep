@@ -118,7 +118,28 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
             textAlign: 'center',
             letterSpacing: '0.02em'
           }}>
-            → Drop here to add <span style={{ color: '#ffffff', fontWeight: 600 }}>{draggedNode.label?.split('\n')[0]}</span> to context
+            → Drop here to add <span style={{ color: '#ffffff', fontWeight: 600 }}>{typeof draggedNode === 'object' ? draggedNode.label?.split('\n')[0] : draggedNode}</span> to context
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Select Hint */}
+      {selectedNodes.length === 0 && !draggedNode && chatHistory.length === 0 && (
+        <div
+          className="absolute top-4 left-4 right-4 px-3 py-2 rounded"
+          style={{
+            backgroundColor: 'rgba(24, 24, 27, 0.6)',
+            border: '1px solid rgba(63, 63, 70, 0.5)'
+          }}
+        >
+          <div style={{
+            fontSize: '10px',
+            color: '#52525b',
+            fontFamily: "'JetBrains Mono', monospace",
+            textAlign: 'center',
+            letterSpacing: '0.02em'
+          }}>
+            // Drag nodes here or Cmd+click for multi-node context
           </div>
         </div>
       )}

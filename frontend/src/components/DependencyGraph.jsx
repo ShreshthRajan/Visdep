@@ -8,7 +8,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
 
-const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart, onNodeDragEnd }) => {
+const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
@@ -342,31 +342,37 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     // REMOVED: Hover tooltips disabled - they show ugly HTML and aren't useful
     // Click interaction will open clean chat panel instead
 
-    // Drag-and-drop to chat for multi-node context using global mouseup
-    // Standard canvas drag pattern: dragStart on canvas, mouseup on window
+    // Drag-and-drop to chat using ghost element (bypasses canvas constraints)
     newNetwork.on('dragStart', (params) => {
       if (params.nodes.length > 0 && onNodeDragStart) {
         const draggedNodeId = params.nodes[0];
         const draggedNode = nodes.get(draggedNodeId);
-        onNodeDragStart(draggedNode);
-        console.log('🎯 Drag started:', draggedNode.label);
 
-        // Add GLOBAL mouseup listener (fires even outside canvas)
-        const handleGlobalMouseUp = (e) => {
-          if (onNodeDragEnd) {
-            const mousePos = {
-              x: e.clientX,
-              y: e.clientY
-            };
-            onNodeDragEnd(mousePos);
-            console.log('🎯 Global mouseup at:', mousePos);
-          }
+        // Create ghost DOM element (follows cursor, can leave canvas)
+        const ghost = document.createElement('div');
+        const nodeName = draggedNode.label?.split('\n')[0] || draggedNode.id;
+        ghost.textContent = nodeName;
 
-          // Cleanup: Remove global listener after single use
-          window.removeEventListener('mouseup', handleGlobalMouseUp);
-        };
+        // Style ghost to match neural blue theme
+        ghost.style.position = 'fixed';
+        ghost.style.pointerEvents = 'none';  // Don't block mouse
+        ghost.style.zIndex = '10000';
+        ghost.style.padding = '6px 12px';
+        ghost.style.backgroundColor = '#22d3ee';
+        ghost.style.color = '#050505';
+        ghost.style.borderRadius = '4px';
+        ghost.style.fontSize = '11px';
+        ghost.style.fontFamily = 'JetBrains Mono, monospace';
+        ghost.style.fontWeight = '600';
+        ghost.style.boxShadow = '0 4px 16px rgba(34, 211, 238, 0.4)';
+        ghost.style.opacity = '0.95';
+        ghost.style.letterSpacing = '-0.01em';
 
-        window.addEventListener('mouseup', handleGlobalMouseUp);
+        document.body.appendChild(ghost);
+
+        // Pass node + ghost to parent
+        onNodeDragStart({ node: draggedNode, ghostElement: ghost });
+        console.log('🎯 Drag started:', nodeName);
       }
     });
 

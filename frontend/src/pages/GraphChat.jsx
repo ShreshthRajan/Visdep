@@ -45,7 +45,12 @@ const GraphChat = () => {
     } else {
       // Single select (replace)
       setSelectedNodes([node]);
-      setActiveTab('inspector');
+
+      // Only open inspector if this is the FIRST node (no context yet)
+      // If context already exists, stay in current tab (user is building multi-node)
+      if (selectedNodes.length === 0) {
+        setActiveTab('inspector');
+      }
     }
   }, []);
 
@@ -156,31 +161,56 @@ const GraphChat = () => {
     setActiveTab('chat');  // Switch to chat tab
   }, []);
 
-  const handleNodeDragStart = useCallback((node) => {
-    setDraggedNode(node);
-  }, []);
+  const handleNodeDragStart = useCallback(({ node, ghostElement }) => {
+    let rafId = null;
 
-  const handleNodeDragEnd = useCallback((mousePos) => {
-    if (!draggedNode) {
+    // Track mouse movement with RAF throttle (60fps smooth)
+    const handleMouseMove = (e) => {
+      if (rafId) return;  // Skip if RAF already scheduled
+
+      rafId = requestAnimationFrame(() => {
+        if (ghostElement) {
+          ghostElement.style.left = (e.clientX + 10) + 'px';
+          ghostElement.style.top = (e.clientY + 10) + 'px';
+        }
+        rafId = null;
+      });
+    };
+
+    // Detect mouse release anywhere (even outside canvas)
+    const handleMouseUp = (e) => {
+      // Check if dropped over chat area (right 384px)
+      const windowWidth = window.innerWidth;
+      const chatAreaLeft = windowWidth - 384;
+      const isOverChat = e.clientX >= chatAreaLeft;
+
+      if (isOverChat) {
+        console.log('✅ Dropped on chat area, adding to context');
+        handleAddNodeToContext(node);
+      } else {
+        console.log('❌ Dropped outside chat area');
+      }
+
+      // Cleanup: Remove ghost and listeners
+      if (ghostElement && ghostElement.parentNode) {
+        ghostElement.remove();
+      }
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+
       setDraggedNode(null);
-      return;
-    }
+    };
 
-    // Check if dropped over chat area (right 384px of screen)
-    const windowWidth = window.innerWidth;
-    const chatAreaLeft = windowWidth - 384;  // w-96 = 384px
+    // Attach global listeners
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
 
-    const isOverChat = mousePos.x >= chatAreaLeft;
-
-    if (isOverChat) {
-      console.log('✅ Dropped on chat area, adding to context');
-      handleAddNodeToContext(draggedNode);
-    } else {
-      console.log('❌ Dropped outside chat area');
-    }
-
-    setDraggedNode(null);
-  }, [draggedNode, handleAddNodeToContext]);
+    // Store node for indicator
+    setDraggedNode(node);
+  }, [handleAddNodeToContext]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden" style={{ backgroundColor: '#050505' }}>
@@ -190,7 +220,6 @@ const GraphChat = () => {
           highlightedNodes={highlightedNodes}
           onNodeSelect={handleNodeSelect}
           onNodeDragStart={handleNodeDragStart}
-          onNodeDragEnd={handleNodeDragEnd}
         />
       </div>
 
