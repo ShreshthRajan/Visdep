@@ -9,7 +9,8 @@ import API from '../api';
 
 const GraphChat = () => {
   const [highlightedNodes, setHighlightedNodes] = useState([]);
-  const [selectedNodes, setSelectedNodes] = useState([]);  // Multi-node selection
+  const [inspectedNode, setInspectedNode] = useState(null);  // Currently previewing in inspector
+  const [selectedNodes, setSelectedNodes] = useState([]);  // Context for queries
   const [activeTab, setActiveTab] = useState('chat');
   const [draggedNode, setDraggedNode] = useState(null);  // Currently dragging node
 
@@ -26,12 +27,11 @@ const GraphChat = () => {
 
   const handleNodeSelect = useCallback((node, event) => {
     if (!node) {
-      // Clear selection
-      setSelectedNodes([]);
+      // Clicking empty space - preserve context, just deselect visually
       return;
     }
 
-    // Multi-select with Cmd/Ctrl+click
+    // Multi-select with Cmd/Ctrl+click - adds directly to context
     if (event && (event.metaKey || event.ctrlKey)) {
       setSelectedNodes(prev => {
         // Toggle: remove if already selected, add if not
@@ -42,15 +42,12 @@ const GraphChat = () => {
           return [...prev, node];
         }
       });
+      // Clear inspector preview when using multi-select
+      setInspectedNode(null);
     } else {
-      // Single select (replace)
-      setSelectedNodes([node]);
-
-      // Only open inspector if this is the FIRST node (no context yet)
-      // If context already exists, stay in current tab (user is building multi-node)
-      if (selectedNodes.length === 0) {
-        setActiveTab('inspector');
-      }
+      // Regular click - just preview in inspector (don't add to context yet)
+      setInspectedNode(node);
+      setActiveTab('inspector');
     }
   }, []);
 
@@ -136,9 +133,17 @@ const GraphChat = () => {
   }, [handleSubmitQuery]);
 
   const handleAskQuestion = useCallback((node) => {
+    // Move inspected node to context
+    setSelectedNodes(prev => {
+      // If node already in context, don't duplicate
+      const isAlreadySelected = prev.some(n => n.id === node.id);
+      if (isAlreadySelected) {
+        return prev;
+      }
+      return [...prev, node];
+    });
+    setInspectedNode(null);  // Clear inspector preview
     setActiveTab('chat');
-    // Set the node as selected so future queries use it as context
-    setSelectedNodes([node]);
   }, []);
 
   const handleClearContext = useCallback(() => {
@@ -309,8 +314,8 @@ const GraphChat = () => {
             />
           ) : (
             <NodeInspector
-              key={selectedNodes[0]?.id || 'inspector-tab'}
-              selectedNode={selectedNodes[0] || null}
+              key={inspectedNode?.id || 'inspector-tab'}
+              selectedNode={inspectedNode}
               onExplain={handleExplain}
               onAskQuestion={handleAskQuestion}
             />
