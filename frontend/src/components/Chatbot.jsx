@@ -101,48 +101,6 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
 
   return (
     <div className="flex flex-col h-full animate-slide-in relative" style={{ backgroundColor: '#050505' }}>
-      {/* Drag Indicator - Shows when dragging node */}
-      {draggedNode && (
-        <div
-          className="absolute top-4 left-4 right-4 z-50 px-4 py-3 rounded-lg animate-pulse"
-          style={{
-            backgroundColor: 'rgba(34, 211, 238, 0.1)',
-            border: '1px dashed rgba(34, 211, 238, 0.6)',
-            backdropFilter: 'blur(16px)'
-          }}
-        >
-          <div style={{
-            fontSize: '11px',
-            color: '#22d3ee',
-            fontFamily: "'JetBrains Mono', monospace",
-            textAlign: 'center',
-            letterSpacing: '0.02em'
-          }}>
-            → Drop here to add <span style={{ color: '#ffffff', fontWeight: 600 }}>{typeof draggedNode === 'object' ? draggedNode.label?.split('\n')[0] : draggedNode}</span> to context
-          </div>
-        </div>
-      )}
-
-      {/* Multi-Select Hint */}
-      {selectedNodes.length === 0 && !draggedNode && chatHistory.length === 0 && (
-        <div
-          className="absolute top-4 left-4 right-4 px-3 py-2 rounded"
-          style={{
-            backgroundColor: 'rgba(24, 24, 27, 0.6)',
-            border: '1px solid rgba(63, 63, 70, 0.5)'
-          }}
-        >
-          <div style={{
-            fontSize: '10px',
-            color: '#52525b',
-            fontFamily: "'JetBrains Mono', monospace",
-            textAlign: 'center',
-            letterSpacing: '0.02em'
-          }}>
-            // Drag nodes here or Cmd+click for multi-node context
-          </div>
-        </div>
-      )}
 
       {/* Intelligence Stream - Terminal Layout */}
       <div
@@ -233,9 +191,16 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
           backgroundColor: '#050505'
         }}
       >
-        {/* Context Badges - Multi-Node Support */}
-        {selectedNodes.length > 0 && onClearContext && (
-          <div className="mb-2">
+        {/* Context Badges - Multi-Node Support with Drop Zone */}
+        {selectedNodes.length > 0 && onClearContext ? (
+          <div
+            className="mb-2 transition-all"
+            style={{
+              border: draggedNode ? '1px dashed rgba(34, 211, 238, 0.6)' : 'none',
+              borderRadius: '4px',
+              padding: draggedNode ? '6px' : '0'
+            }}
+          >
             {selectedNodes.length === 1 ? (
               // Single node - compact badge
               <div
@@ -342,7 +307,26 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
               </div>
             )}
           </div>
-        )}
+        ) : draggedNode ? (
+          // Empty state - show drop target when dragging
+          <div
+            className="mb-2 px-3 py-2 rounded transition-all"
+            style={{
+              border: '1px dashed rgba(34, 211, 238, 0.6)',
+              backgroundColor: 'rgba(34, 211, 238, 0.05)'
+            }}
+          >
+            <div style={{
+              fontSize: '10px',
+              color: '#52525b',
+              fontFamily: "'JetBrains Mono', monospace",
+              textAlign: 'center',
+              letterSpacing: '0.02em'
+            }}>
+              // drop here to add to context
+            </div>
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-2">
           <span style={{

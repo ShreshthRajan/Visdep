@@ -1,5 +1,5 @@
 // frontend/src/pages/graphchat.jsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
@@ -14,12 +14,20 @@ const GraphChat = () => {
   const [activeTab, setActiveTab] = useState('chat');
   const [draggedNode, setDraggedNode] = useState(null);  // Currently dragging node
 
+  // Ref to track selectedNodes without causing re-renders
+  const selectedNodesRef = useRef([]);
+
   // Shared chat state
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressSteps, setProgressSteps] = useState([]);
 
   const navigate = useNavigate();
+
+  // Sync ref with state (no re-render, just tracking)
+  useEffect(() => {
+    selectedNodesRef.current = selectedNodes;
+  }, [selectedNodes]);
 
   const handleHighlightNodes = useCallback((nodeIds) => {
     setHighlightedNodes(nodeIds || []);
@@ -45,9 +53,14 @@ const GraphChat = () => {
       // Clear inspector preview when using multi-select
       setInspectedNode(null);
     } else {
-      // Regular click - just preview in inspector (don't add to context yet)
+      // Regular click - preview in inspector (don't add to context yet)
       setInspectedNode(node);
-      setActiveTab('inspector');
+
+      // Only open inspector if no context exists (using ref to avoid re-render)
+      if (selectedNodesRef.current.length === 0) {
+        setActiveTab('inspector');
+      }
+      // Otherwise stay in current tab (user is building multi-node context)
     }
   }, []);
 
