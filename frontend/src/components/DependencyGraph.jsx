@@ -8,7 +8,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
 
-const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
+const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart, onNodeDragEnd }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
@@ -129,9 +129,9 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
       const isFaded = nodeFading[node.type] && !isHighlighted;
       const opacity = isFaded ? 0.35 : 1.0;  // 35% opacity for faded, full for others
 
-      // Get base color
+      // Neural Blue Theme: Cyan for highlighted citations
       const baseColor = isHighlighted
-        ? { background: '#FFD700', border: '#FFA500' }  // Gold for highlighted (always full opacity)
+        ? { background: '#22d3ee', border: '#ffffff' }  // Electric cyan with white border
         : getNodeColor(node.type);
 
       // Apply opacity to color + selection styling
@@ -139,12 +139,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
         background: baseColor.background,
         border: baseColor.border,
         highlight: {
-          background: '#84a07c',  // Sage green when selected (matches button color)
-          border: '#5a7054',  // Darker sage border
+          background: '#22d3ee',  // Electric cyan when clicked
+          border: '#ffffff',  // White border for sharp contrast
         },
         hover: {
           background: baseColor.background,
-          border: '#000000',  // Black border on hover for clarity
+          border: '#22d3ee',  // Cyan border on hover
         },
       };
 
@@ -161,15 +161,17 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
         font: {
           size: isFaded ? 10 : 11,  // Dense
           face: 'JetBrains Mono',
-          color: isFaded ? '#71717a' : '#f4f4f5',
+          color: isHighlighted ? '#ffffff' : (isFaded ? '#71717a' : '#f4f4f5'),  // Pure white for highlighted
           multi: true,
           align: (node.type === 'package' || node.type === 'import') ? 'center' : undefined,
           valign: (node.type === 'package' || node.type === 'import') ? 'middle' : undefined,
+          strokeWidth: isHighlighted ? 3 : 0,  // Dark halo for readability
+          strokeColor: isHighlighted ? '#000000' : undefined,
         },
         shadow: isHighlighted ? {
           enabled: true,
-          color: 'rgba(59, 130, 246, 0.6)',
-          size: 25,
+          color: 'rgba(34, 211, 238, 0.6)',  // Electric cyan glow
+          size: 30,  // Larger bloom for "Sun" effect
           x: 0,
           y: 0
         } : undefined,
@@ -197,12 +199,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
         arrows: edge.relation === 'imports' ? { to: { enabled: true, scaleFactor: 0.8 } } : '',
         color: {
           color: baseColor,
-          highlight: '#84a07c',  // Sage green when edge is highlighted (matches brand)
-          hover: '#000000',  // Black on hover for visibility
+          highlight: '#22d3ee',  // Electric cyan when edge is selected (trace flow)
+          hover: '#22d3ee',  // Cyan on hover
           opacity: 0.7,  // Slightly transparent by default
         },
         width: edge.relation === 'multiple' ? Math.log(edge.count) + 1 : 1.5,
-        selectionWidth: 3,  // Thicker when selected (enterprise-grade feedback)
+        selectionWidth: 4,  // Thicker when selected - show AST flow
         smooth: {
           type: 'continuous',
           roundness: 0.2,
@@ -340,6 +342,34 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
     // REMOVED: Hover tooltips disabled - they show ugly HTML and aren't useful
     // Click interaction will open clean chat panel instead
 
+    // Drag-and-drop to chat for multi-node context using global mouseup
+    // Standard canvas drag pattern: dragStart on canvas, mouseup on window
+    newNetwork.on('dragStart', (params) => {
+      if (params.nodes.length > 0 && onNodeDragStart) {
+        const draggedNodeId = params.nodes[0];
+        const draggedNode = nodes.get(draggedNodeId);
+        onNodeDragStart(draggedNode);
+        console.log('🎯 Drag started:', draggedNode.label);
+
+        // Add GLOBAL mouseup listener (fires even outside canvas)
+        const handleGlobalMouseUp = (e) => {
+          if (onNodeDragEnd) {
+            const mousePos = {
+              x: e.clientX,
+              y: e.clientY
+            };
+            onNodeDragEnd(mousePos);
+            console.log('🎯 Global mouseup at:', mousePos);
+          }
+
+          // Cleanup: Remove global listener after single use
+          window.removeEventListener('mouseup', handleGlobalMouseUp);
+        };
+
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+      }
+    });
+
     // Enterprise-grade click handler with connected highlighting
     newNetwork.on('click', (params) => {
       if (params.nodes.length > 0) {
@@ -361,7 +391,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
 
         const nodesToUpdate = allNodeIds.map(nodeId => ({
           id: nodeId,
-          opacity: highlightedNodeIds.has(nodeId) ? 1.0 : 0.1,  // Searchlight effect
+          opacity: highlightedNodeIds.has(nodeId) ? 1.0 : 0.1,  // 90% dimming - spatial focus
         }));
 
         nodes.update(nodesToUpdate);  // Batch update for performance
@@ -935,8 +965,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
       </div>
 
       <div className="flex-1 relative">
-        {/* Loading Overlay */}
-        {loadingState.isLoading && (
+        {/* Loading Overlay - Hidden (we use Loading.jsx page instead) */}
+        {false && loadingState.isLoading && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{ backgroundColor: 'rgba(5, 5, 5, 0.95)', backdropFilter: 'blur(4px)' }}>
             <div className="p-6 rounded-lg shadow-lg max-w-md w-full" style={{ backgroundColor: '#18181b', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
               <div className="flex items-center justify-center mb-4">
@@ -961,15 +991,15 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect }) => {
 }
 
 const nodeTypes = {
-  directory: { border: '#71717a', background: '#18181b' },
-  file: { border: '#3b82f6', background: '#18181b' },
-  import: { border: '#22c55e', background: '#18181b' },
-  package: { border: '#fbbf24', background: '#18181b' },
-  class_definition: { border: '#8b5cf6', background: '#18181b' },
-  function: { border: '#3b82f6', background: '#18181b' },
-  method: { border: '#a78bfa', background: '#18181b' },
-  module_variable: { border: '#22c55e', background: '#18181b' },
-  default: { border: '#71717a', background: '#18181b' },
+  directory: { border: '#52525b', background: '#18181b' },  // Muted zinc gray
+  file: { border: '#3b82f6', background: '#18181b' },  // Blue for files
+  import: { border: '#52525b', background: '#18181b' },  // Muted
+  package: { border: '#52525b', background: '#18181b' },  // Muted
+  class_definition: { border: '#7c3aed', background: '#18181b' },  // Darker purple for classes
+  function: { border: '#3b82f6', background: '#18181b' },  // Blue for functions
+  method: { border: '#8b5cf6', background: '#18181b' },  // Muted purple for methods (was too bright)
+  module_variable: { border: '#52525b', background: '#18181b' },  // Muted
+  default: { border: '#52525b', background: '#18181b' },  // Muted zinc gray
 };
 
 export default DependencyGraph;

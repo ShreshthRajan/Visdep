@@ -675,7 +675,7 @@ class ChatSession:
                     summary += f"  Content Preview: {file_info['content'][:100]}...\n"
         return summary
 
-    async def chat(self, query: str, node_context: dict = None) -> str:
+    async def chat(self, query: str, node_contexts: List[dict] = None) -> str:
         """
         Chat with LLM using retrieved context (batch mode)
 
@@ -684,14 +684,14 @@ class ChatSession:
 
         Args:
             query: User question
-            node_context: Optional node context for per-node queries (OPTION C)
+            node_contexts: Optional list of node contexts for multi-node queries (OPTION C extended)
         """
         try:
             # NEW: Use Claude if available (even without hybrid retriever)
             if self.claude_client:
                 # If hybrid retriever available, use full pipeline
                 if self.hybrid_retriever and self.reranker:
-                    return await self._chat_with_claude(query, node_context=node_context)
+                    return await self._chat_with_claude(query, node_contexts=node_contexts)
                 else:
                     # Claude available but hybrid not (old context format)
                     # Use Claude with legacy retrieval
@@ -814,7 +814,7 @@ class ChatSession:
         async for token in self._query_claude_stream(prompt):
             yield token
 
-    async def _chat_with_claude(self, query: str, node_context: dict = None) -> str:
+    async def _chat_with_claude(self, query: str, node_contexts: List[dict] = None) -> str:
         """
         NEW: Chat using Claude with full Step 1-3 pipeline
 
@@ -825,10 +825,11 @@ class ChatSession:
         4. Claude LLM (Step 3)
         5. Citation extraction (Step 3)
 
-        OPTION C: If node_context provided, force that chunk into results
+        OPTION C: If node_contexts provided, force those chunks into results
         """
-        if node_context:
-            logging.info(f"Using Claude with NODE-FOCUSED retrieval for: {node_context.get('name')}")
+        if node_contexts and len(node_contexts) > 0:
+            node_names = [nc.get('name') for nc in node_contexts]
+            logging.info(f"Using Claude with MULTI-NODE retrieval for: {', '.join(node_names)}")
         else:
             logging.info("Using Claude with full retrieval pipeline (Steps 1-3)")
 
@@ -900,65 +901,59 @@ class ChatSession:
         if not top_chunks:
             return "I couldn't find relevant information in the codebase to answer your question."
 
-        # OPTION C: Force clicked node into context if provided
-        if node_context and node_context.get('chunk_id'):
-            target_chunk_id = node_context['chunk_id']
-            node_type = node_context.get('type', 'unknown')
-            logging.info(f"🎯 OPTION C: Forcing node into context: {target_chunk_id} (type: {node_type})")
+        # OPTION C EXTENDED: Force selected nodes into context if provided
+        if node_contexts and len(node_contexts) > 0:
+            logging.info(f"🎯 MULTI-NODE CONTEXT: Forcing {len(node_contexts)} nodes into context")
 
             chunks_list = list(self.full_context.values()) if isinstance(self.full_context, dict) else []
+            forced_chunks = []
 
-            # Handle file/directory nodes differently (get ALL chunks from file)
-            if node_type in ['file', 'directory']:
-                logging.info(f"📁 File node detected - getting all chunks from {target_chunk_id}")
+            for i, node_ctx in enumerate(node_contexts, 1):
+                target_chunk_id = node_ctx.get('chunk_id')
+                node_type = node_ctx.get('type', 'unknown')
+                node_name = node_ctx.get('name', target_chunk_id)
 
-                # Get all chunks from this file
-                file_chunks = [
-                    c for c in chunks_list
-                    if c.get('file_path') == target_chunk_id or
-                       c.get('chunk_id', '').startswith(target_chunk_id + '::')
-                ]
+                logging.info(f"   Node {i}: {node_name} (type: {node_type})")
 
-                if file_chunks:
-                    # Prioritize: classes first, then functions, then methods
-                    def chunk_priority(chunk):
-                        type_priority = {
-                            'class_definition': 3,
-                            'function': 2,
-                            'method': 1
-                        }
-                        return type_priority.get(chunk.get('type'), 0)
+                # Handle file/directory nodes (get ALL chunks from file)
+                if node_type in ['file', 'directory']:
+                    file_chunks = [
+                        c for c in chunks_list
+                        if c.get('file_path') == target_chunk_id or
+                           c.get('chunk_id', '').startswith(target_chunk_id + '::')
+                    ]
 
-                    sorted_file_chunks = sorted(file_chunks, key=chunk_priority, reverse=True)
+                    if file_chunks:
+                        # Prioritize by type
+                        def chunk_priority(chunk):
+                            type_priority = {'class_definition': 3, 'function': 2, 'method': 1}
+                            return type_priority.get(chunk.get('type'), 0)
 
-                    # Take top 15 from file, add 5 from retrieval for related context
-                    top_chunks = sorted_file_chunks[:15] + top_chunks[:5]
-                    logging.info(f"✅ Added {len(sorted_file_chunks[:15])} chunks from {target_chunk_id} as PRIMARY")
-                else:
-                    logging.warning(f"⚠️ No chunks found for file: {target_chunk_id}")
+                        sorted_file_chunks = sorted(file_chunks, key=chunk_priority, reverse=True)
 
-            else:
-                # Handle method/function/class nodes (original Option C logic)
-                target_chunk = None
-                for chunk in chunks_list:
-                    if chunk.get('chunk_id') == target_chunk_id:
-                        target_chunk = chunk
-                        break
-
-                if target_chunk:
-                    # Check if already in retrieved chunks
-                    retrieved_ids = [c['chunk_id'] for c in top_chunks]
-
-                    if target_chunk_id not in retrieved_ids:
-                        # Not retrieved - add as first
-                        top_chunks = [target_chunk] + top_chunks[:19]
-                        logging.info(f"✅ Added clicked node as PRIMARY (not in retrieval)")
+                        # Take top 10 per file (balanced for multi-file)
+                        forced_chunks.extend(sorted_file_chunks[:10])
+                        logging.info(f"      ✅ Added {len(sorted_file_chunks[:10])} chunks from {node_name}")
                     else:
-                        # Already retrieved - move to first position
-                        top_chunks = [target_chunk] + [c for c in top_chunks if c['chunk_id'] != target_chunk_id][:19]
-                        logging.info(f"✅ Moved clicked node to PRIMARY position")
+                        logging.warning(f"      ⚠️ No chunks found for file: {target_chunk_id}")
+
                 else:
-                    logging.warning(f"⚠️ Could not find target chunk: {target_chunk_id}")
+                    # Handle method/function/class nodes (single chunk)
+                    target_chunk = next((c for c in chunks_list if c.get('chunk_id') == target_chunk_id), None)
+
+                    if target_chunk:
+                        forced_chunks.append(target_chunk)
+                        logging.info(f"      ✅ Added {node_name} chunk")
+                    else:
+                        logging.warning(f"      ⚠️ Could not find chunk: {target_chunk_id}")
+
+            # Combine forced chunks + retrieval
+            # Remove duplicates, keep forced chunks first
+            forced_ids = {c['chunk_id'] for c in forced_chunks}
+            retrieval_filtered = [c for c in top_chunks if c['chunk_id'] not in forced_ids]
+
+            top_chunks = forced_chunks + retrieval_filtered[:5]
+            logging.info(f"✅ Multi-node context: {len(forced_chunks)} forced + {len(retrieval_filtered[:5])} retrieved = {len(top_chunks)} total")
 
         logging.info(f"📊 SOTA retrieval returned {len(top_chunks)} chunks")
 
@@ -989,13 +984,15 @@ class ChatSession:
         logging.info(f"Assembled context: {assembled['chunks_included']} chunks, {assembled['total_tokens']} tokens")
 
         # Step 4: Build prompt for Claude
-        prompt = self._build_claude_prompt(query, context_text, assembled, node_context)
+        prompt = self._build_claude_prompt(query, context_text, assembled, node_contexts)
 
         # Step 5: Query Claude
         response_text = await self._query_claude(prompt)
 
         # Step 6: Extract citations from response
-        citations = extract_citations_from_response(response_text)
+        # For multi-node, pass first node for relative citation extraction (fallback)
+        first_node_context = node_contexts[0] if node_contexts and len(node_contexts) > 0 else None
+        citations = extract_citations_from_response(response_text, first_node_context)
 
         # Step 7: Map citations to chunk IDs for graph highlighting
         highlighted_nodes = []
@@ -1096,57 +1093,85 @@ Your answer:"""
         response = await self.conversation_chain.ainvoke({"input": input_text})
         return response['text']
 
-    def _build_claude_prompt(self, query: str, context_text: str, assembled: Dict, node_context: dict = None) -> str:
+    def _build_claude_prompt(self, query: str, context_text: str, assembled: Dict, node_contexts: List[dict] = None) -> Dict[str, str]:
         """
-        Build structured prompt for Claude
+        Build structured prompt for Claude with caching support
 
         Args:
             query: User query
             context_text: Assembled context
             assembled: Assembly metadata
+            node_contexts: Optional node contexts for focused queries
 
         Returns:
-            Formatted prompt string
+            Dict with 'system_and_context' (cacheable) and 'query_part' (not cacheable)
         """
         # Get conversation history
         history_messages = self.memory.load_memory_variables({})
         history = history_messages.get('history', [])
 
-        prompt = f"""You are an expert software engineer analyzing a codebase. Your role is to help developers understand the code by providing clear, accurate, and insightful explanations.
+        # Part 1: System instructions + Code context (CACHEABLE - rarely changes per repo)
+        system_and_context = f"""You are an expert software engineer analyzing a codebase. Your role is to help developers understand the code by providing clear, accurate, and insightful explanations.
 
 RELEVANT CODE CONTEXT:
 {context_text}
-
 """
+
+        # Part 2: Conversation history + Query + Instructions (NOT CACHEABLE - changes every query)
+        query_part = ""
 
         # Add conversation history if exists
         if history:
-            prompt += "CONVERSATION HISTORY:\n"
+            query_part += "CONVERSATION HISTORY:\n"
             for msg in history[-4:]:  # Last 4 messages
                 role = "User" if hasattr(msg, 'type') and msg.type == "human" else "Assistant"
                 content = msg.content if hasattr(msg, 'content') else str(msg)
-                prompt += f"{role}: {content}\n"
-            prompt += "\n"
+                query_part += f"{role}: {content}\n"
+            query_part += "\n"
 
-        # Add node-focused instructions if this is a per-node query
-        if node_context and node_context.get('name'):
-            prompt += f"""IMPORTANT CONTEXT:
-The user clicked on {node_context['name']} ({node_context['type']}) and is asking specifically about this code.
-Focus your answer EXCLUSIVELY on {node_context['name']}. Other code in the context is for reference only.
+        # Add node-focused instructions if this is a per-node/multi-node query
+        if node_contexts and len(node_contexts) > 0:
+            if len(node_contexts) == 1:
+                # Single node - focused query
+                node_ctx = node_contexts[0]
+                query_part += f"""IMPORTANT CONTEXT:
+The user clicked on {node_ctx['name']} ({node_ctx['type']}) and is asking specifically about this code.
+Focus your answer EXCLUSIVELY on {node_ctx['name']}. Other code in the context is for reference only.
 
 USER QUESTION:
 {query}
 
 INSTRUCTIONS:
-1. Answer specifically about {node_context['name']} - this is what the user clicked
-2. Reference the exact file and line numbers for {node_context['name']}
-3. Only mention other code if it directly relates to {node_context['name']}
+1. Answer specifically about {node_ctx['name']} - this is what the user clicked
+2. Always cite code using this exact format: {node_ctx['name']}:25-35 (include the filename in every citation, even though focusing on one file)
+3. Only mention other code if it directly relates to {node_ctx['name']}
 4. Be concise and focused on this specific code entity
 5. Use a confident, knowledgeable tone
 
 Your answer:"""
+            else:
+                # Multi-node - relationship query
+                node_names = [nc['name'] for nc in node_contexts]
+                node_list = ', '.join(node_names)
+
+                query_part += f"""IMPORTANT CONTEXT:
+The user selected {len(node_contexts)} files/nodes: {node_list}
+They want to understand how these specific code entities relate to each other.
+Focus your answer EXCLUSIVELY on these {len(node_contexts)} selected items and their interactions.
+
+USER QUESTION:
+{query}
+
+INSTRUCTIONS:
+1. Explain the relationships and interactions between: {node_list}
+2. Cite code using format: filename:25-35 for each reference
+3. Focus on data flow, function calls, and dependencies between these specific files
+4. Ignore code outside these {len(node_contexts)} selected items unless directly relevant
+5. Be concise and show how these pieces connect
+
+Your answer:"""
         else:
-            prompt += f"""USER QUESTION:
+            query_part += f"""USER QUESTION:
 {query}
 
 INSTRUCTIONS:
@@ -1158,37 +1183,64 @@ INSTRUCTIONS:
 
 Your answer:"""
 
-        return prompt
+        return {
+            'system_and_context': system_and_context,
+            'query_part': query_part
+        }
 
-    async def _query_claude(self, prompt: str) -> str:
+    async def _query_claude(self, prompt_parts: Dict[str, str]) -> str:
         """
-        Query Claude 4.0 Sonnet (batch mode)
+        Query Claude 4.0 Sonnet (batch mode) with prompt caching
 
         Args:
-            prompt: Formatted prompt
+            prompt_parts: Dict with 'system_and_context' (cacheable) and 'query_part' (not cacheable)
 
         Returns:
             Claude's response
         """
         try:
-            # Use Claude 4.0 Sonnet (batch mode)
+            # Use Claude 4.0 Sonnet with prompt caching
+            # Cache system + context (1,129-6,642 tokens) for 90% cost savings
             response = self.claude_client.messages.create(
-                model="claude-sonnet-4-20250514",  # Claude 4.0 Sonnet (latest)
+                model="claude-sonnet-4-20250514",
                 max_tokens=2000,
-                temperature=0.3,  # Lower temp for more factual responses
+                temperature=0.3,
                 messages=[
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt_parts['system_and_context'],
+                                "cache_control": {"type": "ephemeral"}  # Cache for 5 min (default)
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt_parts['query_part']
+                            }
+                        ]
+                    }
                 ]
             )
 
             # Extract text from response
             response_text = response.content[0].text
 
+            # Reconstruct full prompt for memory (backwards compat)
+            full_prompt = prompt_parts['system_and_context'] + "\n" + prompt_parts['query_part']
+
             # Save to conversation memory
             self.memory.save_context(
-                {"input": prompt},
+                {"input": full_prompt},
                 {"output": response_text}
             )
+
+            # Log cache usage for monitoring
+            usage = response.usage
+            if hasattr(usage, 'cache_read_input_tokens') and usage.cache_read_input_tokens > 0:
+                logging.info(f"💰 CACHE HIT: {usage.cache_read_input_tokens} tokens read from cache (90% savings)")
+            elif hasattr(usage, 'cache_creation_input_tokens') and usage.cache_creation_input_tokens > 0:
+                logging.info(f"📝 CACHE WRITE: {usage.cache_creation_input_tokens} tokens cached for future queries")
 
             return response_text
 
@@ -1196,36 +1248,54 @@ Your answer:"""
             logging.error(f"Error querying Claude: {e}")
             raise
 
-    async def _query_claude_stream(self, prompt: str):
+    async def _query_claude_stream(self, prompt_parts: Dict[str, str]):
         """
-        Query Claude 4.0 Sonnet (streaming mode) - Task 2.3
+        Query Claude 4.0 Sonnet (streaming mode) with prompt caching
 
         Streams tokens as they're generated for better perceived latency.
-        Actual latency same as batch, but user sees first token in ~1s.
+        Uses same caching strategy as batch mode.
 
         Args:
-            prompt: Formatted prompt
+            prompt_parts: Dict with 'system_and_context' (cacheable) and 'query_part' (not cacheable)
 
         Yields:
             Token chunks from Claude
         """
         try:
-            # Use Claude 4.0 Sonnet with streaming
+            # Use Claude 4.0 Sonnet with streaming + caching
             full_response = ""
 
             with self.claude_client.messages.stream(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
                 temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt_parts['system_and_context'],
+                                "cache_control": {"type": "ephemeral"}
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt_parts['query_part']
+                            }
+                        ]
+                    }
+                ]
             ) as stream:
                 for text in stream.text_stream:
                     full_response += text
                     yield text
 
+            # Reconstruct full prompt for memory
+            full_prompt = prompt_parts['system_and_context'] + "\n" + prompt_parts['query_part']
+
             # Save complete response to conversation memory
             self.memory.save_context(
-                {"input": prompt},
+                {"input": full_prompt},
                 {"output": full_response}
             )
 
@@ -1274,7 +1344,7 @@ async def get_jamba_response_stream(query: str, context: Dict[str, Any], repo_id
         yield f"Error: {str(e)}"
 
 
-async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None, node_context: dict = None) -> str:
+async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None, node_contexts: List[dict] = None) -> str:
     try:
         logging.debug(f"Entering get_jamba_response with query: {query}")
         logging.debug(f"API Key: {os.getenv('AI21_API_KEY')[:5] if os.getenv('AI21_API_KEY') else 'Not set'}...")
@@ -1309,8 +1379,8 @@ async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int =
             logging.debug(f"Updating cached session repo_id: {chat_session.repo_id} → {repo_id}")
             chat_session.repo_id = repo_id
 
-        # OPTION C: Pass node_context through to chat
-        response = await chat_session.chat(query, node_context=node_context)
+        # OPTION C: Pass node_contexts through to chat
+        response = await chat_session.chat(query, node_contexts=node_contexts)
         logging.debug(f"Final response: {response}")
 
         # Task 2.1: Store in cache after generating (if repo_id available)

@@ -4,16 +4,30 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps = [], contextNode = null }) => {
+const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps = [], selectedNodes = [], onClearContext = null, onRemoveNode = null, draggedNode = null, onAddNodeToContext = null }) => {
   const [query, setQuery] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatHistory, progressSteps]);
+
+  // CMD+K to focus input (global shortcut)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleSubmit = (e) => {
     if (e) e.preventDefault();
@@ -43,13 +57,14 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
                 language={match ? match[1] : 'python'}
                 PreTag="div"
                 customStyle={{
-                  backgroundColor: '#000000',  // Pure black for depth
-                  padding: '12px',
-                  borderRadius: '4px',
+                  backgroundColor: '#000000',  // Pure black - high-end editor look
+                  padding: '10px 12px',
+                  borderRadius: '2px',  // Sharper corners
                   fontSize: '11px',
                   fontFamily: "'JetBrains Mono', monospace",
-                  margin: '8px 0 8px 12px',
-                  border: '1px solid rgba(59, 130, 246, 0.15)'  // Subtle blue border
+                  margin: '6px 0 6px 0',  // Tighter margins
+                  border: '1px solid rgba(255, 255, 255, 0.05)',  // Subtle white border
+                  lineHeight: '1.4'  // Compact code
                 }}
                 {...props}
               >
@@ -58,10 +73,10 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
             ) : (
               <code
                 style={{
-                  backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                  color: '#3b82f6',
-                  padding: '2px 4px',
-                  borderRadius: '3px',
+                  backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                  color: '#60a5fa',
+                  padding: '2px 5px',
+                  borderRadius: '2px',
                   fontSize: '11px',
                   fontFamily: "'JetBrains Mono', monospace"
                 }}
@@ -71,10 +86,10 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
               </code>
             );
           },
-          p: ({ children }) => <p style={{ margin: '0 0 8px 0', lineHeight: '1.5', fontSize: '13px', color: '#f4f4f5' }}>{children}</p>,
-          h2: ({ children }) => <h2 style={{ fontSize: '14px', fontWeight: 600, margin: '12px 0 6px 0', color: '#f4f4f5' }}>{children}</h2>,
-          ul: ({ children }) => <ul style={{ margin: '6px 0 6px 12px', paddingLeft: '16px', lineHeight: '1.5' }}>{children}</ul>,
-          li: ({ children }) => <li style={{ margin: '3px 0', fontSize: '13px', color: '#f4f4f5' }}>{children}</li>,
+          p: ({ children }) => <p style={{ margin: '0 0 6px 0', lineHeight: '1.45', fontSize: '12px', color: '#e5e5e7' }}>{children}</p>,
+          h2: ({ children }) => <h2 style={{ fontSize: '13px', fontWeight: 600, margin: '10px 0 4px 0', color: '#f4f4f5', letterSpacing: '-0.01em' }}>{children}</h2>,
+          ul: ({ children }) => <ul style={{ margin: '4px 0 4px 0', paddingLeft: '18px', lineHeight: '1.4' }}>{children}</ul>,
+          li: ({ children }) => <li style={{ margin: '2px 0', fontSize: '12px', color: '#e5e5e7' }}>{children}</li>,
           strong: ({ children }) => <strong style={{ fontWeight: 600, color: '#f4f4f5' }}>{children}</strong>,
           a: ({ href, children }) => <a href={href} style={{ color: '#3b82f6', textDecoration: 'none' }} target="_blank" rel="noopener noreferrer">{children}</a>,
         }}
@@ -85,17 +100,42 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ backgroundColor: '#050505' }}>
-      {/* Messages - Flat Stream */}
+    <div className="flex flex-col h-full animate-slide-in relative" style={{ backgroundColor: '#050505' }}>
+      {/* Drag Indicator - Shows when dragging node */}
+      {draggedNode && (
+        <div
+          className="absolute top-4 left-4 right-4 z-50 px-4 py-3 rounded-lg animate-pulse"
+          style={{
+            backgroundColor: 'rgba(34, 211, 238, 0.1)',
+            border: '1px dashed rgba(34, 211, 238, 0.6)',
+            backdropFilter: 'blur(16px)'
+          }}
+        >
+          <div style={{
+            fontSize: '11px',
+            color: '#22d3ee',
+            fontFamily: "'JetBrains Mono', monospace",
+            textAlign: 'center',
+            letterSpacing: '0.02em'
+          }}>
+            → Drop here to add <span style={{ color: '#ffffff', fontWeight: 600 }}>{draggedNode.label?.split('\n')[0]}</span> to context
+          </div>
+        </div>
+      )}
+
+      {/* Intelligence Stream - Terminal Layout */}
       <div
         ref={chatContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-6"
+        className="flex-1 overflow-y-auto px-4 py-4"
         style={{ backgroundColor: '#050505' }}
       >
         {chatHistory.length === 0 && !isLoading && (
-          <div className="flex items-center justify-center h-full">
-            <p style={{ fontSize: '13px', color: '#71717a', fontFamily: "'Inter', sans-serif" }}>
-              Ask a question to get started
+          <div className="flex flex-col items-start justify-center h-full" style={{ paddingLeft: '2px' }}>
+            <p style={{ fontSize: '11px', color: '#52525b', fontFamily: "'JetBrains Mono', monospace", marginBottom: '8px' }}>
+              {'// Type your query below'}
+            </p>
+            <p style={{ fontSize: '11px', color: '#3f3f46', fontFamily: "'JetBrains Mono', monospace" }}>
+              {'// Press CMD+K to focus input'}
             </p>
           </div>
         )}
@@ -104,56 +144,57 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
           <div
             key={index}
             style={{
-              marginBottom: '16px',
-              paddingLeft: msg.type === 'bot' ? '12px' : '0',
-              borderLeft: msg.type === 'bot' ? '2px solid rgba(59, 130, 246, 0.3)' : 'none'
+              marginBottom: '10px',
+              paddingLeft: msg.type === 'bot' ? '10px' : '2px',
+              borderLeft: msg.type === 'bot' ? '2px solid rgba(59, 130, 246, 0.4)' : 'none'
             }}
           >
-            {/* Label */}
+            {/* Compact Label - Terminal Style */}
             <div style={{
-              fontSize: '10px',
-              color: '#71717a',
-              marginBottom: '4px',
-              fontFamily: "'Inter', sans-serif",
+              fontSize: '9px',
+              color: msg.type === 'bot' ? '#52525b' : '#3f3f46',
+              marginBottom: '3px',
+              fontFamily: "'JetBrains Mono', monospace",
               textTransform: 'uppercase',
-              letterSpacing: '0.5px'
+              letterSpacing: '0.8px',
+              fontWeight: 500
             }}>
-              {msg.type === 'user' ? 'You' : 'Agent'}
+              {msg.type === 'user' ? '> USER' : '> AGENT'}
             </div>
-            {/* Message */}
+            {/* Message - Dense Layout */}
             <div style={{
-              fontSize: '13px',
-              lineHeight: '1.5',
-              color: '#f4f4f5'
+              fontSize: '12px',
+              lineHeight: '1.45',
+              color: '#e5e5e7'
             }}>
               {renderMessage(msg)}
             </div>
           </div>
         ))}
 
-        {/* Progress */}
+        {/* Live Progress - Terminal Output Style */}
         {isLoading && progressSteps.length > 0 && (
-          <div style={{ padding: '12px 0', marginLeft: '12px', borderLeft: '2px solid rgba(59, 130, 246, 0.3)' }}>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '4px', marginLeft: '12px', textTransform: 'uppercase' }}>
-              Agent
+          <div style={{ padding: '10px 0 0 10px', borderLeft: '2px solid rgba(59, 130, 246, 0.4)' }}>
+            <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>
+              &gt; AGENT
             </div>
             {progressSteps
               .filter(step => step.status === 'active')
               .map(step => (
-                <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
+                <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                   <div
                     className="animate-pulse"
                     style={{
-                      width: '3px',
-                      height: '3px',
+                      width: '2px',
+                      height: '2px',
                       borderRadius: '50%',
                       backgroundColor: '#3b82f6'
                     }}
                   />
                   <span style={{
-                    fontSize: '12px',
-                    color: '#a1a1aa',
-                    fontFamily: "'Inter', sans-serif"
+                    fontSize: '11px',
+                    color: '#71717a',
+                    fontFamily: "'JetBrains Mono', monospace"
                   }}>
                     {step.message}
                   </span>
@@ -163,16 +204,135 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
         )}
       </div>
 
-      {/* Terminal-Style Input */}
+      {/* Command Line Input - Pure Terminal */}
       <div
-        className="px-4 py-3"
+        className="px-4 py-2.5"
         style={{
-          borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+          borderTop: '1px solid rgba(255, 255, 255, 0.03)',
           backgroundColor: '#050505'
         }}
       >
+        {/* Context Badges - Multi-Node Support */}
+        {selectedNodes.length > 0 && onClearContext && (
+          <div className="mb-2">
+            {selectedNodes.length === 1 ? (
+              // Single node - compact badge
+              <div
+                className="flex items-center gap-2 px-2 py-1.5 rounded transition-all"
+                style={{
+                  backgroundColor: 'rgba(24, 24, 27, 0.6)',
+                  border: '1px solid rgba(63, 63, 70, 0.5)',
+                  width: 'fit-content'
+                }}
+              >
+                <span style={{
+                  fontSize: '10px',
+                  color: '#71717a',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.02em',
+                  textTransform: 'uppercase'
+                }}>
+                  [context: {selectedNodes[0].label?.split('\n')[0]}]
+                </span>
+                <button
+                  onClick={onClearContext}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#52525b',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    lineHeight: 1,
+                    padding: '0 2px',
+                    transition: 'color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.color = '#22d3ee'}
+                  onMouseLeave={(e) => e.target.style.color = '#52525b'}
+                  title="Clear context (query entire codebase)"
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              // Multi-node - show all badges
+              <div className="flex flex-wrap gap-1">
+                {selectedNodes.map((node, i) => (
+                  <div
+                    key={node.id}
+                    className="flex items-center gap-1 px-2 py-1 rounded transition-all"
+                    style={{
+                      backgroundColor: 'rgba(24, 24, 27, 0.6)',
+                      border: '1px solid rgba(63, 63, 70, 0.5)'
+                    }}
+                  >
+                    <span style={{
+                      fontSize: '9px',
+                      color: '#71717a',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: '0.01em'
+                    }}>
+                      {node.label?.split('\n')[0]}
+                    </span>
+                    <button
+                      onClick={() => onRemoveNode(i)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#52525b',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        lineHeight: 1,
+                        padding: '0 2px',
+                        transition: 'color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.target.style.color = '#22d3ee'}
+                      onMouseLeave={(e) => e.target.style.color = '#52525b'}
+                      title="Remove from context"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={onClearContext}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid rgba(63, 63, 70, 0.5)',
+                    borderRadius: '3px',
+                    color: '#52525b',
+                    cursor: 'pointer',
+                    fontSize: '9px',
+                    padding: '4px 6px',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.borderColor = '#22d3ee';
+                    e.target.style.color = '#22d3ee';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.borderColor = 'rgba(63, 63, 70, 0.5)';
+                    e.target.style.color = '#52525b';
+                  }}
+                  title="Clear all context"
+                >
+                  clear all
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
-          <span style={{ color: '#3b82f6', fontSize: '14px', fontFamily: "'JetBrains Mono', monospace" }}>&gt;</span>
+          <span style={{
+            color: '#3b82f6',
+            fontSize: '13px',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 600,
+            lineHeight: 1
+          }}>
+            &gt;
+          </span>
           <input
             ref={inputRef}
             type="text"
@@ -180,18 +340,46 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
-            placeholder={contextNode ? `Ask about ${contextNode}` : 'Ask the codebase'}
-            className="flex-1 px-0 py-1 text-sm focus:outline-none transition-all bg-transparent"
+            placeholder={selectedNodes.length === 1 ? `query: ${selectedNodes[0].label?.split('\n')[0]}` : selectedNodes.length > 1 ? `query: ${selectedNodes.length} nodes` : 'query codebase'}
+            className="flex-1 px-0 py-1 text-sm focus:outline-none transition-all bg-transparent command-input"
             style={{
-              color: '#f4f4f5',
+              color: '#e5e5e7',
               border: 'none',
-              fontFamily: "'Inter', sans-serif",
-              opacity: isLoading ? 0.5 : 1,
-              caretColor: '#3b82f6'
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '12px',
+              opacity: isLoading ? 0.4 : 1,
+              caretColor: '#3b82f6',
+              letterSpacing: '-0.01em'
             }}
           />
         </div>
       </div>
+
+      {/* Animations */}
+      <style>{`
+        @keyframes pulse-caret {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+        .command-input:focus {
+          animation: pulse-caret 1.2s ease-in-out infinite;
+        }
+
+        @keyframes slide-in-right {
+          from {
+            opacity: 0;
+            transform: translateX(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        .animate-slide-in {
+          animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+      `}</style>
     </div>
   );
 };

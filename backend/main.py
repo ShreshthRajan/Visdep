@@ -14,7 +14,7 @@ from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import create_dependency_graph, create_chunk_level_graph, save_graph_as_json, load_graph_from_json
 from networkx.readwrite import json_graph
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, List
 import logging
 import asyncio
 
@@ -67,7 +67,8 @@ class RepoLink(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     context: Optional[dict] = None  # Optional: backend loads from DB server-side
-    node_context: Optional[dict] = None  # NEW: For per-node queries (chunk_id, name, type)
+    node_context: Optional[dict] = None  # DEPRECATED: For single per-node queries (backwards compat)
+    node_contexts: Optional[List[dict]] = None  # NEW: For multi-node queries [{'chunk_id', 'name', 'type'}, ...]
 
 def store_repo_data(repo_metadata):
     # Log the storage action for debugging
@@ -443,12 +444,19 @@ async def query_jamba(request: QueryRequest):
         logging.info(f"Loaded {len(chunks)} chunks from database for query (server-side)")
 
         # Get response from Jamba model with caching (Task 2.1)
-        # OPTION C: Pass node_context for per-node queries
+        # OPTION C: Pass node_context(s) for per-node queries
+        # Backwards compat: convert single node_context to array
+        node_contexts_array = None
+        if request.node_contexts:
+            node_contexts_array = request.node_contexts
+        elif request.node_context:
+            node_contexts_array = [request.node_context]  # Convert single to array
+
         response = await get_jamba_response(
             query,
             context,
             repo_id=latest_repo_id,
-            node_context=request.node_context
+            node_contexts=node_contexts_array
         )
 
         if response:

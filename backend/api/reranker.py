@@ -10,6 +10,7 @@ Based on research:
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Tuple
 from sentence_transformers import CrossEncoder
 import re
@@ -19,19 +20,33 @@ import tiktoken
 class CodeReranker:
     """
     Cross-encoder based reranking for code chunks
+
+    2025 Update: Upgraded to code-optimized reranker
     """
 
-    def __init__(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2'):
+    def __init__(self, model_name: str = None):
         """
         Initialize cross-encoder reranker
 
         Args:
             model_name: HuggingFace model name for cross-encoder
-                       Default: ms-marco-MiniLM-L-6-v2 (fast, good quality)
+                       Default: mixedbread-ai/mxbai-rerank-base-v1 (2025, code-optimized)
+                       Fallback: cross-encoder/ms-marco-MiniLM-L-6-v2 (2023, fast)
                        Alternative: jinaai/jina-reranker-v2-base-multilingual
         """
-        self.model = CrossEncoder(model_name)
-        logging.info(f"CodeReranker initialized with model: {model_name}")
+        # Use env var or default to 2025 code-optimized model
+        if model_name is None:
+            model_name = os.getenv('RERANKER_MODEL', 'mixedbread-ai/mxbai-rerank-base-v1')
+
+        try:
+            self.model = CrossEncoder(model_name)
+            logging.info(f"✅ CodeReranker initialized with model: {model_name}")
+        except Exception as e:
+            # Fallback to reliable ms-marco if new model fails
+            logging.warning(f"⚠️ Failed to load {model_name}: {e}")
+            logging.warning(f"⚠️ Falling back to cross-encoder/ms-marco-MiniLM-L-6-v2")
+            self.model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            logging.info(f"✅ CodeReranker initialized with fallback model")
 
     def rerank(
         self,
@@ -232,21 +247,27 @@ class ContextAssembler:
         return content
 
 
-def extract_citations_from_response(response: str) -> List[Dict[str, Any]]:
+def extract_citations_from_response(response: str, node_context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
     Extract file:line citations from LLM response
 
+    Supports two formats:
+    1. Absolute: file.py:42-68 (for generic queries)
+    2. Relative: (lines 25-35) or (line 19) (for per-node queries with fallback)
+
     Args:
         response: LLM response text
+        node_context: Optional node context for per-node queries (provides filename for relative citations)
 
     Returns:
         List of citation dictionaries
     """
-    # Pattern: file.py:42-68 or file.py:42
-    pattern = r'([a-zA-Z0-9_/\-\.]+\.[a-zA-Z]+):(\d+)(?:-(\d+))?'
-
     citations = []
-    for match in re.finditer(pattern, response):
+
+    # Pattern 1: Absolute citations (file.py:42-68)
+    absolute_pattern = r'([a-zA-Z0-9_/\-\.]+\.[a-zA-Z]+):(\d+)(?:-(\d+))?'
+
+    for match in re.finditer(absolute_pattern, response):
         file_path = match.group(1)
         start_line = int(match.group(2))
         end_line = int(match.group(3)) if match.group(3) else start_line
@@ -257,5 +278,50 @@ def extract_citations_from_response(response: str) -> List[Dict[str, Any]]:
             'end_line': end_line,
             'text': match.group(0)
         })
+
+    # Pattern 2: Relative citations (fallback for per-node queries)
+    # Only use if: (1) no absolute citations found AND (2) node_context provided
+    if len(citations) == 0 and node_context and node_context.get('chunk_id'):
+        filename = node_context['chunk_id']
+
+        # Relative patterns: (line 19), (lines 25-35), line 42, lines 25-35
+        relative_patterns = [
+            (r'\(lines?\s+(\d+)-(\d+)\)', True),   # (lines 25-35) or (line 25-35)
+            (r'\(line\s+(\d+)\)', False),          # (line 19)
+            (r'(?:^|\s)lines?\s+(\d+)-(\d+)', True),  # lines 25-35 (not in parens)
+            (r'(?:^|\s)line\s+(\d+)(?:\s|$)', False)  # line 42 (not in parens)
+        ]
+
+        # Collect all matches with their positions (for sorting)
+        matches_with_positions = []
+
+        for pattern, is_range in relative_patterns:
+            for match in re.finditer(pattern, response, re.IGNORECASE):
+                if is_range:
+                    start_line = int(match.group(1))
+                    end_line = int(match.group(2))
+                else:
+                    start_line = int(match.group(1))
+                    end_line = start_line
+
+                matches_with_positions.append({
+                    'file': filename,
+                    'start_line': start_line,
+                    'end_line': end_line,
+                    'text': match.group(0).strip(),
+                    'position': match.start()  # Position in response text
+                })
+
+        # Sort by position in response (maintain text order)
+        matches_with_positions.sort(key=lambda x: x['position'])
+
+        # Remove position field and add to citations
+        for match_data in matches_with_positions:
+            citations.append({
+                'file': match_data['file'],
+                'start_line': match_data['start_line'],
+                'end_line': match_data['end_line'],
+                'text': match_data['text']
+            })
 
     return citations
