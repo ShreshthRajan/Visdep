@@ -39,6 +39,17 @@ const GraphChat = () => {
     selectedNodesRef.current = selectedNodes;
   }, [selectedNodes]);
 
+  // Phase 3: Initialize currentRepo from sessionStorage after upload
+  useEffect(() => {
+    const storedRepo = sessionStorage.getItem('visdep_current_repo');
+    if (storedRepo && !currentRepo) {
+      const repo = JSON.parse(storedRepo);
+      setCurrentRepo(repo);
+      sessionStorage.removeItem('visdep_current_repo');
+      console.log('✅ Initialized currentRepo:', repo.repo_name);
+    }
+  }, [currentRepo]);
+
   const handleHighlightNodes = useCallback((nodeIds) => {
     setHighlightedNodes(nodeIds || []);
   }, []);

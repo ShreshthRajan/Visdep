@@ -174,6 +174,23 @@ const Loading = () => {
         // Final success log
         setLogs(prev => [...prev, '[COMPLETE]: AST engine ready']);
 
+        // Phase 3: Fetch the repo that was just uploaded (for currentRepo state)
+        if (user) {
+          try {
+            const userReposResponse = await API.get(`/api/user/${user.id}/repos`);
+            const repos = userReposResponse.data;
+
+            if (repos && repos.length > 0) {
+              // Most recent repo (just uploaded)
+              const justUploaded = repos[0];
+              sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
+              console.log('✅ Stored current repo for GraphChat');
+            }
+          } catch (err) {
+            console.error('⚠️ Could not fetch uploaded repo:', err);
+          }
+        }
+
         // Small delay for final log
         await new Promise(resolve => setTimeout(resolve, 400));
 
