@@ -416,7 +416,10 @@ async def upload_repo(link: RepoLink):
         }
     
     except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
         logging.error(f"Error in upload_repo: {e}")
+        logging.error(f"Full traceback:\n{error_traceback}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/dependency_graph")
