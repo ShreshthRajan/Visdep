@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps = [], selectedNodes = [], onClearContext = null, onRemoveNode = null, draggedNode = null, onAddNodeToContext = null }) => {
+const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps = [], selectedNodes = [], onClearContext = null, onRemoveNode = null, draggedNode = null, onAddNodeToContext = null, onNewChat = null }) => {
   const [query, setQuery] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const chatContainerRef = useRef(null);
@@ -191,6 +191,33 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
           backgroundColor: '#050505'
         }}
       >
+        {/* New Chat Button - Above Context Badges */}
+        {onNewChat && (
+          <button
+            onClick={onNewChat}
+            className="mb-2 px-2 py-1.5 rounded transition-all"
+            style={{
+              backgroundColor: 'transparent',
+              border: '1px solid rgba(63, 63, 70, 0.5)',
+              color: '#52525b',
+              fontSize: '9px',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.02em',
+              width: 'fit-content'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.borderColor = '#22d3ee';
+              e.target.style.color = '#22d3ee';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.borderColor = 'rgba(63, 63, 70, 0.5)';
+              e.target.style.color = '#52525b';
+            }}
+          >
+            + new chat
+          </button>
+        )}
+
         {/* Context Badges - Multi-Node Support with Drop Zone */}
         {selectedNodes.length > 0 && onClearContext ? (
           <div

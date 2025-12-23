@@ -8,7 +8,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
 
-const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart }) => {
+const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart, currentRepoId = null }) => {
   const networkRef = useRef(null);
   const [network, setNetwork] = useState(null);
   const [graphData, setGraphData] = useState(null);
@@ -571,7 +571,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart 
     };
 
     fetchGraphData();
-  }, []);  // Only run once on mount - removed circular dependencies
+  }, [currentRepoId]);  // Refetch when repo changes  // Only run once on mount - removed circular dependencies
 
   // Node selection is now handled inline in click handler (see renderGraph)
 
@@ -997,13 +997,13 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart 
 }
 
 const nodeTypes = {
-  directory: { border: '#52525b', background: '#18181b' },  // Muted zinc gray
+  directory: { border: '#10b981', background: '#18181b' },  // Emerald green (completes palette)
   file: { border: '#3b82f6', background: '#18181b' },  // Blue for files
   import: { border: '#52525b', background: '#18181b' },  // Muted
   package: { border: '#52525b', background: '#18181b' },  // Muted
-  class_definition: { border: '#7c3aed', background: '#18181b' },  // Darker purple for classes
+  class_definition: { border: '#6366f1', background: '#18181b' },  // Indigo (matches blue vibrance)
   function: { border: '#3b82f6', background: '#18181b' },  // Blue for functions
-  method: { border: '#8b5cf6', background: '#18181b' },  // Muted purple for methods (was too bright)
+  method: { border: '#f97316', background: '#18181b' },  // Orange (complements blue, distinct from class)
   module_variable: { border: '#52525b', background: '#18181b' },  // Muted
   default: { border: '#52525b', background: '#18181b' },  // Muted zinc gray
 };

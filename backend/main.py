@@ -792,6 +792,10 @@ app.include_router(auth_router, prefix="/api")
 from backend.api.repos import router as repos_router
 app.include_router(repos_router, prefix="/api")
 
+# Include the sessions router
+from backend.api.sessions import router as sessions_router
+app.include_router(sessions_router, prefix="/api")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

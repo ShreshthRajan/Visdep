@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const LeftNav = ({ activeView = 'map', onHistoryClick }) => {
+const LeftNav = ({ activeView = 'map', onHistoryClick, onChatsClick }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
@@ -10,7 +10,7 @@ const LeftNav = ({ activeView = 'map', onHistoryClick }) => {
     { id: 'home', icon: HomeIcon, label: 'Home', action: () => navigate('/') },
     { id: 'map', icon: MapIcon, label: 'Map', active: true },
     { id: 'history', icon: HistoryIcon, label: 'History', action: onHistoryClick },
-    { id: 'layers', icon: LayersIcon, label: 'Layers' },
+    { id: 'chats', icon: LayersIcon, label: 'Chats', action: onChatsClick },  // Renamed: Layers → Chats
     { id: 'settings', icon: SettingsIcon, label: 'Settings' },
   ];
 
@@ -47,7 +47,19 @@ const LeftNav = ({ activeView = 'map', onHistoryClick }) => {
                 logout();
               }
             }}
-            className="w-8 h-8 rounded-full overflow-hidden hover:ring-2 ring-cyan-400 transition-all"
+            className="w-8 h-8 rounded-full overflow-hidden transition-all"
+            style={{
+              border: '1px solid rgba(63, 63, 70, 0.5)',
+              opacity: 0.8
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.opacity = '1';
+              e.target.style.borderColor = '#22d3ee';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.opacity = '0.8';
+              e.target.style.borderColor = 'rgba(63, 63, 70, 0.5)';
+            }}
             title={`Signed in as ${user.username}`}
           >
             <img

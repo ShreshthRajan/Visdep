@@ -1,11 +1,13 @@
 // frontend/src/pages/graphchat.jsx
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
 import LeftNav from '../components/LeftNav';
 import NodeInspector from '../components/NodeInspector';
 import HistoryPanel from '../components/HistoryPanel';
+import ChatHistoryPanel from '../components/ChatHistoryPanel';
 import API from '../api';
 
 const GraphChat = () => {
@@ -14,7 +16,13 @@ const GraphChat = () => {
   const [selectedNodes, setSelectedNodes] = useState([]);  // Context for queries
   const [activeTab, setActiveTab] = useState('chat');
   const [draggedNode, setDraggedNode] = useState(null);  // Currently dragging node
-  const [showHistory, setShowHistory] = useState(false);  // Phase 2: History panel
+  const [showHistory, setShowHistory] = useState(false);  // Phase 2: Repo history panel
+  const [showChats, setShowChats] = useState(false);  // Phase 3: Chat history panel
+
+  // Phase 3: Session management
+  const [currentRepo, setCurrentRepo] = useState(null);  // Current repo metadata from Supabase
+  const [currentSession, setCurrentSession] = useState(null);  // Current chat session
+  const { user } = useAuth();
 
   // Ref to track selectedNodes without causing re-renders
   const selectedNodesRef = useRef([]);
@@ -70,7 +78,8 @@ const GraphChat = () => {
   const handleSubmitQuery = useCallback(async (queryText, nodeContext = null) => {
     if (!queryText.trim() || isLoading) return;
 
-    setChatHistory(prev => [...prev, { type: 'user', text: queryText }]);
+    const newMessage = { type: 'user', text: queryText };
+    setChatHistory(prev => [...prev, newMessage]);
     setIsLoading(true);
 
     // Use selectedNodes if no explicit nodeContext provided
@@ -121,10 +130,38 @@ const GraphChat = () => {
       clearInterval(progressInterval);
 
       const responseText = res.data.response || res.data;
-      setChatHistory(prev => [...prev, { type: 'bot', text: responseText }]);
+      const botMessage = { type: 'bot', text: responseText };
+      setChatHistory(prev => [...prev, botMessage]);
 
       if (res.data.highlighted_nodes) {
         handleHighlightNodes(res.data.highlighted_nodes);
+      }
+
+      // Phase 3: Auto-save session after query
+      if (currentSession && user) {
+        const updatedMessages = [...chatHistory, newMessage, botMessage];
+
+        // Generate title from first query
+        const sessionTitle = currentSession.title || queryText.substring(0, 50);
+
+        // Auto-save (debounced, non-blocking)
+        setTimeout(async () => {
+          try {
+            await API.put(`/api/sessions/${currentSession.id}`, {
+              messages: updatedMessages,
+              context_nodes: selectedNodes.map(n => ({
+                chunk_id: n.id,
+                name: n.label?.split('\n')[0],
+                type: n.type
+              })),
+              highlighted_nodes: res.data.highlighted_nodes || [],  // Save graph state
+              title: sessionTitle
+            });
+            console.log('💾 Session auto-saved');
+          } catch (err) {
+            console.error('⚠️ Auto-save failed:', err);
+          }
+        }, 500);
       }
     } catch (error) {
       clearInterval(progressInterval);
@@ -168,6 +205,32 @@ const GraphChat = () => {
   const handleRemoveNode = useCallback((index) => {
     setSelectedNodes(prev => prev.filter((_, i) => i !== index));
   }, []);
+
+  const handleNewChat = useCallback(async () => {
+    if (!user || !currentRepo) return;
+
+    try {
+      // Create new session in Supabase
+      const response = await API.post('/api/sessions', {
+        user_id: user.id,
+        user_repo_id: currentRepo.id
+      });
+
+      const newSession = response.data.session;
+
+      // Clear current chat
+      setChatHistory([]);
+      setSelectedNodes([]);
+      setInspectedNode(null);
+
+      // Set new session as current
+      setCurrentSession(newSession);
+
+      console.log('✅ New chat created:', newSession.id);
+    } catch (err) {
+      console.error('❌ Error creating new chat:', err);
+    }
+  }, [user, currentRepo, chatHistory]);
 
   const handleAddNodeToContext = useCallback((node) => {
     // Add node to context if not already present
@@ -240,6 +303,7 @@ const GraphChat = () => {
           highlightedNodes={highlightedNodes}
           onNodeSelect={handleNodeSelect}
           onNodeDragStart={handleNodeDragStart}
+          currentRepoId={currentRepo?.local_repo_id}
         />
       </div>
 
@@ -248,19 +312,70 @@ const GraphChat = () => {
         <LeftNav
           activeView="map"
           onHistoryClick={() => setShowHistory(true)}
+          onChatsClick={() => setShowChats(true)}
         />
       </div>
 
-      {/* History Panel - Phase 2 */}
+      {/* History Panel - Phase 2: Repos */}
       <HistoryPanel
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
-        onLoadRepo={(repo) => {
+        onLoadRepo={async (repo) => {
           console.log('Loading repo from history:', repo);
-          // Repo is already loaded via activate endpoint
-          // Just need to refresh graph
-          window.location.reload();
+
+          // Activate repo in backend (sets global latest_repo_id)
+          await API.post(`/api/repos/${repo.local_repo_id}/activate`);
+
+          // Set as current repo
+          setCurrentRepo(repo);
+
+          // Load most recent session for this repo (if user logged in)
+          if (user) {
+            try {
+              const sessionsResponse = await API.get(`/api/user/${user.id}/repo/${repo.id}/sessions`);
+              const sessions = sessionsResponse.data;
+
+              if (sessions && sessions.length > 0) {
+                const mostRecent = sessions[0];
+                setChatHistory(mostRecent.messages || []);
+                setSelectedNodes(mostRecent.context_nodes || []);
+                setHighlightedNodes(mostRecent.highlighted_nodes || []);
+                setCurrentSession(mostRecent);
+                console.log('✅ Loaded most recent session');
+              } else {
+                // No sessions, clear chat
+                setChatHistory([]);
+                setSelectedNodes([]);
+                setHighlightedNodes([]);
+                setCurrentSession(null);
+              }
+            } catch (err) {
+              console.error('Error loading session:', err);
+            }
+          }
+
+          // Graph will refetch automatically when backend repo changes
+          console.log('✅ Repo loaded:', repo.repo_name);
         }}
+      />
+
+      {/* Chat History Panel - Phase 3: Sessions for current repo */}
+      <ChatHistoryPanel
+        isOpen={showChats}
+        onClose={() => setShowChats(false)}
+        currentRepo={currentRepo}
+        onLoadSession={async (session) => {
+          console.log('Loading session:', session);
+
+          // Restore full chat state
+          setChatHistory(session.messages || []);
+          setSelectedNodes(session.context_nodes || []);
+          setHighlightedNodes(session.highlighted_nodes || []);
+          setCurrentSession(session);
+
+          console.log('✅ Session restored');
+        }}
+        onNewChat={handleNewChat}
       />
 
       {/* Right HUD Glass Overlay - Glass Cockpit with Neural Blue Sync */}
@@ -327,7 +442,7 @@ const GraphChat = () => {
           </button>
         </div>
 
-        {/* Tab Content - Key forces animation on tab switch */}
+        {/* Tab Content */}
         <div className="h-[calc(100%-8rem)]">
           {activeTab === 'chat' ? (
             <Chatbot
@@ -341,6 +456,7 @@ const GraphChat = () => {
               onRemoveNode={handleRemoveNode}
               draggedNode={draggedNode}
               onAddNodeToContext={handleAddNodeToContext}
+              onNewChat={handleNewChat}
             />
           ) : (
             <NodeInspector
