@@ -8,13 +8,13 @@ Handles:
 - Token verification
 """
 
+import os
+import logging
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-import os
 import requests
-import logging
-from typing import Optional
 from .supabase_client import get_supabase_client
 
 router = APIRouter()
