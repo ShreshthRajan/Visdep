@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Network, DataSet } from 'vis-network/standalone';
+import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
 
 const Loading = () => {
@@ -14,6 +15,7 @@ const Loading = () => {
   const logContainerRef = useRef(null);
   const uploadStartedRef = useRef(false);  // Prevent redirect after upload starts
   const navigate = useNavigate();
+  const { user, githubToken } = useAuth();
 
   // Get upload data from sessionStorage (synchronously available)
   const uploadData = JSON.parse(sessionStorage.getItem('visdep_upload') || '{}');
@@ -131,10 +133,21 @@ const Loading = () => {
 
       try {
         // Start real upload in background
-        const uploadPromise = API.post('/api/upload_repo', {
+        // Phase 2: Include user_id and github_token for private repos
+        const uploadPayload = {
           repo_url: repoUrl,
           sub_directory: subDirectory
-        });
+        };
+
+        if (user && user.id) {
+          uploadPayload.user_id = user.id;
+        }
+
+        if (githubToken) {
+          uploadPayload.github_token = githubToken;
+        }
+
+        const uploadPromise = API.post('/api/upload_repo', uploadPayload);
 
         // Visual progress feedback
         for (const stepData of steps) {

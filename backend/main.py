@@ -63,6 +63,8 @@ class RepoLink(BaseModel):
     exclude_docs: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
     exclude_examples: Optional[bool] = None  # None = auto-detect, True = exclude, False = include
     exclude_tests: Optional[bool] = None  # None = auto-detect (>40%), True = exclude, False = include
+    user_id: Optional[str] = None  # Phase 2: User who owns this repo
+    github_token: Optional[str] = None  # Phase 2: User's OAuth token for private repos
 
 class QueryRequest(BaseModel):
     query: str
@@ -291,12 +293,16 @@ async def upload_repo(link: RepoLink):
 
         try:
             # Try git clone first (industry standard, no rate limits)
-            repo_content = fetch_repo_content_via_git(repo_url, sub_directory)
+            # Phase 2: Pass user's OAuth token for private repo access
+            user_oauth_token = link.github_token or None
+            repo_content = fetch_repo_content_via_git(repo_url, sub_directory, oauth_token=user_oauth_token)
             logging.info(f"✅ Fetched {len(repo_content)} files via git clone (0 API calls)")
         except Exception as git_error:
             # Fallback to GitHub API if git fails
             logging.warning(f"Git clone failed: {git_error}, falling back to GitHub API")
-            repo_content = fetch_repo_content(repo_url, auth_token, sub_directory)
+            # Use user's token if available, otherwise fallback to PAT
+            api_token = link.github_token or auth_token
+            repo_content = fetch_repo_content(repo_url, api_token, sub_directory)
             logging.info(f"✅ Fetched {len(repo_content)} files via GitHub API")
 
         # Apply enterprise-grade tiered filtering with smart auto-detection
@@ -370,6 +376,36 @@ async def upload_repo(link: RepoLink):
         # Store repo_id globally for latest upload (simple solution for single-user prototype)
         global latest_repo_id
         latest_repo_id = repo_id
+
+        # Phase 2: Link repo to user in Supabase (if user_id provided)
+        if link.user_id:
+            try:
+                from backend.api.supabase_client import get_supabase_client
+                supabase = get_supabase_client()
+
+                # Check if this repo already exists for this user
+                existing = supabase.table('user_repos').select('*').eq('user_id', link.user_id).eq('repo_name', repo_metadata['full_name']).execute()
+
+                if existing.data and len(existing.data) > 0:
+                    # Update last_accessed
+                    supabase.table('user_repos').update({
+                        'last_accessed': 'now()',
+                        'local_repo_id': repo_id
+                    }).eq('id', existing.data[0]['id']).execute()
+                    logging.info(f"✅ Updated repo access time for user {link.user_id}")
+                else:
+                    # Create new user_repo link
+                    supabase.table('user_repos').insert({
+                        'user_id': link.user_id,
+                        'repo_name': repo_metadata['full_name'],
+                        'repo_url': repo_url,
+                        'is_private': bool(link.github_token),  # Has token = private
+                        'local_repo_id': repo_id
+                    }).execute()
+                    logging.info(f"✅ Linked repo {repo_metadata['full_name']} to user {link.user_id}")
+            except Exception as e:
+                # Don't fail upload if Supabase linking fails
+                logging.warning(f"⚠️ Failed to link repo to user in Supabase: {e}")
 
         return {
             "message": "Repository data successfully uploaded, parsed, and graph generated.",
@@ -747,6 +783,14 @@ async def debug_graph():
 
 # Include the chatbot router
 app.include_router(chatbot_router, prefix="/api")
+
+# Include the auth router
+from backend.api.auth import router as auth_router
+app.include_router(auth_router, prefix="/api")
+
+# Include the repos router
+from backend.api.repos import router as repos_router
+app.include_router(repos_router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn

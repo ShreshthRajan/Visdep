@@ -1,13 +1,15 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
-const LeftNav = ({ activeView = 'map' }) => {
+const LeftNav = ({ activeView = 'map', onHistoryClick }) => {
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   const navItems = [
     { id: 'home', icon: HomeIcon, label: 'Home', action: () => navigate('/') },
     { id: 'map', icon: MapIcon, label: 'Map', active: true },
-    { id: 'history', icon: HistoryIcon, label: 'History' },
+    { id: 'history', icon: HistoryIcon, label: 'History', action: onHistoryClick },
     { id: 'layers', icon: LayersIcon, label: 'Layers' },
     { id: 'settings', icon: SettingsIcon, label: 'Settings' },
   ];
@@ -35,6 +37,27 @@ const LeftNav = ({ activeView = 'map' }) => {
           <item.icon className="w-4 h-4" style={{ color: item.id === activeView ? '#3b82f6' : '#a1a1aa' }} />
         </button>
       ))}
+
+      {/* User Avatar (Bottom) */}
+      {user && (
+        <div className="mt-auto">
+          <button
+            onClick={() => {
+              if (window.confirm('Sign out?')) {
+                logout();
+              }
+            }}
+            className="w-8 h-8 rounded-full overflow-hidden hover:ring-2 ring-cyan-400 transition-all"
+            title={`Signed in as ${user.username}`}
+          >
+            <img
+              src={user.avatar_url}
+              alt={user.username}
+              className="w-full h-full object-cover"
+            />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

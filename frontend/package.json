@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@supabase/supabase-js": "^2.89.0",
     "@xyflow/react": "^12.9.3",
     "axios": "^1.7.2",
     "css-select": "^4.1.3",

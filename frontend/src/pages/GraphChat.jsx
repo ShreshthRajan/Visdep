@@ -5,6 +5,7 @@ import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
 import LeftNav from '../components/LeftNav';
 import NodeInspector from '../components/NodeInspector';
+import HistoryPanel from '../components/HistoryPanel';
 import API from '../api';
 
 const GraphChat = () => {
@@ -13,6 +14,7 @@ const GraphChat = () => {
   const [selectedNodes, setSelectedNodes] = useState([]);  // Context for queries
   const [activeTab, setActiveTab] = useState('chat');
   const [draggedNode, setDraggedNode] = useState(null);  // Currently dragging node
+  const [showHistory, setShowHistory] = useState(false);  // Phase 2: History panel
 
   // Ref to track selectedNodes without causing re-renders
   const selectedNodesRef = useRef([]);
@@ -243,8 +245,23 @@ const GraphChat = () => {
 
       {/* Left Nav Glass Overlay */}
       <div className="absolute left-0 top-0 bottom-0 z-50">
-        <LeftNav activeView="map" />
+        <LeftNav
+          activeView="map"
+          onHistoryClick={() => setShowHistory(true)}
+        />
       </div>
+
+      {/* History Panel - Phase 2 */}
+      <HistoryPanel
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        onLoadRepo={(repo) => {
+          console.log('Loading repo from history:', repo);
+          // Repo is already loaded via activate endpoint
+          // Just need to refresh graph
+          window.location.reload();
+        }}
+      />
 
       {/* Right HUD Glass Overlay - Glass Cockpit with Neural Blue Sync */}
       <div

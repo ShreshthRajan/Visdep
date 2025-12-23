@@ -21,7 +21,7 @@ def normalize_repo_url(repo_url):
         raise ValueError("Invalid GitHub repository URL")
 
 
-def fetch_repo_content_via_git(repo_url, sub_directory=None):
+def fetch_repo_content_via_git(repo_url, sub_directory=None, oauth_token=None):
     """
     Fetch repository content using git clone (FAST, no rate limits).
 
@@ -31,6 +31,7 @@ def fetch_repo_content_via_git(repo_url, sub_directory=None):
     Args:
         repo_url: GitHub repository URL
         sub_directory: Optional subdirectory to focus on
+        oauth_token: Optional GitHub OAuth token for private repo access
 
     Returns:
         List of {path, content} dicts
@@ -43,7 +44,19 @@ def fetch_repo_content_via_git(repo_url, sub_directory=None):
         # Parse repo URL
         repo_url, _ = normalize_repo_url(repo_url)
 
-        logging.info(f"🚀 Cloning repository via git (fast, no API limits): {repo_url}")
+        # Inject OAuth token for private repo access
+        clone_url = repo_url
+        if oauth_token:
+            # Use x-access-token format for OAuth (standard GitHub pattern)
+            clone_url = repo_url.replace(
+                "https://github.com/",
+                f"https://x-access-token:{oauth_token}@github.com/"
+            )
+            if not clone_url.endswith('.git'):
+                clone_url += '.git'
+            logging.info(f"🔒 Cloning private repository with OAuth token")
+        else:
+            logging.info(f"🚀 Cloning public repository (no auth)")
 
         # Shallow clone for maximum speed (only latest commit, single branch)
         clone_cmd = [
@@ -51,7 +64,7 @@ def fetch_repo_content_via_git(repo_url, sub_directory=None):
             '--depth', '1',  # Shallow clone (only latest commit)
             '--single-branch',  # Only main branch
             '--quiet',  # Suppress output
-            repo_url,
+            clone_url,
             temp_dir
         ]
 
