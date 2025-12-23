@@ -50,6 +50,41 @@ const GraphChat = () => {
     }
   }, [currentRepo]);
 
+  // Phase 3: Auto-create first session when repo is loaded
+  useEffect(() => {
+    const initSession = async () => {
+      if (!currentRepo || !user || currentSession) return;
+
+      try {
+        // Check if any sessions exist for this repo
+        const sessionsResponse = await API.get(`/api/user/${user.id}/repo/${currentRepo.id}/sessions`);
+        const sessions = sessionsResponse.data;
+
+        if (sessions && sessions.length > 0) {
+          // Load most recent session
+          const mostRecent = sessions[0];
+          setCurrentSession(mostRecent);
+          setChatHistory(mostRecent.messages || []);
+          setSelectedNodes(mostRecent.context_nodes || []);
+          setHighlightedNodes(mostRecent.highlighted_nodes || []);
+          console.log('✅ Loaded existing session');
+        } else {
+          // No sessions exist, create first one
+          const response = await API.post('/api/sessions', {
+            user_id: user.id,
+            user_repo_id: currentRepo.id
+          });
+          setCurrentSession(response.data.session);
+          console.log('✅ Auto-created first session');
+        }
+      } catch (err) {
+        console.error('⚠️ Session initialization failed:', err);
+      }
+    };
+
+    initSession();
+  }, [currentRepo, user]);
+
   const handleHighlightNodes = useCallback((nodeIds) => {
     setHighlightedNodes(nodeIds || []);
   }, []);
