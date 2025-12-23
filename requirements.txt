@@ -25,4 +25,5 @@ anthropic
 sentence-transformers
 tiktoken
 psycopg2-binary
-tree-sitter-language-packsupabase
+tree-sitter-language-pack
+supabase
