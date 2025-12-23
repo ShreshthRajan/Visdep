@@ -24,7 +24,8 @@ GITHUB_CLIENT_ID = os.getenv('GITHUB_OAUTH_CLIENT_ID')
 GITHUB_CLIENT_SECRET = os.getenv('GITHUB_OAUTH_CLIENT_SECRET')
 
 # Detect environment for callback URL
-IS_PRODUCTION = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
+# Railway sets RAILWAY_PROJECT_ID in production
+IS_PRODUCTION = bool(os.getenv('RAILWAY_PROJECT_ID'))
 CALLBACK_URL = 'https://visdep.com/auth/callback' if IS_PRODUCTION else 'http://localhost:3000/auth/callback'
 
 
