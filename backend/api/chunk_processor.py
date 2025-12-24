@@ -8,6 +8,7 @@ Based on cAST research principles: respect syntactic boundaries
 UPDATED: Method-level chunking for optimal retrieval (50-800 tokens per chunk)
 """
 
+import os
 import hashlib
 from typing import Dict, Any, List
 import tiktoken
