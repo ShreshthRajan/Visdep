@@ -44,15 +44,17 @@ async def activate_repo(local_repo_id: int):
     """
     Set a repo as the active one (sets global latest_repo_id)
 
-    Used when switching between repos in history panel
+    Phase 2: Fixed to properly update the global state
     """
     try:
-        # Import here to avoid circular dependency
-        import backend.main as main_module
+        # Use __main__ to get the actual running module instance
+        import sys
+        main_module = sys.modules['__main__']
 
+        # Set global latest_repo_id in the running app
         main_module.latest_repo_id = local_repo_id
 
-        logging.info(f"✅ Activated repo {local_repo_id}")
+        logging.info(f"✅ Activated repo {local_repo_id} (global state updated)")
 
         return {"message": "Repo activated", "repo_id": local_repo_id}
 

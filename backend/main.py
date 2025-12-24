@@ -366,8 +366,8 @@ async def upload_repo(link: RepoLink):
             graph = create_dependency_graph(parsed_data)
             logging.info(f"✅ File-level graph created with {len(graph.nodes())} nodes, {len(graph.edges())} edges")
 
-        save_graph_as_json(graph, "dependency_graph.json")
-        logging.info("💾 Graph saved to dependency_graph.json")
+        save_graph_as_json(graph, repo_id=repo_id)
+        logging.info(f"💾 Graph saved to dependency_graph_{repo_id}.json")
 
         # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
         from backend.api.data_storage import invalidate_cache_for_repo
@@ -423,9 +423,23 @@ async def upload_repo(link: RepoLink):
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/dependency_graph")
-async def get_dependency_graph():
+async def get_dependency_graph(repo_id: Optional[int] = None):
+    """
+    Get dependency graph
+
+    Args:
+        repo_id: Optional repository ID (Phase 2: multi-repo support)
+    """
     try:
-        graph = load_graph_from_json("dependency_graph.json")
+        # Phase 2: Use provided repo_id, fallback to global latest_repo_id
+        target_repo_id = repo_id if repo_id else latest_repo_id
+
+        if not target_repo_id:
+            raise HTTPException(status_code=400, detail="No repository loaded. Please upload a repository first.")
+
+        logging.info(f"📊 Loading graph for repo_id={target_repo_id}")
+
+        graph = load_graph_from_json(repo_id=target_repo_id)
         data = json_graph.node_link_data(graph)
 
         # Check for mega-repo (simple database query, no global state)

@@ -348,12 +348,20 @@ def cluster_edges(G):
     
     return G
 
-def save_graph_as_json(graph: nx.DiGraph, file_path: str) -> None:
+def save_graph_as_json(graph: nx.DiGraph, file_path: str = "dependency_graph.json", repo_id: int = None) -> None:
+    # Phase 2: Use repo-specific filename if repo_id provided
+    if repo_id:
+        file_path = f"dependency_graph_{repo_id}.json"
+
     data = json_graph.node_link_data(graph)
     with open(file_path, 'w') as f:
         json.dump(data, f)
 
-def load_graph_from_json(file_path: str) -> nx.DiGraph:
+def load_graph_from_json(file_path: str = "dependency_graph.json", repo_id: int = None) -> nx.DiGraph:
+    # Phase 2: Use repo-specific filename if repo_id provided
+    if repo_id:
+        file_path = f"dependency_graph_{repo_id}.json"
+
     with open(file_path, 'r') as f:
         data = json.load(f)
     return json_graph.node_link_graph(data)

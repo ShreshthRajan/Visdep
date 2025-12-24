@@ -499,6 +499,50 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     }
   }, [highlightedNodes, graphData, network, viewMode]);  // Added viewMode to fix focused view rendering
 
+  // Option B: Update canvas highlighting directly (performant, no full re-render)
+  useEffect(() => {
+    if (!network || !graphData || highlightedNodes.length === 0) return;
+
+    const nodes = network.body.data.nodes;
+    if (!nodes) return;
+
+    try {
+      const allNodeIds = nodes.getIds();
+      const updates = allNodeIds.map(nodeId => {
+        const graphNode = graphData.nodes.find(n => n.id === nodeId);
+        if (!graphNode) return null;
+
+        const isHighlighted = highlightedNodes.includes(nodeId);
+        const baseColor = isHighlighted
+          ? { background: '#22d3ee', border: '#ffffff' }
+          : getNodeColor(graphNode.type);
+
+        return {
+          id: nodeId,
+          color: {
+            background: baseColor.background,
+            border: baseColor.border
+          },
+          font: {
+            color: isHighlighted ? '#ffffff' : '#f4f4f5',
+            strokeWidth: isHighlighted ? 3 : 0,
+            strokeColor: isHighlighted ? '#000000' : undefined
+          },
+          shadow: isHighlighted ? {
+            enabled: true,
+            color: 'rgba(34, 211, 238, 0.6)',
+            size: 30
+          } : undefined
+        };
+      }).filter(Boolean);
+
+      nodes.update(updates);
+      console.log(`✅ Canvas updated: ${highlightedNodes.length} nodes highlighted`);
+    } catch (err) {
+      console.error('❌ Canvas update error:', err);
+    }
+  }, [highlightedNodes, network, graphData]);
+
   // Render graph when data or filters change (but not when searching)
   useEffect(() => {
     if (graphData && !searchTerm) {
@@ -511,9 +555,24 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
   useEffect(() => {
     const fetchGraphData = async () => {
       try {
+        console.log('📡 FETCH GRAPH:', { currentRepoId });
+
         setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
-        const response = await API.get('/api/dependency_graph');
+
+        // Phase 2: Pass repo_id if available (multi-repo support)
+        const url = currentRepoId
+          ? `/api/dependency_graph?repo_id=${currentRepoId}`
+          : '/api/dependency_graph';
+
+        console.log('📡 Fetching from:', url);
+
+        const response = await API.get(url);
         const data = response.data;
+
+        console.log('✅ Graph received:', {
+          nodes: data.nodes.length,
+          firstNode: data.nodes[0]?.id
+        });
         setLoadingState({ isLoading: true, message: 'Analyzing graph structure...', progress: 30 });
 
         // Check for mega-repo warning from backend

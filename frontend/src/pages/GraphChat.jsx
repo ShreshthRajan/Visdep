@@ -367,16 +367,23 @@ const GraphChat = () => {
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
         onLoadRepo={async (repo) => {
-          console.log('Loading repo from history:', repo);
+          console.log('🔄 LOAD REPO FROM HISTORY:', {
+            repoName: repo.repo_name,
+            localRepoId: repo.local_repo_id,
+            repoId: repo.id
+          });
 
           // Activate repo in backend (sets global latest_repo_id)
           await API.post(`/api/repos/${repo.local_repo_id}/activate`);
+          console.log('✅ Activate endpoint called');
 
           // Clear old highlighted nodes (from previous repo)
           setHighlightedNodes([]);
+          console.log('✅ Cleared old highlights');
 
           // Set as current repo
           setCurrentRepo(repo);
+          console.log('✅ currentRepo set, will trigger graph refetch');
 
           // Load most recent session for this repo (if user logged in)
           if (user) {
@@ -414,14 +421,25 @@ const GraphChat = () => {
         onClose={() => setShowChats(false)}
         currentRepo={currentRepo}
         onLoadSession={async (session) => {
-          console.log('Loading session:', session);
+          console.log('💬 LOAD SESSION:', {
+            sessionId: session.id,
+            title: session.title,
+            messages: session.messages?.length,
+            contextNodes: session.context_nodes?.length,
+            highlights: session.highlighted_nodes?.length
+          });
 
           // Restore full chat state
           setChatHistory(session.messages || []);
-          setSelectedNodes(session.context_nodes || []);
-          setHighlightedNodes(session.highlighted_nodes || []);
-          setCurrentSession(session);
+          console.log('✅ Chat history set');
 
+          setSelectedNodes(session.context_nodes || []);
+          console.log('✅ Context nodes set');
+
+          setHighlightedNodes(session.highlighted_nodes || []);
+          console.log('✅ Highlighted nodes set - should trigger canvas update');
+
+          setCurrentSession(session);
           console.log('✅ Session restored');
         }}
         onNewChat={handleNewChat}
