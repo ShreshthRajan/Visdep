@@ -64,7 +64,7 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
 
       {/* Panel */}
       <div
-        className="fixed left-16 top-0 bottom-0 w-80 z-50 animate-slide-in-left"
+        className="fixed left-14 top-0 bottom-0 w-80 z-50 animate-slide-in-left"
         style={{
           backgroundColor: 'rgba(5, 5, 5, 0.6)',
           backdropFilter: 'blur(48px)',

@@ -3,18 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * Professional Access Rail - Cockpit Design
+ * Micro-UI Access Rail - HUD Design
  *
- * Three Zones:
- * - Top: Home (landing page)
- * - Center: The Library (repos) + The Timeline (chats)
- * - Bottom: User Profile (circular PFP)
+ * Ultra-narrow, high-density navigation spine
+ * Design: Fighter jet cockpit / Cursor-style precision
  *
- * Design Philosophy:
- * - Bare icons (no button backgrounds)
- * - Subtle states (gray → cyan)
- * - Active glow (mechanical indicator)
- * - Generous spacing (gap-8)
+ * Active state: 2px cyan dot (no boxes, no blooms)
+ * Icons: Bare SVG glyphs floating in space
+ * Profile: Tiny 24px circle
  */
 const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
   const navigate = useNavigate();
@@ -22,11 +18,10 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
 
   return (
     <div
-      className="w-16 flex-none flex flex-col items-center py-6 relative"
+      className="w-14 flex-none flex flex-col items-center py-8 relative"
       style={{
-        backgroundColor: '#080808',
-        backgroundImage: 'linear-gradient(to bottom, transparent, transparent, rgba(0,0,0,0.1))',
-        backdropFilter: 'blur(24px)',
+        backgroundColor: 'rgba(0, 0, 0, 0.2)',
+        backdropFilter: 'blur(48px) saturate(120%)',
         borderRight: '1px solid rgba(255, 255, 255, 0.05)'
       }}
     >
@@ -34,95 +29,79 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
       <div className="relative">
         <button
           onClick={() => navigate('/')}
-          className="relative flex items-center justify-center transition-all duration-200 group"
+          className="relative transition-all duration-200 group"
           title="Home"
           style={{
-            width: '40px',
-            height: '40px'
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer'
           }}
         >
-          {/* Cyan strip for active state (2px wide, far-left edge) */}
+          {/* Active indicator: 2px cyan dot */}
           {'home' === activeView && (
             <div
               className="absolute"
               style={{
-                left: '-24px',
+                left: '-16px',
                 top: '50%',
                 transform: 'translateY(-50%)',
                 width: '2px',
-                height: '24px',
-                backgroundColor: '#22d3ee'
-              }}
-            />
-          )}
-
-          {/* Active state glow halo */}
-          {'home' === activeView && (
-            <div
-              className="absolute inset-0 rounded-full"
-              style={{
-                backgroundColor: 'rgba(34, 211, 238, 0.1)',
-                filter: 'blur(12px)'
+                height: '2px',
+                backgroundColor: '#22d3ee',
+                borderRadius: '50%',
+                boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
               }}
             />
           )}
 
           <HomeIcon
-            className="w-5 h-5 relative z-10 transition-all duration-200"
+            className="w-5 h-5 transition-all duration-200"
             style={{
-              color: 'home' === activeView ? '#22d3ee' : '#71717a',
-              filter: 'home' === activeView ? 'drop-shadow(0 0 8px rgba(34, 211, 238, 0.4))' : 'none',
-              transform: 'translateX(0)'
+              color: 'home' === activeView ? '#22d3ee' : '#52525b',
+              filter: 'home' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
             }}
-            isActive={'home' === activeView}
           />
         </button>
       </div>
 
-      {/* Center: Library + Timeline (grouped with generous spacing) */}
-      <div className="flex flex-col gap-8 mt-8">
+      {/* Center: Library + Timeline */}
+      <div className="flex flex-col gap-8 mt-12">
         {/* The Library (Grid - Repos) */}
         <div className="relative">
           <button
             onClick={onHistoryClick}
-            className="relative flex items-center justify-center transition-all duration-200 group"
+            className="relative transition-all duration-200 group"
             title="The Library"
             style={{
-              width: '40px',
-              height: '40px'
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer'
             }}
           >
             {'history' === activeView && (
               <div
                 className="absolute"
                 style={{
-                  left: '-24px',
+                  left: '-16px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   width: '2px',
-                  height: '24px',
-                  backgroundColor: '#22d3ee'
-                }}
-              />
-            )}
-
-            {'history' === activeView && (
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  backgroundColor: 'rgba(34, 211, 238, 0.1)',
-                  filter: 'blur(12px)'
+                  height: '2px',
+                  backgroundColor: '#22d3ee',
+                  borderRadius: '50%',
+                  boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
                 }}
               />
             )}
 
             <GridIcon
-              className="w-5 h-5 relative z-10 transition-all duration-200 group-hover:translate-x-0.5"
+              className="w-5 h-5 transition-all duration-200 group-hover:text-zinc-400"
               style={{
-                color: 'history' === activeView ? '#22d3ee' : '#71717a',
-                filter: 'history' === activeView ? 'drop-shadow(0 0 8px rgba(34, 211, 238, 0.4))' : 'none'
+                color: 'history' === activeView ? '#22d3ee' : '#52525b',
+                filter: 'history' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
               }}
-              isActive={'history' === activeView}
             />
           </button>
         </div>
@@ -131,59 +110,52 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
         <div className="relative">
           <button
             onClick={onChatsClick}
-            className="relative flex items-center justify-center transition-all duration-200 group"
+            className="relative transition-all duration-200 group"
             title="The Timeline"
             style={{
-              width: '40px',
-              height: '40px'
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer'
             }}
           >
             {'chats' === activeView && (
               <div
                 className="absolute"
                 style={{
-                  left: '-24px',
+                  left: '-16px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   width: '2px',
-                  height: '24px',
-                  backgroundColor: '#22d3ee'
-                }}
-              />
-            )}
-
-            {'chats' === activeView && (
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  backgroundColor: 'rgba(34, 211, 238, 0.1)',
-                  filter: 'blur(12px)'
+                  height: '2px',
+                  backgroundColor: '#22d3ee',
+                  borderRadius: '50%',
+                  boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
                 }}
               />
             )}
 
             <ClockIcon
-              className="w-5 h-5 relative z-10 transition-all duration-200 group-hover:translate-x-0.5"
+              className="w-5 h-5 transition-all duration-200 group-hover:text-zinc-400"
               style={{
-                color: 'chats' === activeView ? '#22d3ee' : '#71717a',
-                filter: 'chats' === activeView ? 'drop-shadow(0 0 8px rgba(34, 211, 238, 0.4))' : 'none'
+                color: 'chats' === activeView ? '#22d3ee' : '#52525b',
+                filter: 'chats' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
               }}
-              isActive={'chats' === activeView}
             />
           </button>
         </div>
       </div>
 
-      {/* Bottom: User Profile (circular PFP) */}
+      {/* Bottom: User Profile (tiny 24px circle) */}
       {user && (
         <div className="mt-auto flex flex-col items-center">
-          {/* Anchor divider */}
+          {/* Micro divider */}
           <div
-            className="mb-4"
+            className="mb-3"
             style={{
-              width: '32px',
+              width: '20px',
               height: '1px',
-              backgroundColor: 'rgba(255, 255, 255, 0.1)'
+              backgroundColor: 'rgba(255, 255, 255, 0.08)'
             }}
           />
 
@@ -193,22 +165,23 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
                 logout();
               }
             }}
-            className="rounded-full overflow-hidden transition-all duration-200 profile-button"
+            className="rounded-full overflow-hidden transition-all duration-200"
             style={{
-              width: '40px',
-              height: '40px',
-              opacity: 0.7,
-              filter: 'grayscale(100%)'
+              width: '24px',
+              height: '24px',
+              opacity: 0.5,
+              filter: 'grayscale(100%)',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer'
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.opacity = '1';
               e.currentTarget.style.filter = 'grayscale(0%)';
-              e.currentTarget.style.boxShadow = '0 0 0 2px #080808, 0 0 0 4px rgba(34, 211, 238, 0.5)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = '0.7';
+              e.currentTarget.style.opacity = '0.5';
               e.currentTarget.style.filter = 'grayscale(100%)';
-              e.currentTarget.style.boxShadow = '0 0 0 2px #080808, 0 0 0 4px #27272a';
             }}
             title={`Signed in as ${user.username}`}
           >
@@ -216,40 +189,30 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
               src={user.avatar_url}
               alt={user.username}
               className="w-full h-full object-cover"
-              style={{
-                boxShadow: '0 0 0 2px #080808, 0 0 0 4px #27272a'
-              }}
             />
           </button>
         </div>
       )}
-
-      {/* CSS for hover state on icons */}
-      <style>{`
-        .group:hover .w-5 {
-          color: #d4d4d8 !important;
-        }
-      `}</style>
     </div>
   );
 };
 
-// SVG Icons (Sharp, high-contrast)
-const HomeIcon = ({ className, style, isActive }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+// SVG Icons (Sharp, minimal stroke)
+const HomeIcon = ({ className, style }) => (
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
   </svg>
 );
 
-const GridIcon = ({ className, style, isActive }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+const GridIcon = ({ className, style }) => (
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
   </svg>
 );
 
-const ClockIcon = ({ className, style, isActive }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+const ClockIcon = ({ className, style }) => (
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 );
 
