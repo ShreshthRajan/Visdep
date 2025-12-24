@@ -35,7 +35,7 @@ router = APIRouter()
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)  # INFO level to avoid Railway 500 logs/sec rate limit
 
 # Define the request model
 class QueryRequest(BaseModel):

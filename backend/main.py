@@ -289,8 +289,6 @@ async def upload_repo(link: RepoLink):
 
         # Fetch repository content using git clone (faster, no rate limits)
         # Fallback to API if git not available
-        logging.debug(f"Fetching content for repo: {repo_url}")
-
         try:
             # Try git clone first (industry standard, no rate limits)
             # Phase 2: Pass user's OAuth token for private repo access
@@ -308,15 +306,11 @@ async def upload_repo(link: RepoLink):
         # Apply enterprise-grade tiered filtering with smart auto-detection
         repo_content, filter_metadata = filter_repository_content(repo_content, exclude_docs, exclude_examples, exclude_tests)
 
-        logging.debug(f"Fetched repo content: {len(repo_content)} files")
-        
         repo_metadata = fetch_repo_metadata(repo_url, auth_token)
-        logging.debug(f"Fetched repo metadata: {repo_metadata}")
-        
+
         # Parse the repository content to AST
         parsed_data = parse_code_to_ast(repo_content)
-        logging.debug(f"Parsed AST data: {parsed_data}")
-        
+
         # Store repository metadata and parsed AST data
         repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
         logging.info(f"🆔 SQLite assigned repo_id={repo_id} for {repo_metadata['full_name']}")
@@ -324,7 +318,6 @@ async def upload_repo(link: RepoLink):
             store_ast_data(repo_id, file_path, ast_info)
 
         # Process repository into chunks
-        logging.debug("Processing repository into chunks...")
         chunks = process_repository_to_chunks(parsed_data)
         chunk_stats = get_chunk_stats(chunks)
 
@@ -336,7 +329,6 @@ async def upload_repo(link: RepoLink):
 
         # Store chunks in database
         store_chunks_batch(repo_id, chunks)
-        logging.debug("Chunks stored in database")
 
         # Save parsed data as context (keep for backward compatibility)
         with open("context.json", "w") as context_file:

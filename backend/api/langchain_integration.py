@@ -29,16 +29,25 @@ from anthropic import Anthropic
 # Initialize the database
 initialize_database()
 
-# Setup logging
-logging.basicConfig(level=logging.DEBUG)
+# Setup logging (INFO level to avoid Railway rate limit)
+# DEBUG level causes excessive logs (100MB+ parsed_data dumps) → Railway 500 logs/sec limit
+logging.basicConfig(level=logging.INFO)
 
-# Ensure FAISS can be imported
+# Ensure FAISS can be imported (with fallback for Railway's CPU without AVX-512)
 try:
     import faiss
-    logging.info("Faiss imported successfully in langchain_integration!")
+    logging.info("✅ FAISS imported successfully")
 except ImportError as e:
-    logging.error(f"Error importing faiss in langchain_integration: {e}")
-    raise ImportError(f"Faiss import failed: {e}. Ensure faiss-cpu or faiss-gpu is installed.")
+    # Railway CPU may not have AVX-512 instructions, force basic FAISS
+    logging.warning(f"⚠️ FAISS AVX-512 import failed, trying fallback: {e}")
+    try:
+        import os
+        os.environ['FAISS_NO_AVX512'] = '1'
+        import faiss
+        logging.info("✅ FAISS imported with AVX-512 disabled")
+    except ImportError as fallback_error:
+        logging.error(f"❌ FAISS import failed completely: {fallback_error}")
+        raise ImportError(f"FAISS import failed: {fallback_error}. Ensure faiss-cpu is installed.")
 
 # LangChain v0.2+ imports (migrated from deprecated v0.1 paths)
 from langchain_core.documents import Document
