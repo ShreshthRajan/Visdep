@@ -41,7 +41,7 @@ async def list_sessions(user_id: str, user_repo_id: str):
         supabase = get_supabase_client()
 
         result = supabase.table('chat_sessions')\
-            .select('id, title, created_at, updated_at, messages')\
+            .select('id, title, created_at, updated_at, messages, context_nodes, highlighted_nodes')\
             .eq('user_id', user_id)\
             .eq('user_repo_id', user_repo_id)\
             .order('updated_at', desc=True)\

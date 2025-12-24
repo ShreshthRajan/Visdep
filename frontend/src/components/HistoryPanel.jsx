@@ -68,7 +68,9 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
         style={{
           backgroundColor: 'rgba(5, 5, 5, 0.6)',
           backdropFilter: 'blur(48px)',
-          borderRight: '1px solid #27272a'
+          borderRight: '1px solid #27272a',
+          backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.03) 1px, transparent 0)',
+          backgroundSize: '24px 24px'
         }}
       >
         {/* Header */}
