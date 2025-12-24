@@ -68,6 +68,7 @@ class RepoLink(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
+    repo_id: Optional[int] = None  # Multi-tenant: Explicit repo_id for user isolation
     context: Optional[dict] = None  # Optional: backend loads from DB server-side
     node_context: Optional[dict] = None  # DEPRECATED: For single per-node queries (backwards compat)
     node_contexts: Optional[List[dict]] = None  # NEW: For multi-node queries [{'chunk_id', 'name', 'type'}, ...]
@@ -441,9 +442,9 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
 
         # Check for mega-repo (simple database query, no global state)
         mega_repo_warning = None
-        if latest_repo_id:
+        if target_repo_id:
             # Count chunks from database
-            chunks = retrieve_chunks(latest_repo_id)
+            chunks = retrieve_chunks(target_repo_id)
             chunk_count = len(chunks)
 
             # Mega-repo threshold: 20,000 chunks (affects <1% of repos)
@@ -477,13 +478,16 @@ async def query_jamba(request: QueryRequest):
         # 1. More robust - no dependency on frontend timing
         # 2. Faster - avoids transferring 3MB+ JSON over network
         # 3. More secure - backend controls data source
-        global latest_repo_id
 
-        if not latest_repo_id:
+        # Multi-tenant: Use repo_id from request (explicit), fallback to global for backward compat
+        global latest_repo_id
+        target_repo_id = request.repo_id if request.repo_id else latest_repo_id
+
+        if not target_repo_id:
             raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
 
         # Load chunks from database (same pattern as query_stream endpoint)
-        chunks = retrieve_chunks(latest_repo_id)
+        chunks = retrieve_chunks(target_repo_id)
 
         if not chunks:
             raise HTTPException(status_code=400, detail=f"No chunks found for repository. Please re-upload the repository.")
@@ -505,7 +509,7 @@ async def query_jamba(request: QueryRequest):
         response = await get_jamba_response(
             query,
             context,
-            repo_id=latest_repo_id,
+            repo_id=target_repo_id,
             node_contexts=node_contexts_array
         )
 
@@ -524,17 +528,22 @@ async def query_jamba(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/node_code/{chunk_id:path}")
-async def get_node_code(chunk_id: str):
+async def get_node_code(chunk_id: str, repo_id: Optional[int] = None):
     """
     Get code for a specific node/chunk
     Returns the actual code content for display in Inspector
+
+    Multi-tenant: Accepts repo_id parameter for user isolation
     """
     try:
+        # Multi-tenant: Use explicit repo_id from query param, fallback to global
         global latest_repo_id
-        if not latest_repo_id:
+        target_repo_id = repo_id if repo_id else latest_repo_id
+
+        if not target_repo_id:
             raise HTTPException(status_code=400, detail="No repository loaded.")
 
-        chunks = retrieve_chunks(latest_repo_id)
+        chunks = retrieve_chunks(target_repo_id)
 
         # Try exact match first
         chunk = next((c for c in chunks if c['chunk_id'] == chunk_id), None)
@@ -562,18 +571,24 @@ async def explain_node(request: dict):
 
     Returns a concise 2-3 sentence explanation of a code chunk.
     Optimized for speed over comprehensiveness.
+
+    Multi-tenant: Accepts repo_id in request for user isolation
     """
     try:
         chunk_id = request.get('chunk_id')
         name = request.get('name', 'this code')
         chunk_type = request.get('type', 'code')
+        repo_id = request.get('repo_id')
 
+        # Multi-tenant: Use explicit repo_id from request, fallback to global
         global latest_repo_id
-        if not latest_repo_id:
+        target_repo_id = repo_id if repo_id else latest_repo_id
+
+        if not target_repo_id:
             raise HTTPException(status_code=400, detail="No repository loaded.")
 
         # Get chunk from database
-        chunks = retrieve_chunks(latest_repo_id)
+        chunks = retrieve_chunks(target_repo_id)
         chunk = next((c for c in chunks if c['chunk_id'] == chunk_id), None)
 
         if not chunk:
@@ -611,7 +626,7 @@ Be technical but clear. Focus on purpose and key functionality."""
         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 @app.get("/api/query_stream")
-async def query_stream(query: str):
+async def query_stream(query: str, repo_id: Optional[int] = None):
     """
     Task 2.3: Streaming endpoint for real-time Claude responses
 
@@ -620,6 +635,7 @@ async def query_stream(query: str):
 
     Args:
         query: User query (URL parameter)
+        repo_id: Repository ID for multi-tenant isolation
 
     Returns:
         StreamingResponse with SSE events
@@ -627,13 +643,15 @@ async def query_stream(query: str):
     try:
         from backend.api.langchain_integration import get_jamba_response_stream
 
-        # Load context for latest repo
+        # Multi-tenant: Use explicit repo_id from query param, fallback to global
         global latest_repo_id
-        if not latest_repo_id:
+        target_repo_id = repo_id if repo_id else latest_repo_id
+
+        if not target_repo_id:
             raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
 
         # Get chunks from database
-        chunks = retrieve_chunks(latest_repo_id)
+        chunks = retrieve_chunks(target_repo_id)
         if not chunks:
             raise HTTPException(status_code=404, detail="No chunks found for repository.")
 
@@ -643,7 +661,7 @@ async def query_stream(query: str):
         # Stream response
         async def event_generator():
             try:
-                async for token in get_jamba_response_stream(query, context, repo_id=latest_repo_id):
+                async for token in get_jamba_response_stream(query, context, repo_id=target_repo_id):
                     # SSE format: data: {token}\n\n
                     yield f"data: {json.dumps({'token': token})}\n\n"
                     await asyncio.sleep(0)  # Allow other tasks

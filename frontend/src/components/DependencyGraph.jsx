@@ -912,7 +912,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         chunk_id: node.id,
         name: node.label?.split('\n')[0] || node.id,  // Clean name (first line only)
         type: node.type,
-        file_path: node.id  // chunk_id contains file path
+        file_path: node.id,  // chunk_id contains file path
+        repo_id: currentRepoId  // Multi-tenant: Explicit repo for user isolation
       });
 
       setExplanationTooltip({

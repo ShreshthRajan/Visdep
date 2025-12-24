@@ -162,7 +162,10 @@ const GraphChat = () => {
 
     try {
       // OPTION C EXTENDED: Send node_contexts for multi-node queries
-      const payload = { query: queryText };
+      const payload = {
+        query: queryText,
+        repo_id: currentRepo?.local_repo_id  // Multi-tenant: Explicit repo for user isolation
+      };
 
       if (contextNodes.length > 0) {
         payload.node_contexts = contextNodes.map(node => ({
@@ -532,6 +535,7 @@ const GraphChat = () => {
               selectedNode={inspectedNode}
               onExplain={handleExplain}
               onAskQuestion={handleAskQuestion}
+              currentRepoId={currentRepo?.local_repo_id}
             />
           )}
         </div>

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import API from '../api';
 
 const Home = () => {
   const [repoUrl, setRepoUrl] = useState('');
@@ -57,6 +58,34 @@ const Home = () => {
     setMousePosition({ x, y });
   };
 
+  const handleGoToAccount = async () => {
+    if (!user) return;
+
+    try {
+      // Fetch user's repos (sorted by most recent)
+      const response = await API.get(`/api/user/${user.id}/repos`);
+      const repos = response.data;
+
+      if (repos && repos.length > 0) {
+        // Get most recent repo
+        const mostRecent = repos[0];
+
+        // Store in sessionStorage for GraphChat to pick up
+        sessionStorage.setItem('visdep_current_repo', JSON.stringify(mostRecent));
+
+        // Navigate to graph-chat
+        navigate('/graph-chat');
+      } else {
+        // No repos yet, navigate anyway (will show empty state)
+        navigate('/graph-chat');
+      }
+    } catch (error) {
+      console.error('Error loading account:', error);
+      // Fallback: just navigate
+      navigate('/graph-chat');
+    }
+  };
+
   return (
     <div
       className="relative w-screen h-screen overflow-hidden flex items-center justify-center"
@@ -80,46 +109,33 @@ const Home = () => {
         }}
       />
 
-      {/* Ghost Rail - Top Right */}
-      <div className="absolute top-6 right-6 z-50">
-        <div
-          className="px-4 py-2 rounded-full flex items-center gap-4"
-          style={{
-            backgroundColor: 'rgba(24, 24, 27, 0.5)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid rgba(39, 39, 42, 1)'
-          }}
-        >
-          <a
-            href="#"
-            className="text-xs transition-colors"
+      {/* Account Button - Top Right (only if logged in) */}
+      {user && (
+        <div className="absolute top-6 right-6 z-50">
+          <button
+            onClick={handleGoToAccount}
+            className="px-4 py-2 rounded-full text-xs transition-all"
             style={{
+              backgroundColor: 'rgba(24, 24, 27, 0.5)',
+              backdropFilter: 'blur(16px)',
+              border: '1px solid rgba(39, 39, 42, 1)',
               color: '#71717a',
               fontFamily: "'Inter', sans-serif",
-              textDecoration: 'none'
+              cursor: 'pointer'
             }}
-            onMouseEnter={(e) => e.target.style.color = '#22d3ee'}
-            onMouseLeave={(e) => e.target.style.color = '#71717a'}
-          >
-            docs
-          </a>
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs transition-colors"
-            style={{
-              color: '#71717a',
-              fontFamily: "'Inter', sans-serif",
-              textDecoration: 'none'
+            onMouseEnter={(e) => {
+              e.target.style.borderColor = '#22d3ee';
+              e.target.style.color = '#22d3ee';
             }}
-            onMouseEnter={(e) => e.target.style.color = '#22d3ee'}
-            onMouseLeave={(e) => e.target.style.color = '#71717a'}
+            onMouseLeave={(e) => {
+              e.target.style.borderColor = 'rgba(39, 39, 42, 1)';
+              e.target.style.color = '#71717a';
+            }}
           >
-            github
-          </a>
+            account
+          </button>
         </div>
-      </div>
+      )}
 
       {/* Center Stack - The Machine */}
       <div className="relative z-10 flex flex-col items-center">

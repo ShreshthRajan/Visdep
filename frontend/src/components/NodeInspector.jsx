@@ -3,7 +3,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
 
-const NodeInspector = ({ selectedNode, onExplain, onAskQuestion }) => {
+const NodeInspector = ({ selectedNode, onExplain, onAskQuestion, currentRepoId = null }) => {
   const [nodeCode, setNodeCode] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +17,11 @@ const NodeInspector = ({ selectedNode, onExplain, onAskQuestion }) => {
     const fetchCode = async () => {
       setLoading(true);
       try {
-        const response = await API.get(`/api/node_code/${encodeURIComponent(selectedNode.id)}`);
+        // Multi-tenant: Pass repo_id for user isolation
+        const url = currentRepoId
+          ? `/api/node_code/${encodeURIComponent(selectedNode.id)}?repo_id=${currentRepoId}`
+          : `/api/node_code/${encodeURIComponent(selectedNode.id)}`;
+        const response = await API.get(url);
         setNodeCode(response.data.code);
       } catch (error) {
         console.error('Failed to fetch code:', error);
@@ -28,7 +32,7 @@ const NodeInspector = ({ selectedNode, onExplain, onAskQuestion }) => {
     };
 
     fetchCode();
-  }, [selectedNode]);
+  }, [selectedNode, currentRepoId]);
 
   // Get node color for focus border
   const getNodeColor = (type) => {
