@@ -498,12 +498,8 @@ def chunk_file(file_path: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]
             }
         })
 
-    # Log chunk statistics
-    if chunks:
-        avg_tokens = sum(c.get('tokens', 0) for c in chunks) / len(chunks)
-        max_tokens = max(c.get('tokens', 0) for c in chunks)
-        logging.debug(f"📊 {file_path}: {len(chunks)} chunks (avg: {avg_tokens:.0f} tokens, max: {max_tokens} tokens)")
-
+    # Note: Per-file chunk stats removed to avoid Railway rate limit (500 logs/sec)
+    # Aggregated stats are logged via get_chunk_stats() after all files processed
     return chunks
 
 
