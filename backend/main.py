@@ -319,6 +319,7 @@ async def upload_repo(link: RepoLink):
         
         # Store repository metadata and parsed AST data
         repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
+        logging.info(f"🆔 SQLite assigned repo_id={repo_id} for {repo_metadata['full_name']}")
         for file_path, ast_info in parsed_data.items():
             store_ast_data(repo_id, file_path, ast_info)
 
@@ -383,26 +384,30 @@ async def upload_repo(link: RepoLink):
                 from backend.api.supabase_client import get_supabase_client
                 supabase = get_supabase_client()
 
+                logging.info(f"🔗 Linking repo to Supabase: user_id={link.user_id}, repo_id={repo_id}, repo_name={repo_metadata['full_name']}")
+
                 # Check if this repo already exists for this user
                 existing = supabase.table('user_repos').select('*').eq('user_id', link.user_id).eq('repo_name', repo_metadata['full_name']).execute()
 
                 if existing.data and len(existing.data) > 0:
                     # Update last_accessed
+                    logging.info(f"📝 Updating existing repo record (id={existing.data[0]['id']}) with local_repo_id={repo_id}")
                     supabase.table('user_repos').update({
                         'last_accessed': 'now()',
                         'local_repo_id': repo_id
                     }).eq('id', existing.data[0]['id']).execute()
-                    logging.info(f"✅ Updated repo access time for user {link.user_id}")
+                    logging.info(f"✅ Updated repo access time for user {link.user_id}, local_repo_id={repo_id}")
                 else:
                     # Create new user_repo link
-                    supabase.table('user_repos').insert({
+                    logging.info(f"➕ Creating new user_repos record with local_repo_id={repo_id}")
+                    result = supabase.table('user_repos').insert({
                         'user_id': link.user_id,
                         'repo_name': repo_metadata['full_name'],
                         'repo_url': repo_url,
                         'is_private': bool(link.github_token),  # Has token = private
                         'local_repo_id': repo_id
                     }).execute()
-                    logging.info(f"✅ Linked repo {repo_metadata['full_name']} to user {link.user_id}")
+                    logging.info(f"✅ Linked repo {repo_metadata['full_name']} to user {link.user_id}, local_repo_id={repo_id}, supabase_id={result.data[0]['id'] if result.data else 'unknown'}")
             except Exception as e:
                 # Don't fail upload if Supabase linking fails
                 logging.warning(f"⚠️ Failed to link repo to user in Supabase: {e}")

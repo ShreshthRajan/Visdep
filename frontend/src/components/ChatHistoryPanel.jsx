@@ -54,9 +54,9 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
       <div
         className="fixed right-96 top-0 bottom-0 w-72 z-50 animate-slide-in-right"
         style={{
-          backgroundColor: 'rgba(9, 9, 11, 0.95)',
+          backgroundColor: 'rgba(5, 5, 5, 0.6)',
           backdropFilter: 'blur(48px)',
-          borderLeft: '1px solid rgba(255, 255, 255, 0.1)'
+          borderLeft: '1px solid #27272a'
         }}
       >
         {/* Header */}

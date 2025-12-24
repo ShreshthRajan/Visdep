@@ -501,13 +501,27 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
   // Option B: Update canvas highlighting directly (performant, no full re-render)
   useEffect(() => {
-    if (!network || !graphData || highlightedNodes.length === 0) return;
+    console.log('🔵 HIGHLIGHT UPDATE TRIGGERED:', {
+      hasNetwork: !!network,
+      hasGraphData: !!graphData,
+      highlightCount: highlightedNodes.length
+    });
+
+    if (!network || !graphData) {
+      console.log('⏭️ Skipping: Network or graphData not ready');
+      return;
+    }
 
     const nodes = network.body.data.nodes;
-    if (!nodes) return;
+    if (!nodes) {
+      console.log('⏭️ Skipping: Nodes DataSet not ready');
+      return;
+    }
 
     try {
       const allNodeIds = nodes.getIds();
+      console.log(`🔄 Updating ${allNodeIds.length} total nodes, ${highlightedNodes.length} to highlight`);
+
       const updates = allNodeIds.map(nodeId => {
         const graphNode = graphData.nodes.find(n => n.id === nodeId);
         if (!graphNode) return null;
@@ -536,8 +550,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         };
       }).filter(Boolean);
 
-      nodes.update(updates);
-      console.log(`✅ Canvas updated: ${highlightedNodes.length} nodes highlighted`);
+      // FIX: Always update, even if highlightedNodes.length === 0 (clears old highlights)
+      requestAnimationFrame(() => {
+        nodes.update(updates);
+        const highlightedCount = updates.filter(u => highlightedNodes.includes(u.id)).length;
+        console.log(`✅ Canvas updated: ${highlightedCount} cyan, ${updates.length - highlightedCount} normal`);
+      });
     } catch (err) {
       console.error('❌ Canvas update error:', err);
     }

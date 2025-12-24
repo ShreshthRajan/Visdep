@@ -268,6 +268,7 @@ const GraphChat = () => {
       setChatHistory([]);
       setSelectedNodes([]);
       setInspectedNode(null);
+      setHighlightedNodes([]);  // FIX: Clear graph highlights from previous chat
 
       // Set new session as current
       setCurrentSession(newSession);
@@ -356,7 +357,7 @@ const GraphChat = () => {
       {/* Left Nav Glass Overlay */}
       <div className="absolute left-0 top-0 bottom-0 z-50">
         <LeftNav
-          activeView="map"
+          activeView={showHistory ? 'history' : showChats ? 'chats' : null}
           onHistoryClick={() => setShowHistory(true)}
           onChatsClick={() => setShowChats(true)}
         />
