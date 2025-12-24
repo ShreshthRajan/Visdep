@@ -372,6 +372,9 @@ const GraphChat = () => {
           // Activate repo in backend (sets global latest_repo_id)
           await API.post(`/api/repos/${repo.local_repo_id}/activate`);
 
+          // Clear old highlighted nodes (from previous repo)
+          setHighlightedNodes([]);
+
           // Set as current repo
           setCurrentRepo(repo);
 
