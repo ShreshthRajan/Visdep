@@ -20,6 +20,7 @@ const Loading = () => {
   // Get upload data from sessionStorage (synchronously available)
   const uploadData = JSON.parse(sessionStorage.getItem('visdep_upload') || '{}');
   const { repoUrl, subDirectory } = uploadData;
+  const [eta, setEta] = useState(null);
 
   // Effect 1: Redirect if no repoUrl AND upload hasn't started
   useEffect(() => {
@@ -169,12 +170,20 @@ const Loading = () => {
         }
 
         // Show backend processing message (large repos take 2-5 min)
-        setLogs(prev => [...prev, '[BACKEND]: Processing on server...']);
-        setLogs(prev => [...prev, '[BACKEND]: Large repos may take 2-5 minutes...']);
+        setLogs(prev => [...prev, '[BACKEND]: Processing repository on server...']);
+        setLogs(prev => [...prev, '[BACKEND]: Parsing code structure...']);
+        setLogs(prev => [...prev, '[BACKEND]: Building dependency graph...']);
+        setLogs(prev => [...prev, '[BACKEND]: Large repos (5000+ files) may take 3-5 minutes...']);
+        setLogs(prev => [...prev, '[BACKEND]: Please wait, do not refresh...']);
+
+        const uploadStartTime = Date.now();
         await new Promise(resolve => setTimeout(resolve, 500));
 
         // Wait for real upload to complete
         await uploadPromise;
+
+        const uploadDuration = Math.round((Date.now() - uploadStartTime) / 1000);
+        setLogs(prev => [...prev, `[BACKEND]: Completed in ${uploadDuration} seconds`]);
 
         // Final success log
         setLogs(prev => [...prev, '[COMPLETE]: Repository ready']);
@@ -336,8 +345,9 @@ const Loading = () => {
                   fontFamily: "'JetBrains Mono', monospace",
                   letterSpacing: '0.02em'
                 }}
+
               >
-                {progress < 100 ? `building... ${progress}%` : 'finalizing...'}
+                {progress < 100 ? `processing... ${progress}%` : eta ? `completing... eta ${eta}s` : 'finishing...'}
               </div>
             </div>
           </div>

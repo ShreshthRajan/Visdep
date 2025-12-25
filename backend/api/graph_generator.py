@@ -274,29 +274,13 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
 
 def add_spatial_information(G):
     """
-    Pre-compute node positions on backend for instant frontend rendering.
+    Add basic spatial positions for backward compatibility.
 
-    Uses NetworkX spring_layout with increased iterations for mega-repos (3000+ nodes).
-    Frontend can skip 30s Force-Atlas2 calculation by using these saved positions.
-
-    Performance optimization for large repos:
-    - Backend computation during upload: 5-10s (user sees progress)
-    - Frontend render: <1s (just display positions)
-    - Saves 20-30s of UI freeze for mega-repos
+    Note: Frontend uses Force-Atlas2 for beautiful layouts (ignores these positions).
+    Kept for legacy support only.
     """
-    node_count = len(G.nodes())
-
-    # Adaptive iterations based on graph size
-    # More nodes = need more iterations for good separation
-    if node_count < 1000:
-        iterations = 100  # Small repos: quick but quality
-    elif node_count < 3000:
-        iterations = 200  # Medium repos: balanced
-    else:
-        iterations = 300  # Mega repos: maximum quality (still only 5-10s)
-
     # Use a layout algorithm to determine node positions
-    pos = nx.spring_layout(G, k=0.5, iterations=iterations)
+    pos = nx.spring_layout(G, k=0.5, iterations=50)
 
     # Normalize positions to range [0, 1000] for both x and y
     min_x = min(pos.values(), key=lambda p: p[0])[0]
