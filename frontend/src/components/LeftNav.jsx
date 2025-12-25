@@ -3,14 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * Micro-UI Access Rail - HUD Design
+ * Ultra-Minimal Access Rail - Production Design
  *
- * Ultra-narrow, high-density navigation spine
- * Design: Fighter jet cockpit / Cursor-style precision
+ * Design Philosophy:
+ * - Invisible until needed (almost-black inactive state)
+ * - Micro-sized icons (14px, matches 10px text paradigm)
+ * - Pure transparency (5% background, no border)
+ * - Recedes completely (only active/hover states visible)
  *
- * Active state: 2px cyan dot (no boxes, no blooms)
- * Icons: Bare SVG glyphs floating in space
- * Profile: Tiny 24px circle
+ * Matches existing UI: 10px text, dark grays, minimal chrome
  */
 const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
   const navigate = useNavigate();
@@ -20,9 +21,8 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
     <div
       className="w-14 flex-none flex flex-col items-center py-8 relative"
       style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.2)',
-        backdropFilter: 'blur(48px) saturate(120%)',
-        borderRight: '1px solid rgba(255, 255, 255, 0.05)'
+        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+        backdropFilter: 'blur(48px) saturate(120%)'
       }}
     >
       {/* Top: Home */}
@@ -56,9 +56,9 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
           )}
 
           <HomeIcon
-            className="w-5 h-5 transition-all duration-200"
+            className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
             style={{
-              color: 'home' === activeView ? '#22d3ee' : '#52525b',
+              color: 'home' === activeView ? '#22d3ee' : '#18181b',
               filter: 'home' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
             }}
           />
@@ -66,7 +66,7 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
       </div>
 
       {/* Center: Library + Timeline */}
-      <div className="flex flex-col gap-8 mt-12">
+      <div className="flex flex-col gap-8 mt-6">
         {/* The Library (Grid - Repos) */}
         <div className="relative">
           <button
@@ -97,9 +97,9 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
             )}
 
             <GridIcon
-              className="w-5 h-5 transition-all duration-200 group-hover:text-zinc-400"
+              className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
               style={{
-                color: 'history' === activeView ? '#22d3ee' : '#52525b',
+                color: 'history' === activeView ? '#22d3ee' : '#18181b',
                 filter: 'history' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
               }}
             />
@@ -136,9 +136,9 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
             )}
 
             <ClockIcon
-              className="w-5 h-5 transition-all duration-200 group-hover:text-zinc-400"
+              className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
               style={{
-                color: 'chats' === activeView ? '#22d3ee' : '#52525b',
+                color: 'chats' === activeView ? '#22d3ee' : '#18181b',
                 filter: 'chats' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
               }}
             />
@@ -146,16 +146,16 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
         </div>
       </div>
 
-      {/* Bottom: User Profile (tiny 24px circle) */}
+      {/* Bottom: User Profile (micro 16px circle) */}
       {user && (
         <div className="mt-auto flex flex-col items-center">
           {/* Micro divider */}
           <div
             className="mb-3"
             style={{
-              width: '20px',
+              width: '16px',
               height: '1px',
-              backgroundColor: 'rgba(255, 255, 255, 0.08)'
+              backgroundColor: 'rgba(255, 255, 255, 0.05)'
             }}
           />
 
@@ -167,9 +167,9 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
             }}
             className="rounded-full overflow-hidden transition-all duration-200"
             style={{
-              width: '24px',
-              height: '24px',
-              opacity: 0.5,
+              width: '16px',
+              height: '16px',
+              opacity: 0.3,
               filter: 'grayscale(100%)',
               border: 'none',
               padding: 0,
@@ -180,7 +180,7 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
               e.currentTarget.style.filter = 'grayscale(0%)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = '0.5';
+              e.currentTarget.style.opacity = '0.3';
               e.currentTarget.style.filter = 'grayscale(100%)';
             }}
             title={`Signed in as ${user.username}`}
@@ -197,21 +197,21 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
   );
 };
 
-// SVG Icons (Sharp, minimal stroke)
+// SVG Icons (Ultra-thin stroke for minimal aesthetic)
 const HomeIcon = ({ className, style }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
   </svg>
 );
 
 const GridIcon = ({ className, style }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
   </svg>
 );
 
 const ClockIcon = ({ className, style }) => (
-  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+  <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 );
