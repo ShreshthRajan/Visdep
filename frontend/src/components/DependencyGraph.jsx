@@ -572,15 +572,19 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
   // Fetch graph data once on mount
   useEffect(() => {
     const fetchGraphData = async () => {
+      // MULTI-TENANT FIX: Don't fetch until we have a repo (prevents race condition)
+      if (!currentRepoId) {
+        console.log('⏭️ Skipping graph fetch: No repo selected yet');
+        return;
+      }
+
       try {
         console.log('📡 FETCH GRAPH:', { currentRepoId });
 
         setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
 
-        // Phase 2: Pass repo_id if available (multi-repo support)
-        const url = currentRepoId
-          ? `/api/dependency_graph?repo_id=${currentRepoId}`
-          : '/api/dependency_graph';
+        // Phase 2: Pass repo_id explicitly (multi-repo support)
+        const url = `/api/dependency_graph?repo_id=${currentRepoId}`;
 
         console.log('📡 Fetching from:', url);
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
-from backend.api.data_storage import initialize_database, store_repository_metadata, store_ast_data, store_chunks_batch, retrieve_chunks
+from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks
 from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import create_dependency_graph, create_chunk_level_graph, save_graph_as_json, load_graph_from_json
@@ -312,11 +312,10 @@ async def upload_repo(link: RepoLink):
         # Parse the repository content to AST
         parsed_data = parse_code_to_ast(repo_content)
 
-        # Store repository metadata and parsed AST data
+        # Store repository metadata (returns unique repo_id from Supabase)
         repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
-        logging.info(f"🆔 SQLite assigned repo_id={repo_id} for {repo_metadata['full_name']}")
-        for file_path, ast_info in parsed_data.items():
-            store_ast_data(repo_id, file_path, ast_info)
+        logging.info(f"🆔 Supabase assigned repo_id={repo_id} for {repo_metadata['full_name']}")
+        # Note: ast_data storage removed - it was never read after upload (unused table)
 
         # Process repository into chunks
         chunks = process_repository_to_chunks(parsed_data)
@@ -437,7 +436,17 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
 
         logging.info(f"📊 Loading graph for repo_id={target_repo_id}")
 
-        graph = load_graph_from_json(repo_id=target_repo_id)
+        # Multi-tenant: Handle missing graph files gracefully (old/corrupted repos)
+        try:
+            graph = load_graph_from_json(repo_id=target_repo_id)
+        except FileNotFoundError:
+            logging.warning(f"⚠️ Graph file not found for repo_id={target_repo_id} (may need re-upload)")
+            return {
+                "nodes": [],
+                "edges": [],
+                "error": "Graph not available. Please re-upload this repository."
+            }
+
         data = json_graph.node_link_data(graph)
 
         # Check for mega-repo (simple database query, no global state)

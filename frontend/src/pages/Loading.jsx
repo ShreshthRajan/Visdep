@@ -168,11 +168,16 @@ const Loading = () => {
           }
         }
 
+        // Show backend processing message (large repos take 2-5 min)
+        setLogs(prev => [...prev, '[BACKEND]: Processing on server...']);
+        setLogs(prev => [...prev, '[BACKEND]: Large repos may take 2-5 minutes...']);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         // Wait for real upload to complete
         await uploadPromise;
 
         // Final success log
-        setLogs(prev => [...prev, '[COMPLETE]: AST engine ready']);
+        setLogs(prev => [...prev, '[COMPLETE]: Repository ready']);
 
         // Phase 3: Fetch the repo that was just uploaded (for currentRepo state)
         if (user) {
@@ -332,7 +337,7 @@ const Loading = () => {
                   letterSpacing: '0.02em'
                 }}
               >
-                {progress < 100 ? `building... ${progress}%` : 'complete'}
+                {progress < 100 ? `building... ${progress}%` : 'finalizing...'}
               </div>
             </div>
           </div>

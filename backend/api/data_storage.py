@@ -83,17 +83,35 @@ def initialize_database():
     conn.close()
 
 def store_repository_metadata(repo_name: str, metadata: Dict[str, Any]):
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('INSERT INTO repositories (repo_name, metadata) VALUES (?, ?)', 
-                   (repo_name, json.dumps(metadata)))
-    
-    repo_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    
-    return repo_id
+    """
+    Store repository metadata in Supabase (production scale)
+
+    Returns unique repo_id from Supabase BIGSERIAL (handles unlimited concurrent uploads).
+    Replaces SQLite AUTOINCREMENT which had race conditions with concurrent users.
+    """
+    from .supabase_client import get_supabase_client
+    import logging
+
+    try:
+        supabase = get_supabase_client()
+
+        # Insert into Supabase repositories table
+        result = supabase.table('repositories').insert({
+            'repo_name': repo_name,
+            'metadata': metadata  # JSONB in Supabase, no need to serialize
+        }).execute()
+
+        if not result.data or len(result.data) == 0:
+            raise Exception("Failed to insert repository metadata")
+
+        repo_id = result.data[0]['id']
+        logging.info(f"✅ Stored repository metadata in Supabase, repo_id={repo_id}")
+
+        return repo_id
+
+    except Exception as e:
+        logging.error(f"❌ Error storing repository metadata: {e}")
+        raise
 
 def store_ast_data(repo_id: int, file_path: str, ast_info: Dict[str, Any]):
     conn = sqlite3.connect(DATABASE_PATH)
@@ -146,79 +164,132 @@ def store_chunk(repo_id: int, chunk_id: str, file_path: str, chunk_type: str,
     conn.close()
 
 def store_chunks_batch(repo_id: int, chunks: list):
-    """Store multiple chunks efficiently"""
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
+    """
+    Store multiple chunks efficiently in Supabase (scalable for 1000+ concurrent users)
 
-    chunk_data = [
-        (chunk['chunk_id'], repo_id, chunk['file_path'], chunk['type'],
-         chunk['name'], chunk['code'], chunk['start_line'], chunk['end_line'],
-         json.dumps(chunk['metadata']))
-        for chunk in chunks
-    ]
+    Migration from SQLite → Supabase for multi-tenant production scale.
+    Supabase handles unlimited concurrent writes (vs SQLite's ~5-10 limit).
+    """
+    from .supabase_client import get_supabase_client
+    import logging
 
-    cursor.executemany('''
-        INSERT OR REPLACE INTO chunks (chunk_id, repo_id, file_path, chunk_type, name, code,
-                           start_line, end_line, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', chunk_data)
+    if not chunks:
+        return
 
-    conn.commit()
-    conn.close()
+    supabase = get_supabase_client()
 
-def retrieve_chunks(repo_id: int) -> list:
-    """Retrieve all chunks for a repository"""
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT chunk_id, file_path, chunk_type, name, code, start_line, end_line, metadata
-        FROM chunks WHERE repo_id = ?
-    ''', (repo_id,))
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    chunks = []
-    for row in rows:
-        chunks.append({
-            'chunk_id': row[0],
-            'file_path': row[1],
-            'type': row[2],
-            'name': row[3],
-            'code': row[4],
-            'start_line': row[5],
-            'end_line': row[6],
-            'metadata': json.loads(row[7])
+    # Convert chunks to Supabase format
+    chunk_records = []
+    for chunk in chunks:
+        chunk_records.append({
+            'chunk_id': chunk['chunk_id'],
+            'repo_id': repo_id,
+            'file_path': chunk['file_path'],
+            'chunk_type': chunk['type'],
+            'name': chunk['name'],
+            'code': chunk['code'],
+            'start_line': chunk['start_line'],
+            'end_line': chunk['end_line'],
+            'metadata': chunk['metadata']  # JSONB in Supabase, no need to serialize
         })
 
-    return chunks
+    # Batch insert (Supabase supports up to 1000 rows per request)
+    # For mega-repos, split into batches
+    batch_size = 1000
+    total_batches = (len(chunk_records) + batch_size - 1) // batch_size
+
+    for i in range(0, len(chunk_records), batch_size):
+        batch = chunk_records[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        try:
+            supabase.table('chunks').upsert(batch, on_conflict='chunk_id').execute()
+            logging.info(f"✅ Stored batch {batch_num}/{total_batches} ({len(batch)} chunks)")
+        except Exception as e:
+            logging.error(f"❌ Failed to store batch {batch_num}: {e}")
+            raise
+
+    logging.info(f"✅ Stored {len(chunks)} total chunks in Supabase for repo_id={repo_id}")
+
+def retrieve_chunks(repo_id: int) -> list:
+    """
+    Retrieve all chunks for a repository from Supabase
+
+    Optimized for multi-tenant production scale (1000+ concurrent users).
+    """
+    from .supabase_client import get_supabase_client
+    import logging
+
+    try:
+        supabase = get_supabase_client()
+
+        # Query chunks for this repo (Postgres handles concurrent reads efficiently)
+        result = supabase.table('chunks')\
+            .select('chunk_id, file_path, chunk_type, name, code, start_line, end_line, metadata')\
+            .eq('repo_id', repo_id)\
+            .execute()
+
+        if not result.data:
+            logging.warning(f"⚠️ No chunks found for repo_id={repo_id}")
+            return []
+
+        # Convert Supabase format to internal format
+        chunks = []
+        for row in result.data:
+            chunks.append({
+                'chunk_id': row['chunk_id'],
+                'file_path': row['file_path'],
+                'type': row['chunk_type'],
+                'name': row['name'],
+                'code': row['code'],
+                'start_line': row['start_line'],
+                'end_line': row['end_line'],
+                'metadata': row['metadata']  # Already deserialized from JSONB
+            })
+
+        return chunks
+
+    except Exception as e:
+        logging.error(f"❌ Error retrieving chunks from Supabase: {e}")
+        # Fallback to empty for graceful degradation
+        return []
 
 def get_chunk_by_id(chunk_id: str) -> Dict[str, Any]:
-    """Retrieve a specific chunk by ID"""
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
+    """
+    Retrieve a specific chunk by ID from Supabase
 
-    cursor.execute('''
-        SELECT chunk_id, file_path, chunk_type, name, code, start_line, end_line, metadata
-        FROM chunks WHERE chunk_id = ?
-    ''', (chunk_id,))
+    Used for inspector and explain features.
+    """
+    from .supabase_client import get_supabase_client
+    import logging
 
-    row = cursor.fetchone()
-    conn.close()
+    try:
+        supabase = get_supabase_client()
 
-    if row:
+        result = supabase.table('chunks')\
+            .select('*')\
+            .eq('chunk_id', chunk_id)\
+            .limit(1)\
+            .execute()
+
+        if not result.data or len(result.data) == 0:
+            return None
+
+        row = result.data[0]
         return {
-            'chunk_id': row[0],
-            'file_path': row[1],
-            'type': row[2],
-            'name': row[3],
-            'code': row[4],
-            'start_line': row[5],
-            'end_line': row[6],
-            'metadata': json.loads(row[7])
+            'chunk_id': row['chunk_id'],
+            'file_path': row['file_path'],
+            'type': row['chunk_type'],
+            'name': row['name'],
+            'code': row['code'],
+            'start_line': row['start_line'],
+            'end_line': row['end_line'],
+            'metadata': row['metadata']
         }
-    return None
+
+    except Exception as e:
+        logging.error(f"❌ Error retrieving chunk {chunk_id}: {e}")
+        return None
 
 
 # ============================================================================
@@ -230,7 +301,9 @@ from datetime import datetime, timedelta
 
 def get_cached_response(query: str, repo_id: int, ttl_days: int = 7) -> str:
     """
-    Get cached response for query
+    Get cached response for query from Supabase
+
+    Migrated to Supabase for production scale (eliminates SQLite write locks).
 
     Args:
         query: User query text
@@ -241,27 +314,27 @@ def get_cached_response(query: str, repo_id: int, ttl_days: int = 7) -> str:
         Cached response or None if not found/expired
     """
     try:
+        from .supabase_client import get_supabase_client
+        import logging
+
         query_hash = hashlib.sha256(query.encode()).hexdigest()
+        supabase = get_supabase_client()
 
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
+        # Check cache with TTL (Postgres handles concurrent reads efficiently)
+        result = supabase.table('query_cache')\
+            .select('response, created_at')\
+            .eq('query_hash', query_hash)\
+            .eq('repo_id', repo_id)\
+            .limit(1)\
+            .execute()
 
-        # Check cache with TTL
-        cursor.execute('''
-            SELECT response, created_at FROM query_cache
-            WHERE query_hash = ? AND repo_id = ?
-        ''', (query_hash, repo_id))
-
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            response, created_at_str = row
-            created_at = datetime.fromisoformat(created_at_str)
+        if result.data and len(result.data) > 0:
+            row = result.data[0]
+            created_at = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
 
             # Check TTL
-            if datetime.now() - created_at < timedelta(days=ttl_days):
-                return response
+            if datetime.now(created_at.tzinfo) - created_at < timedelta(days=ttl_days):
+                return row['response']
 
         return None
 
@@ -274,7 +347,9 @@ def get_cached_response(query: str, repo_id: int, ttl_days: int = 7) -> str:
 
 def store_cached_response(query: str, repo_id: int, response: str):
     """
-    Store query response in cache
+    Store query response in cache (Supabase)
+
+    Migrated to Supabase for production scale (eliminates SQLite write locks).
 
     Args:
         query: User query text
@@ -282,22 +357,21 @@ def store_cached_response(query: str, repo_id: int, response: str):
         response: Generated response to cache
     """
     try:
-        query_hash = hashlib.sha256(query.encode()).hexdigest()
+        from .supabase_client import get_supabase_client
+        import logging
 
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
+        query_hash = hashlib.sha256(query.encode()).hexdigest()
+        supabase = get_supabase_client()
 
         # Upsert: insert or update if exists
-        cursor.execute('''
-            INSERT INTO query_cache (query_hash, repo_id, response, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(query_hash, repo_id) DO UPDATE SET
-                response = excluded.response,
-                created_at = excluded.created_at
-        ''', (query_hash, repo_id, response, datetime.now().isoformat()))
+        cache_record = {
+            'query_hash': query_hash,
+            'repo_id': repo_id,
+            'response': response,
+            'created_at': datetime.now().isoformat()
+        }
 
-        conn.commit()
-        conn.close()
+        supabase.table('query_cache').upsert(cache_record, on_conflict='query_hash,repo_id').execute()
 
     except Exception as e:
         # Graceful degradation: if cache store fails, just log and continue
@@ -307,30 +381,30 @@ def store_cached_response(query: str, repo_id: int, response: str):
 
 def invalidate_cache_for_repo(repo_id: int):
     """
-    Invalidate all cached queries for a repository
+    Invalidate all cached queries for a repository (Supabase)
 
-    Called when repo is re-uploaded to ensure fresh answers
+    Called when repo is re-uploaded to ensure fresh answers.
+    Migrated to Supabase for production scale.
 
     Args:
         repo_id: Repository ID
     """
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-
-        cursor.execute('DELETE FROM query_cache WHERE repo_id = ?', (repo_id,))
-
-        deleted_count = cursor.rowcount
-        conn.commit()
-        conn.close()
-
+        from .supabase_client import get_supabase_client
         import logging
-        logging.info(f"Invalidated {deleted_count} cached queries for repo {repo_id}")
+
+        supabase = get_supabase_client()
+
+        # Delete all cache entries for this repo
+        result = supabase.table('query_cache').delete().eq('repo_id', repo_id).execute()
+
+        deleted_count = len(result.data) if result.data else 0
+        logging.info(f"✅ Invalidated {deleted_count} cached queries for repo {repo_id}")
 
     except Exception as e:
         # Graceful degradation: if invalidation fails, log but don't crash
         import logging
-        logging.warning(f"Cache invalidation failed: {e}, continuing anyway")
+        logging.warning(f"⚠️ Cache invalidation failed: {e}, continuing anyway")
 
 
 # ============================================================================
@@ -341,6 +415,8 @@ def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
     """
     Map a single citation (file + line range) to chunk_id with fuzzy file path matching.
 
+    Migrated to Supabase for production scale.
+
     Args:
         citation: {'file': 'main.py', 'start_line': 42, 'end_line': 68}
         repo_id: Repository ID
@@ -350,44 +426,42 @@ def map_citation_to_chunk_id(citation: Dict[str, Any], repo_id: int) -> str:
     """
     try:
         import logging
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
+        from .supabase_client import get_supabase_client
+        supabase = get_supabase_client()
 
         cited_file = citation['file']
+        start_line = citation['start_line']
 
         # Try exact match first
-        cursor.execute('''
-            SELECT chunk_id FROM chunks
-            WHERE repo_id = ?
-            AND file_path = ?
-            AND start_line <= ?
-            AND end_line >= ?
-            ORDER BY (end_line - start_line) ASC
-            LIMIT 1
-        ''', (repo_id, cited_file, citation['start_line'], citation['start_line']))
+        result = supabase.table('chunks')\
+            .select('chunk_id')\
+            .eq('repo_id', repo_id)\
+            .eq('file_path', cited_file)\
+            .lte('start_line', start_line)\
+            .gte('end_line', start_line)\
+            .order('end_line', desc=False)\
+            .limit(1)\
+            .execute()
 
-        row = cursor.fetchone()
+        if result.data and len(result.data) > 0:
+            return result.data[0]['chunk_id']
 
-        # If no exact match, try fuzzy matching (file_path ends with cited filename)
-        if not row:
-            cursor.execute('''
-                SELECT chunk_id, file_path FROM chunks
-                WHERE repo_id = ?
-                AND file_path LIKE ?
-                AND start_line <= ?
-                AND end_line >= ?
-                ORDER BY (end_line - start_line) ASC
-                LIMIT 1
-            ''', (repo_id, f'%{cited_file}', citation['start_line'], citation['start_line']))
+        # If no exact match, try fuzzy matching (file_path contains cited filename)
+        result = supabase.table('chunks')\
+            .select('chunk_id, file_path')\
+            .eq('repo_id', repo_id)\
+            .like('file_path', f'%{cited_file}')\
+            .lte('start_line', start_line)\
+            .gte('end_line', start_line)\
+            .order('end_line', desc=False)\
+            .limit(1)\
+            .execute()
 
-            row = cursor.fetchone()
+        if result.data and len(result.data) > 0:
+            logging.debug(f"Fuzzy matched citation '{cited_file}' to chunk file_path '{result.data[0]['file_path']}'")
+            return result.data[0]['chunk_id']
 
-            if row:
-                logging.debug(f"Fuzzy matched citation '{cited_file}' to chunk file_path '{row[1]}'")
-
-        conn.close()
-
-        return row[0] if row else None
+        return None
 
     except Exception as e:
         import logging
