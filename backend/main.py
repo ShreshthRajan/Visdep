@@ -424,15 +424,20 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
     """
     Get dependency graph
 
+    Multi-tenant: Requires explicit repo_id parameter for user isolation.
+
     Args:
-        repo_id: Optional repository ID (Phase 2: multi-repo support)
+        repo_id: Repository ID (required for multi-tenant production)
     """
     try:
-        # Phase 2: Use provided repo_id, fallback to global latest_repo_id
-        target_repo_id = repo_id if repo_id else latest_repo_id
+        # Multi-tenant: Require explicit repo_id (no global fallback for production safety)
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="repo_id parameter is required. Please select a repository first."
+            )
 
-        if not target_repo_id:
-            raise HTTPException(status_code=400, detail="No repository loaded. Please upload a repository first.")
+        target_repo_id = repo_id
 
         logging.info(f"📊 Loading graph for repo_id={target_repo_id}")
 
@@ -488,12 +493,14 @@ async def query_jamba(request: QueryRequest):
         # 2. Faster - avoids transferring 3MB+ JSON over network
         # 3. More secure - backend controls data source
 
-        # Multi-tenant: Use repo_id from request (explicit), fallback to global for backward compat
-        global latest_repo_id
-        target_repo_id = request.repo_id if request.repo_id else latest_repo_id
+        # Multi-tenant: Require explicit repo_id (no global fallback for production safety)
+        if not request.repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="repo_id is required. Please select a repository first."
+            )
 
-        if not target_repo_id:
-            raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
+        target_repo_id = request.repo_id
 
         # Load chunks from database (same pattern as query_stream endpoint)
         chunks = retrieve_chunks(target_repo_id)
@@ -545,13 +552,14 @@ async def get_node_code(chunk_id: str, repo_id: Optional[int] = None):
     Multi-tenant: Accepts repo_id parameter for user isolation
     """
     try:
-        # Multi-tenant: Use explicit repo_id from query param, fallback to global
-        global latest_repo_id
-        target_repo_id = repo_id if repo_id else latest_repo_id
+        # Multi-tenant: Require explicit repo_id (no global fallback for production safety)
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="repo_id parameter is required. Please select a repository first."
+            )
 
-        if not target_repo_id:
-            raise HTTPException(status_code=400, detail="No repository loaded.")
-
+        target_repo_id = repo_id
         chunks = retrieve_chunks(target_repo_id)
 
         # Try exact match first
@@ -589,12 +597,14 @@ async def explain_node(request: dict):
         chunk_type = request.get('type', 'code')
         repo_id = request.get('repo_id')
 
-        # Multi-tenant: Use explicit repo_id from request, fallback to global
-        global latest_repo_id
-        target_repo_id = repo_id if repo_id else latest_repo_id
+        # Multi-tenant: Require explicit repo_id (no global fallback for production safety)
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="repo_id is required. Please select a repository first."
+            )
 
-        if not target_repo_id:
-            raise HTTPException(status_code=400, detail="No repository loaded.")
+        target_repo_id = repo_id
 
         # Get chunk from database
         chunks = retrieve_chunks(target_repo_id)
@@ -652,12 +662,14 @@ async def query_stream(query: str, repo_id: Optional[int] = None):
     try:
         from backend.api.langchain_integration import get_jamba_response_stream
 
-        # Multi-tenant: Use explicit repo_id from query param, fallback to global
-        global latest_repo_id
-        target_repo_id = repo_id if repo_id else latest_repo_id
+        # Multi-tenant: Require explicit repo_id (no global fallback for production safety)
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="repo_id parameter is required. Please select a repository first."
+            )
 
-        if not target_repo_id:
-            raise HTTPException(status_code=400, detail="No repository loaded. Upload a repository first.")
+        target_repo_id = repo_id
 
         # Get chunks from database
         chunks = retrieve_chunks(target_repo_id)
