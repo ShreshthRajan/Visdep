@@ -197,6 +197,19 @@ def store_chunks_batch(repo_id: int, chunks: list):
             'metadata': chunk['metadata']  # JSONB in Supabase, no need to serialize
         })
 
+    # CRITICAL: Deduplicate by chunk_id before batching
+    # TypeScript/JavaScript files can have duplicate start_lines (decorators, exports)
+    # Postgres upsert fails if same chunk_id appears twice in one batch
+    # Keep last occurrence (most complete data from AST parser)
+    seen = {}
+    for record in chunk_records:
+        seen[record['chunk_id']] = record
+    chunk_records = list(seen.values())
+
+    if len(chunks) != len(chunk_records):
+        duplicates_removed = len(chunks) - len(chunk_records)
+        logging.warning(f"⚠️ Removed {duplicates_removed} duplicate chunk_ids (AST parser issue)")
+
     # Batch insert (Supabase supports up to 1000 rows per request)
     # For mega-repos, split into batches
     batch_size = 1000
