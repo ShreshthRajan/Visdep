@@ -86,8 +86,20 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       }
     };
 
+    // Performance optimization: Check if backend pre-computed positions for mega-repos
+    const hasPrecomputedPositions = data.nodes.length > 0 &&
+                                     data.nodes[0].x !== undefined &&
+                                     data.nodes[0].y !== undefined;
+    const isMegaRepo = data.nodes.length >= 3000;
+    const usePrecomputedPositions = hasPrecomputedPositions && isMegaRepo;
+
     const stabilizationIterations = getStabilizationIterations(data.nodes.length);
-    console.log(`🚀 PERFORMANCE: Using ${stabilizationIterations} iterations for ${data.nodes.length} nodes (adaptive optimization)`);
+
+    if (usePrecomputedPositions) {
+      console.log(`🚀 MEGA-REPO OPTIMIZATION: ${data.nodes.length} nodes, using pre-computed positions (instant render)`);
+    } else {
+      console.log(`🚀 PERFORMANCE: Using ${stabilizationIterations} iterations for ${data.nodes.length} nodes (Force-Atlas2)`);
+    }
 
     // Dual-mode filtering: Full structure view vs Highlight-focused view
     const filteredNodes = data.nodes.filter(node => {
@@ -234,11 +246,11 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     const graphData = { nodes, edges };
     const options = {
       layout: {
-        improvedLayout: true,
-        randomSeed: 42,  // Consistent layout across reloads
+        improvedLayout: !usePrecomputedPositions,  // Skip if using saved positions
+        randomSeed: usePrecomputedPositions ? undefined : 42,  // Deterministic for Force-Atlas2 only
       },
       physics: {
-        enabled: true,
+        enabled: !usePrecomputedPositions,  // CRITICAL: Disable physics if positions pre-computed
         solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
         forceAtlas2Based: {
           gravitationalConstant: -150,  // Strong repulsion (spread nodes apart for readability)
@@ -249,7 +261,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           avoidOverlap: 1.5,  // Strong overlap prevention (critical for 400+ nodes)
         },
         stabilization: {
-          enabled: true,
+          enabled: !usePrecomputedPositions,  // Skip stabilization if using saved positions
           iterations: stabilizationIterations,  // Adaptive: 300/800/1500 based on repo size
           updateInterval: 25,
           fit: true,
@@ -327,17 +339,25 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     });
 
     // Force-Atlas2 clustering: Let physics organize, then lock positions
-    newNetwork.once('stabilizationIterationsDone', () => {
-      console.log('✅ GRAPH: Clustering complete, locking positions');
-      setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
-      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
-      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+    if (usePrecomputedPositions) {
+      // Mega-repo: Positions already computed, just fit and finish
+      console.log('✅ GRAPH: Using pre-computed positions, skipping stabilization');
+      newNetwork.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+      setLoadingState({ isLoading: false, message: '', progress: 100 });
+    } else {
+      // Normal repo: Let Force-Atlas2 compute beautiful layout
+      newNetwork.once('stabilizationIterationsDone', () => {
+        console.log('✅ GRAPH: Clustering complete, locking positions');
+        setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
+        newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
+        newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
 
-      // Mark as complete after animation
-      setTimeout(() => {
-        setLoadingState({ isLoading: false, message: '', progress: 100 });
-      }, 1000);
-    });
+        // Mark as complete after animation
+        setTimeout(() => {
+          setLoadingState({ isLoading: false, message: '', progress: 100 });
+        }, 1000);
+      });
+    }
 
     // REMOVED: Hover tooltips disabled - they show ugly HTML and aren't useful
     // Click interaction will open clean chat panel instead

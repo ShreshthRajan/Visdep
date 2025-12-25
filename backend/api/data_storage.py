@@ -12,6 +12,10 @@ DATABASE_PATH = os.getenv('DATABASE_PATH', 'data_storage.db')
 # FAISS indexes directory - also on persistent volume in production
 FAISS_DIR = os.getenv('FAISS_DIR', 'faiss_indexes')
 
+# In-memory chunks cache for production performance (eliminates repeated Supabase fetches)
+# Cleared on repo re-upload, persists across query sessions
+_chunks_cache = {}
+
 
 def initialize_database():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -213,12 +217,23 @@ def store_chunks_batch(repo_id: int, chunks: list):
 
 def retrieve_chunks(repo_id: int) -> list:
     """
-    Retrieve all chunks for a repository from Supabase
+    Retrieve all chunks for a repository from Supabase with in-memory caching.
+
+    Performance optimization:
+    - First query: Fetches from Supabase (2-3s network latency)
+    - Subsequent queries: Returns from memory cache (<1ms)
+    - Cache invalidated on repo re-upload
 
     Optimized for multi-tenant production scale (1000+ concurrent users).
     """
     from .supabase_client import get_supabase_client
     import logging
+
+    # Check in-memory cache first (massive speedup for repeated queries)
+    global _chunks_cache
+    if repo_id in _chunks_cache:
+        logging.info(f"✅ Chunks cache HIT for repo_id={repo_id} ({len(_chunks_cache[repo_id])} chunks from memory)")
+        return _chunks_cache[repo_id]
 
     try:
         supabase = get_supabase_client()
@@ -246,6 +261,10 @@ def retrieve_chunks(repo_id: int) -> list:
                 'end_line': row['end_line'],
                 'metadata': row['metadata']  # Already deserialized from JSONB
             })
+
+        # Store in cache for future queries
+        _chunks_cache[repo_id] = chunks
+        logging.info(f"✅ Chunks cache MISS for repo_id={repo_id}, fetched {len(chunks)} chunks from Supabase (cached for future)")
 
         return chunks
 
@@ -386,6 +405,8 @@ def invalidate_cache_for_repo(repo_id: int):
     Called when repo is re-uploaded to ensure fresh answers.
     Migrated to Supabase for production scale.
 
+    Also clears in-memory chunks cache for this repo.
+
     Args:
         repo_id: Repository ID
     """
@@ -400,6 +421,12 @@ def invalidate_cache_for_repo(repo_id: int):
 
         deleted_count = len(result.data) if result.data else 0
         logging.info(f"✅ Invalidated {deleted_count} cached queries for repo {repo_id}")
+
+        # Clear in-memory chunks cache
+        global _chunks_cache
+        if repo_id in _chunks_cache:
+            del _chunks_cache[repo_id]
+            logging.info(f"✅ Cleared chunks cache for repo {repo_id}")
 
     except Exception as e:
         # Graceful degradation: if invalidation fails, log but don't crash
