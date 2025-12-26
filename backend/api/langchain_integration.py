@@ -22,6 +22,10 @@ from backend.api.query_enhancement import (
     detect_primary_language,
     enhance_query_multimodal
 )
+from backend.api.summarization import (
+    load_summaries,
+    retrieve_relevant_summaries
+)
 import networkx as nx
 from sklearn.metrics.pairwise import cosine_similarity
 from anthropic import Anthropic
@@ -224,6 +228,7 @@ class ChatSession:
         self.context_assembler = None  # NEW: Step 3
         self.claude_client = None  # NEW: Step 3
         self.repo_id = repo_id  # Task 2.2: For FAISS persistence
+        self.hierarchical_summaries = None  # HCGS: For full-repo understanding
 
     async def initialize_conversation_chain(self, context):
         try:
@@ -239,6 +244,14 @@ class ChatSession:
             self.reranker = CodeReranker()
             self.context_assembler = ContextAssembler(max_tokens=6000)
             logging.info("Reranker and context assembler initialized (Step 3)")
+            
+            # HCGS: Load hierarchical summaries for full-repo understanding
+            if self.repo_id:
+                self.hierarchical_summaries = load_summaries(self.repo_id)
+                if self.hierarchical_summaries:
+                    logging.info(f"✅ Loaded HCGS summaries: repo={bool(self.hierarchical_summaries.get('repo'))}, packages={len(self.hierarchical_summaries.get('packages', {}))}, files={len(self.hierarchical_summaries.get('files', {}))}")
+                else:
+                    logging.info("ℹ️ No pre-computed HCGS summaries available")
 
             # NEW: Step 3 - Initialize Claude client
             anthropic_key = os.getenv("ANTHROPIC_API_KEY")
@@ -846,8 +859,15 @@ class ChatSession:
         query_lower = query.lower()
         is_complex = any(word in query_lower for word in
                         ['complete', 'entire', 'all', 'flow', 'trace', 'execution', 'how does'])
+        
+        # HCGS: Detect architectural/full-repo questions that benefit from hierarchical summaries
+        is_architectural = any(phrase in query_lower for phrase in [
+            'architecture', 'how does', 'interact', 'relationship', 'flow',
+            'where do i', 'hook in', 'structure', 'overview', 'main component',
+            'how are', 'what is the purpose', 'entry point', 'wire up'
+        ])
 
-        logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}")
+        logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}, architectural: {is_architectural}")
 
         # SOTA UPGRADE (Nov 2025): Enhanced retrieval with query processing
         # Implements 3 research-backed techniques for +40-65% improvement
@@ -988,9 +1008,47 @@ class ChatSession:
             reranked_chunks,
             include_full_code_top_n=include_full
         )
+        
+        # HCGS: Add hierarchical summaries for architectural questions
+        hcgs_context = ""
+        if is_architectural and self.hierarchical_summaries:
+            logging.info("📚 HCGS: Adding hierarchical summaries for architectural query")
+            
+            # Get relevant summaries based on query
+            relevant_summaries = await retrieve_relevant_summaries(
+                query, 
+                self.hierarchical_summaries,
+                self.claude_client,
+                top_packages=10,
+                top_files=20
+            )
+            
+            # Build HCGS context
+            hcgs_parts = []
+            
+            # Repository overview (always include for architectural questions)
+            if relevant_summaries.get('repo'):
+                hcgs_parts.append("## Repository Overview\n")
+                hcgs_parts.append(relevant_summaries['repo'])
+                hcgs_parts.append("\n")
+            
+            # Relevant package summaries
+            if relevant_summaries.get('packages'):
+                hcgs_parts.append("\n## Key Components\n")
+                for pkg_path, pkg_summary in relevant_summaries['packages'][:10]:
+                    hcgs_parts.append(f"**{pkg_path}**: {pkg_summary}\n")
+            
+            # Relevant file summaries
+            if relevant_summaries.get('files'):
+                hcgs_parts.append("\n## Relevant Files\n")
+                for file_path, file_summary in relevant_summaries['files'][:15]:
+                    hcgs_parts.append(f"- **{file_path}**: {file_summary}\n")
+            
+            hcgs_context = "\n".join(hcgs_parts)
+            logging.info(f"📚 HCGS context: {len(hcgs_context)} chars added")
 
-        context_text = "\n".join(assembled['context_parts'])
-        logging.info(f"Assembled context: {assembled['chunks_included']} chunks, {assembled['total_tokens']} tokens")
+        context_text = hcgs_context + "\n" + "\n".join(assembled['context_parts'])
+        logging.info(f"Assembled context: {assembled['chunks_included']} chunks, {assembled['total_tokens']} tokens + HCGS={len(hcgs_context)} chars")
 
         # Step 4: Build prompt for Claude
         prompt = self._build_claude_prompt(query, context_text, assembled, node_contexts)

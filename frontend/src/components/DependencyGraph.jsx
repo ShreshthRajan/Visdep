@@ -69,25 +69,46 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       }
     }
 
-    // Adaptive stabilization iterations based on graph complexity
-    // Research: Force-Atlas2 converges exponentially (80% settled in first 30%)
-    // vis-network docs recommend 200-1000 iterations for most graphs
-    // Optimization: Reduce iterations without sacrificing visual quality (40-50% faster rendering)
-    const getStabilizationIterations = (nodeCount) => {
-      if (nodeCount < 200) {
-        // Small repos: Fast stabilization (1-2 seconds)
-        return 300;
-      } else if (nodeCount < 1000) {
-        // Medium repos: Balanced (3-4 seconds)
-        return 800;
-      } else {
-        // Large repos: More iterations for complex graphs (5-6 seconds vs 8-10s before)
-        return 1500;
-      }
+    // =========================================================================
+    // MEGA-REPO OPTIMIZATION: Tiered physics modes for different repo sizes
+    // =========================================================================
+    // - Small (<1K nodes): Full ForceAtlas2 (beautiful, ~5s)
+    // - Medium (1K-5K nodes): Barnes-Hut optimization (O(n log n), ~10s)
+    // - Large (5K-10K nodes): Barnes-Hut with reduced iterations
+    // - Mega (>10K nodes): Pre-computed positions + local physics on drag
+    // =========================================================================
+    
+    const PHYSICS_MODE = {
+      FULL: 'full',           // <1K nodes: Full ForceAtlas2
+      BARNES_HUT: 'barnesHut', // 1K-10K nodes: Barnes-Hut O(n log n)
+      HYBRID: 'hybrid'        // >10K nodes: Pre-computed + local physics
     };
-
-    const stabilizationIterations = getStabilizationIterations(data.nodes.length);
-    console.log(`🚀 PERFORMANCE: Using ${stabilizationIterations} iterations for ${data.nodes.length} nodes (Force-Atlas2)`);
+    
+    const getPhysicsMode = (nodeCount) => {
+      if (nodeCount < 1000) return PHYSICS_MODE.FULL;
+      if (nodeCount < 10000) return PHYSICS_MODE.BARNES_HUT;
+      return PHYSICS_MODE.HYBRID;
+    };
+    
+    const getStabilizationIterations = (nodeCount, mode) => {
+      if (mode === PHYSICS_MODE.HYBRID) {
+        // Pre-computed positions: No stabilization needed
+        return 0;
+      }
+      if (nodeCount < 200) return 300;      // Small: 1-2 seconds
+      if (nodeCount < 1000) return 800;     // Medium: 3-4 seconds
+      if (nodeCount < 3000) return 1200;    // Large: 5-6 seconds
+      return 1500;                          // Very large: 8-10 seconds
+    };
+    
+    const physicsMode = getPhysicsMode(data.nodes.length);
+    const stabilizationIterations = getStabilizationIterations(data.nodes.length, physicsMode);
+    
+    // Check if nodes have pre-computed positions (for HYBRID mode)
+    const hasPrecomputedPositions = data.nodes.some(n => n.x !== undefined && n.y !== undefined);
+    const effectiveMode = hasPrecomputedPositions && data.nodes.length > 5000 ? PHYSICS_MODE.HYBRID : physicsMode;
+    
+    console.log(`🚀 PERFORMANCE: ${data.nodes.length} nodes, mode=${effectiveMode}, iterations=${stabilizationIterations}, precomputed=${hasPrecomputedPositions}`);
 
     // Dual-mode filtering: Full structure view vs Highlight-focused view
     const filteredNodes = data.nodes.filter(node => {
@@ -148,7 +169,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         },
       };
 
-      return {
+      // Base node properties
+      const nodeProps = {
         ...node,
         shape: getNodeShape(node.type),
         shapeProperties: {
@@ -178,6 +200,15 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         size: getNodeSize(node),
         label: getNodeLabel(node),
       };
+      
+      // HYBRID MODE: Use pre-computed x,y positions for instant render
+      if (effectiveMode === PHYSICS_MODE.HYBRID && node.x !== undefined && node.y !== undefined) {
+        nodeProps.x = node.x;
+        nodeProps.y = node.y;
+        nodeProps.physics = false;  // Don't apply physics to positioned nodes initially
+      }
+      
+      return nodeProps;
     }));
 
     // RE-ADD preserved query nodes after creating base nodes
@@ -232,12 +263,54 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
     const container = networkRef.current;
     const graphData = { nodes, edges };
-    const options = {
-      layout: {
-        improvedLayout: true,
-        randomSeed: 42,  // Consistent layout across reloads
-      },
-      physics: {
+    
+    // =========================================================================
+    // PHYSICS OPTIONS: Adaptive based on repo size
+    // =========================================================================
+    const getPhysicsOptions = (mode, iterations) => {
+      if (mode === PHYSICS_MODE.HYBRID) {
+        // HYBRID MODE: Pre-computed positions, no initial physics
+        // Local physics enabled on drag (see dragStart handler below)
+        return {
+          enabled: false,  // Start with physics OFF (instant render)
+          solver: 'barnesHut',  // When enabled, use fast O(n log n) algorithm
+          barnesHut: {
+            gravitationalConstant: -2000,
+            centralGravity: 0.3,
+            springLength: 95,
+            springConstant: 0.04,
+            damping: 0.09
+          },
+          stabilization: false  // Don't re-stabilize
+        };
+      }
+      
+      if (mode === PHYSICS_MODE.BARNES_HUT) {
+        // BARNES-HUT MODE: Fast O(n log n) for 1K-10K nodes
+        return {
+          enabled: true,
+          solver: 'barnesHut',  // O(n log n) vs O(n²) for forceAtlas2
+          barnesHut: {
+            gravitationalConstant: -3000,  // Stronger repulsion for large graphs
+            centralGravity: 0.1,
+            springLength: 120,
+            springConstant: 0.04,
+            damping: 0.5,
+            avoidOverlap: 0.5
+          },
+          stabilization: {
+            enabled: true,
+            iterations: iterations,
+            updateInterval: 25,
+            fit: true
+          },
+          maxVelocity: 50,
+          minVelocity: 0.5
+        };
+      }
+      
+      // FULL MODE: Beautiful ForceAtlas2 for small repos
+      return {
         enabled: true,
         solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
         forceAtlas2Based: {
@@ -250,13 +323,23 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         },
         stabilization: {
           enabled: true,
-          iterations: stabilizationIterations,  // Adaptive: 300/800/1500 based on repo size
+          iterations: iterations,
           updateInterval: 25,
           fit: true,
         },
-        maxVelocity: 30,  // Limit maximum movement speed
-        minVelocity: 0.5,  // Stop when movement is minimal
+        maxVelocity: 30,
+        minVelocity: 0.5
+      };
+    };
+    
+    const physicsOptions = getPhysicsOptions(effectiveMode, stabilizationIterations);
+    
+    const options = {
+      layout: {
+        improvedLayout: effectiveMode !== PHYSICS_MODE.HYBRID,  // Skip for pre-computed
+        randomSeed: 42,  // Consistent layout across reloads
       },
+      physics: physicsOptions,
       interaction: {
         hover: true,
         hoverConnectedEdges: true,
@@ -313,66 +396,150 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     const newNetwork = new Network(container, graphData, options);
     setNetwork(newNetwork);
 
-    // Show progress during stabilization (live updates)
-    newNetwork.on('stabilizationProgress', (params) => {
-      const progress = Math.round((params.iterations / params.total) * 100);
-      setLoadingState({
-        isLoading: true,
-        message: `Organizing clusters...`,
-        progress: 50 + (progress / 2)  // 50-100% range
-      });
-      if (progress % 20 === 0) {  // Log every 20%
-        console.log(`📊 GRAPH: Organizing clusters... ${progress}%`);
-      }
-    });
-
-    // Force-Atlas2 clustering: Let physics organize, then lock positions
-    newNetwork.once('stabilizationIterationsDone', () => {
-      console.log('✅ GRAPH: Clustering complete, locking positions');
-      setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
-      newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
-      newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
-
-      // Mark as complete after animation
+    // HYBRID MODE: Skip stabilization (instant render with pre-computed positions)
+    if (effectiveMode === PHYSICS_MODE.HYBRID) {
+      console.log('✅ GRAPH: HYBRID mode - using pre-computed positions (instant render)');
+      setLoadingState({ isLoading: true, message: 'Rendering graph...', progress: 80 });
+      
+      // Fit view after short delay to ensure all nodes are positioned
       setTimeout(() => {
+        newNetwork.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
         setLoadingState({ isLoading: false, message: '', progress: 100 });
-      }, 1000);
-    });
+        console.log('✅ GRAPH: HYBRID mode render complete');
+      }, 200);
+    } else {
+      // Show progress during stabilization (live updates)
+      newNetwork.on('stabilizationProgress', (params) => {
+        const progress = Math.round((params.iterations / params.total) * 100);
+        setLoadingState({
+          isLoading: true,
+          message: `Organizing clusters (${effectiveMode})...`,
+          progress: 50 + (progress / 2)  // 50-100% range
+        });
+        if (progress % 20 === 0) {  // Log every 20%
+          console.log(`📊 GRAPH: Organizing clusters... ${progress}% (${effectiveMode})`);
+        }
+      });
+
+      // Force-Atlas2/Barnes-Hut clustering: Let physics organize, then lock positions
+      newNetwork.once('stabilizationIterationsDone', () => {
+        console.log(`✅ GRAPH: Clustering complete (${effectiveMode}), locking positions`);
+        setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
+        newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
+        newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+
+        // MEGA-REPO: Save positions after stabilization for instant future loads
+        // Only save for large repos (>3000 nodes) that don't already have pre-computed positions
+        if (data.nodes.length > 3000 && !hasPrecomputedPositions && currentRepoId) {
+          console.log(`💾 MEGA-REPO: Saving ${data.nodes.length} node positions for instant future loads...`);
+          
+          // Get all positions from vis-network
+          const allPositions = newNetwork.getPositions();
+          
+          // Convert to storage format
+          const positionsToSave = {};
+          for (const [nodeId, pos] of Object.entries(allPositions)) {
+            positionsToSave[nodeId] = { x: pos.x, y: pos.y };
+          }
+          
+          // Save to backend asynchronously (don't block UI)
+          API.post('/api/save_graph_positions', {
+            repo_id: currentRepoId,
+            positions: positionsToSave
+          }).then(() => {
+            console.log(`✅ MEGA-REPO: Saved ${Object.keys(positionsToSave).length} positions to backend`);
+          }).catch(err => {
+            console.warn(`⚠️ Failed to save positions: ${err.message}`);
+          });
+        }
+
+        // Mark as complete after animation
+        setTimeout(() => {
+          setLoadingState({ isLoading: false, message: '', progress: 100 });
+        }, 1000);
+      });
+    }
 
     // REMOVED: Hover tooltips disabled - they show ugly HTML and aren't useful
     // Click interaction will open clean chat panel instead
 
     // Drag-and-drop to chat using ghost element (bypasses canvas constraints)
+    // HYBRID MODE: Enable local physics on drag for interactive feel
     newNetwork.on('dragStart', (params) => {
-      if (params.nodes.length > 0 && onNodeDragStart) {
+      if (params.nodes.length > 0) {
         const draggedNodeId = params.nodes[0];
         const draggedNode = nodes.get(draggedNodeId);
+        
+        // HYBRID MODE: Enable local physics for dragged node + neighbors
+        if (effectiveMode === PHYSICS_MODE.HYBRID) {
+          const connectedNodes = newNetwork.getConnectedNodes(draggedNodeId);
+          
+          // Get 2-hop neighbors for smooth local physics
+          const affectedNodes = new Set([draggedNodeId, ...connectedNodes]);
+          connectedNodes.forEach(n => {
+            newNetwork.getConnectedNodes(n).forEach(nn => affectedNodes.add(nn));
+          });
+          
+          // Fix all OTHER nodes (they don't move)
+          const allNodeIds = nodes.getIds();
+          const updates = allNodeIds.map(nodeId => ({
+            id: nodeId,
+            fixed: affectedNodes.has(nodeId) ? false : { x: true, y: true }
+          }));
+          nodes.update(updates);
+          
+          // Enable physics for local simulation
+          newNetwork.setOptions({ physics: { enabled: true } });
+          console.log(`🔧 HYBRID: Enabled local physics for ${affectedNodes.size} nodes`);
+        }
 
-        // Create ghost DOM element (follows cursor, can leave canvas)
-        const ghost = document.createElement('div');
-        const nodeName = draggedNode.label?.split('\n')[0] || draggedNode.id;
-        ghost.textContent = nodeName;
+        // Create ghost DOM element for drag-to-chat (if handler provided)
+        if (onNodeDragStart) {
+          const ghost = document.createElement('div');
+          const nodeName = draggedNode.label?.split('\n')[0] || draggedNode.id;
+          ghost.textContent = nodeName;
 
-        // Style ghost to match neural blue theme
-        ghost.style.position = 'fixed';
-        ghost.style.pointerEvents = 'none';  // Don't block mouse
-        ghost.style.zIndex = '10000';
-        ghost.style.padding = '6px 12px';
-        ghost.style.backgroundColor = '#22d3ee';
-        ghost.style.color = '#050505';
-        ghost.style.borderRadius = '4px';
-        ghost.style.fontSize = '11px';
-        ghost.style.fontFamily = 'JetBrains Mono, monospace';
-        ghost.style.fontWeight = '600';
-        ghost.style.boxShadow = '0 4px 16px rgba(34, 211, 238, 0.4)';
-        ghost.style.opacity = '0.95';
-        ghost.style.letterSpacing = '-0.01em';
+          // Style ghost to match neural blue theme
+          ghost.style.position = 'fixed';
+          ghost.style.pointerEvents = 'none';  // Don't block mouse
+          ghost.style.zIndex = '10000';
+          ghost.style.padding = '6px 12px';
+          ghost.style.backgroundColor = '#22d3ee';
+          ghost.style.color = '#050505';
+          ghost.style.borderRadius = '4px';
+          ghost.style.fontSize = '11px';
+          ghost.style.fontFamily = 'JetBrains Mono, monospace';
+          ghost.style.fontWeight = '600';
+          ghost.style.boxShadow = '0 4px 16px rgba(34, 211, 238, 0.4)';
+          ghost.style.opacity = '0.95';
+          ghost.style.letterSpacing = '-0.01em';
 
-        document.body.appendChild(ghost);
+          document.body.appendChild(ghost);
 
-        // Pass node + ghost to parent
-        onNodeDragStart({ node: draggedNode, ghostElement: ghost });
-        console.log('🎯 Drag started:', nodeName);
+          // Pass node + ghost to parent
+          onNodeDragStart({ node: draggedNode, ghostElement: ghost });
+          console.log('🎯 Drag started:', nodeName);
+        }
+      }
+    });
+    
+    // HYBRID MODE: Disable physics after drag ends, lock new positions
+    newNetwork.on('dragEnd', (params) => {
+      if (effectiveMode === PHYSICS_MODE.HYBRID && params.nodes.length > 0) {
+        // Let physics settle briefly, then disable
+        setTimeout(() => {
+          newNetwork.setOptions({ physics: { enabled: false } });
+          
+          // Unfix all nodes for next drag
+          const allNodeIds = nodes.getIds();
+          const updates = allNodeIds.map(nodeId => ({
+            id: nodeId,
+            fixed: false
+          }));
+          nodes.update(updates);
+          
+          console.log('🔧 HYBRID: Physics disabled, positions locked');
+        }, 500);  // 500ms for physics to settle
       }
     });
 

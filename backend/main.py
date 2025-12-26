@@ -11,7 +11,14 @@ from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks
 from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
-from backend.api.graph_generator import create_dependency_graph, create_chunk_level_graph, save_graph_as_json, load_graph_from_json
+from backend.api.graph_generator import (
+    create_dependency_graph, 
+    create_chunk_level_graph, 
+    save_graph_as_json, 
+    load_graph_from_json,
+    load_graph_positions,
+    precompute_graph_with_positions
+)
 from networkx.readwrite import json_graph
 from dotenv import load_dotenv
 from typing import Optional, List
@@ -280,6 +287,8 @@ def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=
 
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
+    global latest_repo_id  # Declare global at function top
+    
     try:
         repo_url = link.repo_url
         sub_directory = link.sub_directory
@@ -287,6 +296,56 @@ async def upload_repo(link: RepoLink):
         exclude_examples = link.exclude_examples
         exclude_tests = link.exclude_tests
         auth_token = os.getenv("GITHUB_AUTH_TOKEN")
+        
+        # =====================================================================
+        # MEGA-REPO OPTIMIZATION: Check for pre-indexed repository
+        # =====================================================================
+        # Pre-indexed repos (kubernetes, tensorflow, etc.) have all indexes
+        # pre-computed. Skip processing and return instantly.
+        # =====================================================================
+        try:
+            from backend.api.supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            # Extract repo name from URL (e.g., 'kubernetes/kubernetes' from URL)
+            repo_name = '/'.join(repo_url.rstrip('/').split('/')[-2:])
+            
+            # Check if this repo is pre-indexed
+            preindexed = supabase.table('preindexed_repos')\
+                .select('*')\
+                .eq('repo_name', repo_name)\
+                .limit(1)\
+                .execute()
+            
+            if preindexed.data and len(preindexed.data) > 0:
+                pre = preindexed.data[0]
+                logging.info(f"🚀 PRE-INDEXED REPO DETECTED: {repo_name}")
+                logging.info(f"   Chunks: {pre['chunk_count']}, Nodes: {pre['node_count']}")
+                logging.info(f"   Has: summaries={pre['has_summaries']}, positions={pre['has_positions']}, BM25={pre['has_bm25_index']}")
+                
+                # Return pre-indexed repo_id instantly (no processing needed)
+                latest_repo_id = pre['repo_id']
+                
+                return {
+                    "message": f"Pre-indexed repository loaded instantly.",
+                    "repo_id": pre['repo_id'],
+                    "chunks": pre['chunk_count'],
+                    "files_processed": pre['node_count'],
+                    "preindexed": True,
+                    "filter_metadata": {
+                        "excluded_dirs": [],
+                        "notifications": [{
+                            'type': 'preindexed',
+                            'message': f"Repository is pre-indexed with {pre['chunk_count']:,} chunks. All indexes loaded instantly."
+                        }],
+                        "original_file_count": pre['node_count'],
+                        "filtered_file_count": pre['node_count'],
+                        "total_savings_pct": 0
+                    }
+                }
+        except Exception as preindex_error:
+            # Pre-index check failed, continue with normal upload
+            logging.debug(f"Pre-index check: {preindex_error} (continuing normal upload)")
 
         # Fetch repository content using git clone (faster, no rate limits)
         # Fallback to API if git not available
@@ -367,7 +426,7 @@ async def upload_repo(link: RepoLink):
         invalidate_cache_for_repo(repo_id)
 
         # Store repo_id globally for latest upload (simple solution for single-user prototype)
-        global latest_repo_id
+        # Note: global declaration already at top of function (line 325)
         latest_repo_id = repo_id
 
         # Phase 2: Link repo to user in Supabase (if user_id provided)
@@ -453,6 +512,26 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
             }
 
         data = json_graph.node_link_data(graph)
+        
+        # =====================================================================
+        # MEGA-REPO OPTIMIZATION: Load pre-computed positions if available
+        # =====================================================================
+        # For mega-repos (>10K nodes), positions are pre-computed server-side
+        # using ForceAtlas2 with high iterations. This enables instant render.
+        # =====================================================================
+        precomputed_positions = None
+        if target_repo_id:
+            positions = load_graph_positions(target_repo_id)
+            if positions:
+                precomputed_positions = positions
+                logging.info(f"📍 Loaded pre-computed positions for {len(positions)} nodes")
+                
+                # Merge positions into node data
+                for node in data["nodes"]:
+                    node_id = node["id"]
+                    if node_id in positions:
+                        node["x"] = positions[node_id]["x"]
+                        node["y"] = positions[node_id]["y"]
 
         # Check for mega-repo (simple database query, no global state)
         mega_repo_warning = None
@@ -469,14 +548,16 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
                     'chunk_count': chunk_count,
                     'message': f"This repository is extremely large ({chunk_count:,} chunks).",
                     'recommendation': "For better performance, try using the 'subdirectory' field to focus on a specific module.",
-                    'example': "For PyTorch: subdirectory='torch' or 'torch/nn'"
+                    'example': "For PyTorch: subdirectory='torch' or 'torch/nn'",
+                    'has_precomputed_positions': precomputed_positions is not None
                 }
-                logging.info(f"⚠️ Mega-repo warning for graph page: {chunk_count:,} chunks")
+                logging.info(f"⚠️ Mega-repo warning for graph page: {chunk_count:,} chunks, precomputed={precomputed_positions is not None}")
 
         return {
             "nodes": data["nodes"],
             "edges": data["links"],
-            "mega_repo_warning": mega_repo_warning
+            "mega_repo_warning": mega_repo_warning,
+            "has_precomputed_positions": precomputed_positions is not None
         }
     except Exception as e:
         logging.error(f"Error in get_dependency_graph: {e}")
@@ -707,6 +788,55 @@ async def query_stream(query: str, repo_id: Optional[int] = None):
     except Exception as e:
         logging.error(f"Error in query_stream: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+@app.post("/api/save_graph_positions")
+async def save_graph_positions_endpoint(request: dict):
+    """
+    Save pre-computed graph positions from frontend
+    
+    After vis-network completes ForceAtlas2 stabilization, the frontend
+    saves the beautiful positions here. Future loads use these positions
+    for instant rendering with identical aesthetics.
+    
+    Args:
+        request: {repo_id: int, positions: {node_id: {x, y}, ...}}
+    """
+    try:
+        repo_id = request.get('repo_id')
+        positions = request.get('positions')
+        
+        if not repo_id or not positions:
+            raise HTTPException(status_code=400, detail="repo_id and positions required")
+        
+        logging.info(f"💾 Saving {len(positions)} graph positions for repo_id={repo_id}")
+        
+        # Import and save
+        from backend.api.graph_generator import store_graph_positions
+        success = store_graph_positions(repo_id, positions)
+        
+        if success:
+            logging.info(f"✅ Graph positions saved for repo_id={repo_id}")
+            
+            # Also update preindexed_repos if this is a pre-indexed repo
+            try:
+                from backend.api.supabase_client import get_supabase_client
+                supabase = get_supabase_client()
+                supabase.table('preindexed_repos')\
+                    .update({'has_positions': True})\
+                    .eq('repo_id', repo_id)\
+                    .execute()
+                logging.info(f"   Updated preindexed_repos.has_positions=True")
+            except Exception as e:
+                logging.debug(f"   Not a preindexed repo or update failed: {e}")
+            
+            return {"success": True, "positions_saved": len(positions)}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save positions")
+            
+    except Exception as e:
+        logging.error(f"Error saving graph positions: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {e}")
+
 
 @app.get("/api/context")
 async def get_context():

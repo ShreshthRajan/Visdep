@@ -1,10 +1,14 @@
 import os
 import networkx as nx
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from networkx.readwrite import json_graph
 import json
 from collections import defaultdict
 import logging
+
+# Note: Graph positions are now saved FROM THE FRONTEND after vis-network
+# completes ForceAtlas2 stabilization. This ensures the exact same beautiful
+# layout that users see. No server-side fa2 needed.
 
 
 def create_chunk_level_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
@@ -375,3 +379,123 @@ def load_graph_from_json(file_path: str = "dependency_graph.json", repo_id: int 
 def get_subgraph_at_level(G: nx.DiGraph, level: int) -> nx.DiGraph:
     nodes = [node for node, data in G.nodes(data=True) if data['level'] <= level]
     return G.subgraph(nodes)
+
+
+# =============================================================================
+# GRAPH POSITIONS (Saved from frontend vis-network ForceAtlas2)
+# =============================================================================
+# 
+# Graph positions are now computed BY VIS-NETWORK in the frontend using its
+# native ForceAtlas2 implementation. After stabilization completes, the 
+# frontend saves the positions to the backend. This ensures:
+#
+# 1. Identical beautiful layout (same algorithm that users see)
+# 2. No server-side fa2 dependency needed
+# 3. Instant load for future users with exact same aesthetic
+#
+# Flow:
+# 1. You upload mega-repo → Frontend runs vis-network ForceAtlas2 (30s+)
+# 2. After stabilization → Frontend saves positions to backend
+# 3. Future users → Load saved positions instantly (same beautiful layout)
+# =============================================================================
+
+
+def store_graph_positions(repo_id: int, positions: Dict[str, Dict[str, float]]) -> bool:
+    """
+    Store pre-computed graph positions in Supabase.
+    
+    Args:
+        repo_id: Repository ID
+        positions: Dict of {node_id: {"x": float, "y": float}}
+        
+    Returns:
+        True if stored successfully
+    """
+    try:
+        from .supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+        
+        record = {
+            'repo_id': repo_id,
+            'positions': positions,
+            'algorithm': 'vis-network-forceAtlas2',  # Positions saved from frontend vis-network
+            'iterations': 0  # Not applicable - computed by frontend
+        }
+        
+        supabase.table('graph_positions').upsert(
+            record, 
+            on_conflict='repo_id'
+        ).execute()
+        
+        logging.info(f"✅ Stored graph positions for repo_id={repo_id} ({len(positions)} nodes)")
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ Failed to store graph positions: {e}")
+        return False
+
+
+def load_graph_positions(repo_id: int) -> Optional[Dict[str, Dict[str, float]]]:
+    """
+    Load pre-computed graph positions from Supabase.
+    
+    Args:
+        repo_id: Repository ID
+        
+    Returns:
+        Dict of positions or None if not found
+    """
+    try:
+        from .supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+        
+        result = supabase.table('graph_positions')\
+            .select('positions')\
+            .eq('repo_id', repo_id)\
+            .limit(1)\
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            positions = result.data[0]['positions']
+            logging.info(f"✅ Loaded graph positions for repo_id={repo_id} ({len(positions)} nodes)")
+            return positions
+        
+        return None
+        
+    except Exception as e:
+        logging.warning(f"⚠️ Failed to load graph positions: {e}")
+        return None
+
+
+def precompute_graph_with_positions(
+    chunks: List[Dict[str, Any]], 
+    repo_id: int
+) -> nx.DiGraph:
+    """
+    Create chunk-level graph.
+    
+    Note: For mega-repos, positions are saved FROM THE FRONTEND after
+    vis-network completes ForceAtlas2 stabilization. This ensures the
+    exact same beautiful layout that users see.
+    
+    Flow for mega-repos:
+    1. You upload the repo (this function creates the graph structure)
+    2. Frontend loads graph, runs vis-network ForceAtlas2 (30s+)
+    3. After stabilization, frontend saves positions to backend
+    4. Future users load those exact positions instantly
+    
+    Args:
+        chunks: List of code chunks
+        repo_id: Repository ID
+        
+    Returns:
+        NetworkX graph (positions saved separately by frontend)
+    """
+    # Create graph
+    G = create_chunk_level_graph(chunks)
+    
+    if len(G.nodes()) > 3000:
+        logging.info(f"📊 Mega-repo detected ({len(G.nodes())} nodes)")
+        logging.info(f"   Positions will be saved by frontend after ForceAtlas2 stabilization")
+    
+    return G
