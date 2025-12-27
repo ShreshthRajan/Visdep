@@ -31,6 +31,11 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentLevel, setCurrentLevel] = useState(4);
+  const [searchQuery, setSearchQuery] = useState('');  // New search bar query
+  const [searchResults, setSearchResults] = useState([]);  // Search results
+  const [selectedResultIndex, setSelectedResultIndex] = useState(-1);  // Keyboard navigation
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef(null);
   const [loadingState, setLoadingState] = useState({ isLoading: false, message: '', progress: 0 });
   const [megaRepoWarning, setMegaRepoWarning] = useState(null);
 
@@ -888,6 +893,190 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     setSearchTerm(event.target.value);
   };
 
+  // Search bar functionality
+  const performSearch = useCallback((query) => {
+    if (!graphData || !query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const queryLower = query.toLowerCase();
+    const results = graphData.nodes
+      .filter(node => {
+        const label = (node.label || '').toLowerCase();
+        const id = (node.id || '').toLowerCase();
+        return label.includes(queryLower) || id.includes(queryLower);
+      })
+      .slice(0, 10)  // Limit to 10 results
+      .map(node => ({
+        id: node.id,
+        label: node.label || node.id,
+        type: node.type
+      }));
+
+    setSearchResults(results);
+    setSelectedResultIndex(-1);
+  }, [graphData]);
+
+  const handleSearchQueryChange = (e) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    performSearch(query);
+  };
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedResultIndex(prev => 
+        prev < searchResults.length - 1 ? prev + 1 : prev
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedResultIndex(prev => prev > 0 ? prev - 1 : -1);
+    } else if (e.key === 'Enter' && selectedResultIndex >= 0 && searchResults[selectedResultIndex]) {
+      e.preventDefault();
+      handleNodeSelectFromSearch(searchResults[selectedResultIndex].id);
+    } else if (e.key === 'Escape') {
+      setSearchQuery('');
+      setSearchResults([]);
+      setIsSearchFocused(false);
+      searchInputRef.current?.blur();
+    }
+  };
+
+  const handleNodeSelectFromSearch = useCallback((nodeId) => {
+    if (!network || !graphData) return;
+
+    // Get node position
+    const positions = network.getPositions([nodeId]);
+    if (!positions[nodeId]) {
+      // Node might not be visible yet, try to find it in graph data
+      const node = graphData.nodes.find(n => n.id === nodeId);
+      if (!node) return;
+      
+      // Fit to show all nodes, then zoom to this one
+      network.fit({ animation: { duration: 400 } });
+      
+      // Try again after fit
+      setTimeout(() => {
+        const newPositions = network.getPositions([nodeId]);
+        if (newPositions[nodeId]) {
+          const pos = newPositions[nodeId];
+          network.moveTo({
+            position: { x: pos.x, y: pos.y },
+            scale: 1.5,
+            animation: { duration: 600, easingFunction: 'easeInOutQuad' }
+          });
+        }
+      }, 450);
+    } else {
+      const pos = positions[nodeId];
+
+      // Smooth camera transition to node
+      network.moveTo({
+        position: { x: pos.x, y: pos.y },
+        scale: 1.5,  // Zoom in slightly
+        animation: {
+          duration: 600,
+          easingFunction: 'easeInOutQuad'
+        }
+      });
+    }
+
+    // Pulse effect: temporarily highlight the node
+    if (network.body && network.body.data) {
+      const nodes = network.body.data.nodes;
+      const nodeData = nodes.get(nodeId);
+      
+      if (nodeData) {
+        // Store original properties
+        const originalBackground = nodeData.color?.background || nodeData.color || '#18181b';
+        const originalBorder = nodeData.color?.border || '#52525b';
+        const originalSize = nodeData.size || 20;
+
+        // Pulse with cyan glow
+        nodes.update({
+          id: nodeId,
+          color: {
+            background: '#22d3ee',
+            border: '#ffffff',
+            highlight: { background: '#22d3ee', border: '#ffffff' }
+          },
+          font: { color: '#000000' },
+          size: originalSize * 1.3  // Slightly larger
+        });
+
+        // Dim other nodes temporarily
+        const allNodeIds = graphData.nodes.map(n => n.id).filter(id => id !== nodeId);
+        const updates = allNodeIds.map(id => {
+          const node = nodes.get(id);
+          return {
+            id,
+            opacity: 0.3,
+            color: {
+              ...node.color,
+              opacity: 0.3
+            }
+          };
+        });
+        nodes.update(updates);
+
+        // Restore after animation
+        setTimeout(() => {
+          nodes.update({
+            id: nodeId,
+            color: {
+              background: originalBackground,
+              border: originalBorder
+            },
+            size: originalSize
+          });
+          
+          const restoreUpdates = allNodeIds.map(id => {
+            const node = nodes.get(id);
+            return {
+              id,
+              opacity: 1.0,
+              color: {
+                ...node.color,
+                opacity: 1.0
+              }
+            };
+          });
+          nodes.update(restoreUpdates);
+        }, 2000);
+
+        // Call onNodeSelect callback if provided
+        if (onNodeSelect) {
+          const node = graphData.nodes.find(n => n.id === nodeId);
+          if (node) {
+            onNodeSelect({ id: nodeId, label: node.label, type: node.type }, null);
+          }
+        }
+      }
+    }
+
+    // Clear search
+    setSearchQuery('');
+    setSearchResults([]);
+    setIsSearchFocused(false);
+    searchInputRef.current?.blur();
+  }, [network, graphData, onNodeSelect]);
+
+  // Cmd+K keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        setIsSearchFocused(true);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const getNodeShape = (type) => {
     // Enterprise-grade: All nodes use 'box' shape with rounded corners
     // Circles only for small connector nodes (imports/packages)
@@ -1117,10 +1306,16 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       if (isFilterOpen && !e.target.closest('.filter-dropdown-container')) {
         setIsFilterOpen(false);
       }
+      // Close search dropdown when clicking outside
+      if (searchQuery && !e.target.closest('.search-hud-container')) {
+        setSearchQuery('');
+        setSearchResults([]);
+        setIsSearchFocused(false);
+      }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [isFilterOpen]);
+  }, [isFilterOpen, searchQuery]);
 
   return (
     <div className="h-full flex flex-col relative">
@@ -1134,8 +1329,81 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           <button onClick={() => setMegaRepoWarning(null)} className="ml-3 hover:opacity-75 font-medium" style={{ color: 'var(--text-secondary)' }}>×</button>
         </div>
       )}
-      {/* Floating Island Control - Top Center */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-2 rounded-full" style={{
+      {/* Search HUD - Top Center */}
+      <div className="search-hud-container absolute top-6 left-1/2 -translate-x-1/2 z-20" style={{ width: '400px', maxWidth: '90vw' }}>
+        <div className="relative">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={handleSearchQueryChange}
+            onKeyDown={handleSearchKeyDown}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}  // Delay to allow click on results
+            placeholder="// GOTO_NODE"
+            className="w-full px-4 py-2.5 rounded-lg transition-all duration-200 outline-none"
+            style={{
+              backgroundColor: 'rgba(0, 0, 0, 0.4)',
+              backdropFilter: 'blur(24px)',
+              border: isSearchFocused ? '1px solid rgba(34, 211, 238, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)',
+              color: '#f4f4f5',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '12px',
+              boxShadow: isSearchFocused ? '0 0 0 3px rgba(34, 211, 238, 0.1)' : 'none'
+            }}
+          />
+          {searchQuery && (
+            <div className="absolute top-full mt-1 w-full rounded-lg overflow-hidden" style={{
+              backgroundColor: 'rgba(0, 0, 0, 0.6)',
+              backdropFilter: 'blur(24px)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              maxHeight: '300px',
+              overflowY: 'auto'
+            }}>
+              {searchResults.length > 0 ? (
+                searchResults.map((result, index) => (
+                  <div
+                    key={result.id}
+                    onClick={() => handleNodeSelectFromSearch(result.id)}
+                    className="px-4 py-2.5 cursor-pointer transition-all"
+                    style={{
+                      backgroundColor: selectedResultIndex === index ? 'rgba(34, 211, 238, 0.2)' : 'transparent',
+                      borderLeft: selectedResultIndex === index ? '2px solid #22d3ee' : '2px solid transparent',
+                      color: '#f4f4f5',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: '11px'
+                    }}
+                    onMouseEnter={() => setSelectedResultIndex(index)}
+                  >
+                    <div style={{ fontWeight: 500, marginBottom: '2px' }}>{result.label}</div>
+                    <div style={{ color: '#71717a', fontSize: '10px', textTransform: 'uppercase' }}>{result.type}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="px-4 py-2.5 text-center" style={{
+                  color: '#71717a',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '11px'
+                }}>
+                  No results found
+                </div>
+              )}
+            </div>
+          )}
+          {!searchQuery && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{
+              color: '#71717a',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '10px'
+            }}>
+              ⌘K
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Floating Island Control - Top Center (below search) */}
+      <div className="absolute top-20 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-2 rounded-full" style={{
         backgroundColor: 'rgba(9, 9, 11, 0.4)',
         backdropFilter: 'blur(16px)',
         border: '1px solid rgba(255, 255, 255, 0.1)'

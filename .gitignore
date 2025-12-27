@@ -150,9 +150,11 @@ faiss_indexes/
 
 context.json
 dependency_graph.json
+dependency_graph_*.json
 # Generated data files (too large for git)
-context.json
-dependency_graph.json
 data_storage.db
 *.db
-faiss_indexes/
+
+# Pre-indexed repo artifacts (stored in Supabase, not git)
+indexes/
+dependency_graph_*.json
