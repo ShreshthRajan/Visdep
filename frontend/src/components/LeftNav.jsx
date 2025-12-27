@@ -21,15 +21,15 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
     <div
       className="w-14 flex-none flex flex-col items-center py-8 relative"
       style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.05)',
-        backdropFilter: 'blur(48px) saturate(120%)'
+        backgroundColor: '#0A0A0A',
+        borderRight: '1px solid rgba(255, 255, 255, 0.1)'
       }}
     >
       {/* Top: Home */}
       <div className="relative">
         <button
           onClick={() => navigate('/')}
-          className="relative transition-all duration-200 group"
+          className="relative transition-all duration-300 ease-out group"
           title="Home"
           style={{
             background: 'none',
@@ -38,28 +38,45 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
             cursor: 'pointer'
           }}
         >
-          {/* Active indicator: 2px cyan dot */}
+          {/* Active indicator: 2px x 24px vertical bar */}
           {'home' === activeView && (
             <div
               className="absolute"
               style={{
-                left: '-16px',
+                left: '-1px',
                 top: '50%',
                 transform: 'translateY(-50%)',
                 width: '2px',
-                height: '2px',
+                height: '24px',
                 backgroundColor: '#22d3ee',
-                borderRadius: '50%',
-                boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
+                filter: 'blur(4px)',
+                boxShadow: '0 0 12px #22d3ee'
               }}
             />
           )}
 
           <HomeIcon
-            className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
+            className="w-3.5 h-3.5 transition-all duration-300 ease-out group-hover:scale-110"
             style={{
-              color: 'home' === activeView ? '#22d3ee' : '#18181b',
-              filter: 'home' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
+              color: 'home' === activeView ? '#22d3ee' : '#71717a',
+              opacity: 'home' === activeView ? 1 : 0.6,
+              filter: 'home' === activeView 
+                ? 'drop-shadow(0 0 12px #22d3ee)' 
+                : 'none'
+            }}
+            onMouseEnter={(e) => {
+              if ('home' !== activeView) {
+                e.currentTarget.style.color = '#ffffff';
+                e.currentTarget.style.opacity = '1';
+                e.currentTarget.style.filter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.3))';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if ('home' !== activeView) {
+                e.currentTarget.style.color = '#71717a';
+                e.currentTarget.style.opacity = '0.6';
+                e.currentTarget.style.filter = 'none';
+              }
             }}
           />
         </button>
@@ -71,7 +88,7 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
         <div className="relative">
           <button
             onClick={onHistoryClick}
-            className="relative transition-all duration-200 group"
+            className="relative transition-all duration-300 ease-out group"
             title="The Library"
             style={{
               background: 'none',
@@ -84,23 +101,40 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
               <div
                 className="absolute"
                 style={{
-                  left: '-16px',
+                  left: '-1px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   width: '2px',
-                  height: '2px',
+                  height: '24px',
                   backgroundColor: '#22d3ee',
-                  borderRadius: '50%',
-                  boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
+                  filter: 'blur(4px)',
+                  boxShadow: '0 0 12px #22d3ee'
                 }}
               />
             )}
 
             <GridIcon
-              className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
+              className="w-3.5 h-3.5 transition-all duration-300 ease-out group-hover:scale-110"
               style={{
-                color: 'history' === activeView ? '#22d3ee' : '#18181b',
-                filter: 'history' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
+                color: 'history' === activeView ? '#22d3ee' : '#71717a',
+                opacity: 'history' === activeView ? 1 : 0.6,
+                filter: 'history' === activeView 
+                  ? 'drop-shadow(0 0 12px #22d3ee)' 
+                  : 'none'
+              }}
+              onMouseEnter={(e) => {
+                if ('history' !== activeView) {
+                  e.currentTarget.style.color = '#ffffff';
+                  e.currentTarget.style.opacity = '1';
+                  e.currentTarget.style.filter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.3))';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if ('history' !== activeView) {
+                  e.currentTarget.style.color = '#71717a';
+                  e.currentTarget.style.opacity = '0.6';
+                  e.currentTarget.style.filter = 'none';
+                }
               }}
             />
           </button>
@@ -110,7 +144,7 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
         <div className="relative">
           <button
             onClick={onChatsClick}
-            className="relative transition-all duration-200 group"
+            className="relative transition-all duration-300 ease-out group"
             title="The Timeline"
             style={{
               background: 'none',
@@ -123,23 +157,40 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
               <div
                 className="absolute"
                 style={{
-                  left: '-16px',
+                  left: '-1px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   width: '2px',
-                  height: '2px',
+                  height: '24px',
                   backgroundColor: '#22d3ee',
-                  borderRadius: '50%',
-                  boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)'
+                  filter: 'blur(4px)',
+                  boxShadow: '0 0 12px #22d3ee'
                 }}
               />
             )}
 
             <ClockIcon
-              className="w-3.5 h-3.5 transition-all duration-200 group-hover:text-zinc-700"
+              className="w-3.5 h-3.5 transition-all duration-300 ease-out group-hover:scale-110"
               style={{
-                color: 'chats' === activeView ? '#22d3ee' : '#18181b',
-                filter: 'chats' === activeView ? 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.5))' : 'none'
+                color: 'chats' === activeView ? '#22d3ee' : '#71717a',
+                opacity: 'chats' === activeView ? 1 : 0.6,
+                filter: 'chats' === activeView 
+                  ? 'drop-shadow(0 0 12px #22d3ee)' 
+                  : 'none'
+              }}
+              onMouseEnter={(e) => {
+                if ('chats' !== activeView) {
+                  e.currentTarget.style.color = '#ffffff';
+                  e.currentTarget.style.opacity = '1';
+                  e.currentTarget.style.filter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.3))';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if ('chats' !== activeView) {
+                  e.currentTarget.style.color = '#71717a';
+                  e.currentTarget.style.opacity = '0.6';
+                  e.currentTarget.style.filter = 'none';
+                }
               }}
             />
           </button>
@@ -149,9 +200,9 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
       {/* Bottom: User Profile (micro 16px circle) */}
       {user && (
         <div className="mt-auto flex flex-col items-center">
-          {/* Micro divider */}
+          {/* Divider: 20px above PFP */}
           <div
-            className="mb-3"
+            className="mb-5"
             style={{
               width: '16px',
               height: '1px',
@@ -165,22 +216,19 @@ const LeftNav = ({ activeView = null, onHistoryClick, onChatsClick }) => {
                 logout();
               }
             }}
-            className="rounded-full overflow-hidden transition-all duration-200"
+            className="rounded-full overflow-hidden transition-all duration-300 ease-out"
             style={{
               width: '16px',
               height: '16px',
-              opacity: 0.3,
               filter: 'grayscale(100%)',
               border: 'none',
               padding: 0,
               cursor: 'pointer'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.opacity = '1';
               e.currentTarget.style.filter = 'grayscale(0%)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = '0.3';
               e.currentTarget.style.filter = 'grayscale(100%)';
             }}
             title={`Signed in as ${user.username}`}
