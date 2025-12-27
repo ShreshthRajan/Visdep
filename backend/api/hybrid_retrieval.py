@@ -125,6 +125,9 @@ class HybridRetriever:
         # Tokenize corpus with smart tokenization
         tokenized_corpus = [self._tokenize_for_bm25(doc) for doc in corpus]
 
+        # Store tokenized corpus for Supabase persistence
+        self.tokenized_corpus = tokenized_corpus
+
         # Build BM25 index
         self.bm25 = BM25Okapi(tokenized_corpus)
 
@@ -183,54 +186,165 @@ class HybridRetriever:
     
     def _load_bm25_index(self, repo_id: int) -> bool:
         """
-        Load pre-built BM25 index from disk
+        Load pre-built BM25 index from disk or Supabase
         
         Returns:
             True if loaded successfully, False otherwise
         """
+        logging.info(f"📊 Attempting to load BM25 index for repo_id={repo_id}")
+        
+        # First try loading from local file
         try:
             bm25_path = self._get_bm25_path(repo_id)
-            if not os.path.exists(bm25_path):
+            if os.path.exists(bm25_path):
+                with open(bm25_path, 'rb') as f:
+                    data = pickle.load(f)
+                
+                self.bm25 = data['bm25']
+                self.chunk_ids = data['chunk_ids']
+                
+                logging.info(f"✅ Loaded BM25 from local file for repo_id={repo_id} ({len(self.chunk_ids)} docs)")
+                return True
+        except Exception as e:
+            logging.debug(f"Local BM25 load failed: {e}")
+        
+        # If local file not found, try Supabase
+        try:
+            from .supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            result = supabase.table('repo_bm25_indexes')\
+                .select('corpus, chunk_ids')\
+                .eq('repo_id', repo_id)\
+                .limit(1)\
+                .execute()
+            
+            if result.data and len(result.data) > 0:
+                tokenized_corpus = result.data[0]['corpus']
+                self.chunk_ids = result.data[0]['chunk_ids']
+                
+                # Reconstruct BM25 index from tokenized corpus
+                self.bm25 = BM25Okapi(tokenized_corpus)
+                self.tokenized_corpus = tokenized_corpus
+                
+                logging.info(f"✅ Loaded BM25 from Supabase for repo_id={repo_id} ({len(self.chunk_ids)} docs)")
+                return True
+            else:
+                logging.debug(f"BM25 not found in Supabase for repo_id={repo_id}")
                 return False
             
-            with open(bm25_path, 'rb') as f:
-                data = pickle.load(f)
-            
-            self.bm25 = data['bm25']
-            self.chunk_ids = data['chunk_ids']
-            
-            logging.info(f"✅ Loaded BM25 index from cache ({len(self.chunk_ids)} docs)")
-            return True
-            
         except Exception as e:
-            logging.warning(f"⚠️ Failed to load BM25 index: {e}")
+            logging.warning(f"⚠️ Failed to load BM25 index from Supabase: {e}")
             return False
     
     def _load_pagerank(self, repo_id: int) -> bool:
         """
-        Load pre-computed PageRank scores from disk
+        Load pre-computed PageRank scores from disk or Supabase
         
         Returns:
             True if loaded successfully, False otherwise
         """
+        logging.info(f"📊 Attempting to load PageRank for repo_id={repo_id}")
+        
+        # First try loading from local file
         try:
             pagerank_path = self._get_pagerank_path(repo_id)
-            if not os.path.exists(pagerank_path):
+            if os.path.exists(pagerank_path):
+                with open(pagerank_path, 'r') as f:
+                    self.pagerank_scores = json.load(f)
+                
+                logging.info(f"✅ Loaded PageRank from local file for repo_id={repo_id} ({len(self.pagerank_scores)} nodes)")
+                return True
+        except Exception as e:
+            logging.debug(f"Local PageRank load failed: {e}")
+        
+        # If local file not found, try Supabase
+        try:
+            from .supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            result = supabase.table('repo_pagerank')\
+                .select('scores')\
+                .eq('repo_id', repo_id)\
+                .limit(1)\
+                .execute()
+            
+            if result.data and len(result.data) > 0:
+                self.pagerank_scores = result.data[0]['scores']
+                
+                logging.info(f"✅ Loaded PageRank from Supabase for repo_id={repo_id} ({len(self.pagerank_scores)} nodes)")
+                return True
+            else:
+                logging.debug(f"PageRank not found in Supabase for repo_id={repo_id}")
                 return False
             
-            with open(pagerank_path, 'r') as f:
-                self.pagerank_scores = json.load(f)
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to load PageRank from Supabase: {e}")
+            return False
+    
+    def _save_bm25_to_supabase(self, repo_id: int) -> bool:
+        """
+        Save BM25 index to Supabase for Railway access
+        
+        Args:
+            repo_id: Repository ID
             
-            logging.info(f"✅ Loaded PageRank scores from cache ({len(self.pagerank_scores)} nodes)")
+        Returns:
+            True if saved successfully
+        """
+        try:
+            from .supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            # Get tokenized corpus (stored when building index)
+            tokenized_corpus = getattr(self, 'tokenized_corpus', None)
+            if not tokenized_corpus:
+                # If not stored, we can't save (shouldn't happen if _build_bm25_index was called)
+                logging.warning(f"⚠️ tokenized_corpus not available, cannot save BM25 to Supabase")
+                return False
+            
+            supabase.table('repo_bm25_indexes').upsert({
+                'repo_id': repo_id,
+                'corpus': tokenized_corpus,
+                'chunk_ids': self.chunk_ids
+            }, on_conflict='repo_id').execute()
+            
+            logging.info(f"✅ Saved BM25 to Supabase for repo_id={repo_id}")
             return True
             
         except Exception as e:
-            logging.warning(f"⚠️ Failed to load PageRank: {e}")
+            logging.warning(f"⚠️ Failed to save BM25 to Supabase: {e}")
+            return False
+    
+    def _save_pagerank_to_supabase(self, repo_id: int) -> bool:
+        """
+        Save PageRank scores to Supabase for Railway access
+        
+        Args:
+            repo_id: Repository ID
+            
+        Returns:
+            True if saved successfully
+        """
+        try:
+            from .supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            supabase.table('repo_pagerank').upsert({
+                'repo_id': repo_id,
+                'scores': self.pagerank_scores
+            }, on_conflict='repo_id').execute()
+            
+            logging.info(f"✅ Saved PageRank to Supabase for repo_id={repo_id}")
+            return True
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to save PageRank to Supabase: {e}")
             return False
     
     def save_indexes(self, repo_id: int) -> bool:
         """
-        Save BM25 index and PageRank scores to disk for future use
+        Save BM25 index and PageRank scores to disk and Supabase for future use
         
         Call this after initial build for mega-repos to enable instant
         initialization on subsequent queries.
@@ -242,7 +356,7 @@ class HybridRetriever:
             True if saved successfully
         """
         try:
-            # Save BM25 index
+            # Save BM25 index to local file
             bm25_path = self._get_bm25_path(repo_id)
             with open(bm25_path, 'wb') as f:
                 pickle.dump({
@@ -250,12 +364,17 @@ class HybridRetriever:
                     'chunk_ids': self.chunk_ids
                 }, f)
             
-            # Save PageRank scores
+            # Save PageRank scores to local file
             pagerank_path = self._get_pagerank_path(repo_id)
             with open(pagerank_path, 'w') as f:
                 json.dump(self.pagerank_scores, f)
             
+            # Also save to Supabase for Railway access
+            self._save_bm25_to_supabase(repo_id)
+            self._save_pagerank_to_supabase(repo_id)
+            
             logging.info(f"✅ Saved indexes for repo_id={repo_id} (BM25: {len(self.chunk_ids)} docs, PageRank: {len(self.pagerank_scores)} nodes)")
+            logging.info(f"✅ Saved BM25/PageRank to Supabase for repo_id={repo_id}")
             return True
             
         except Exception as e:

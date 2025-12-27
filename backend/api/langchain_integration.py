@@ -499,7 +499,8 @@ class ChatSession:
         self.hybrid_retriever = HybridRetriever(
             chunks=chunks_list,
             vector_store=self.vector_store,
-            chunk_graph=self.chunk_graph
+            chunk_graph=self.chunk_graph,
+            repo_id=self.repo_id  # Enable loading cached indexes from Supabase
         )
 
         logging.info("Hybrid retriever initialized successfully")

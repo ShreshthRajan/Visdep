@@ -366,15 +366,61 @@ def save_graph_as_json(graph: nx.DiGraph, file_path: str = "dependency_graph.jso
     data = json_graph.node_link_data(graph)
     with open(file_path, 'w') as f:
         json.dump(data, f)
+    
+    # MEGA-REPO FIX: Also save to Supabase for Railway access
+    if repo_id:
+        try:
+            from .supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            
+            supabase.table('repo_graphs').upsert({
+                'repo_id': repo_id,
+                'graph_data': data
+            }, on_conflict='repo_id').execute()
+            
+            logging.info(f"✅ Saved graph to Supabase for repo_id={repo_id}")
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to save graph to Supabase: {e}")
 
 def load_graph_from_json(file_path: str = "dependency_graph.json", repo_id: int = None) -> nx.DiGraph:
     # Phase 2: Use repo-specific filename if repo_id provided
     if repo_id:
         file_path = f"dependency_graph_{repo_id}.json"
 
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return json_graph.node_link_graph(data)
+    logging.info(f"📊 Attempting to load graph for repo_id={repo_id}")
+    
+    # First try loading from local file
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        logging.info(f"✅ Loaded graph from local file for repo_id={repo_id}")
+        return json_graph.node_link_graph(data)
+    except FileNotFoundError:
+        # If local file not found, try Supabase
+        if repo_id:
+            try:
+                from .supabase_client import get_supabase_client
+                supabase = get_supabase_client()
+                
+                result = supabase.table('repo_graphs')\
+                    .select('graph_data')\
+                    .eq('repo_id', repo_id)\
+                    .limit(1)\
+                    .execute()
+                
+                if result.data and len(result.data) > 0:
+                    data = result.data[0]['graph_data']
+                    logging.info(f"✅ Loaded graph from Supabase for repo_id={repo_id}")
+                    return json_graph.node_link_graph(data)
+                else:
+                    logging.error(f"❌ Graph not found locally or in Supabase for repo_id={repo_id}")
+                    raise FileNotFoundError(f"Graph not found for repo_id={repo_id}")
+            except Exception as e:
+                logging.error(f"❌ Graph not found locally or in Supabase for repo_id={repo_id}: {e}")
+                raise FileNotFoundError(f"Graph not found for repo_id={repo_id}: {e}")
+        else:
+            logging.error(f"❌ Graph file not found: {file_path}")
+            raise
 
 def get_subgraph_at_level(G: nx.DiGraph, level: int) -> nx.DiGraph:
     nodes = [node for node, data in G.nodes(data=True) if data['level'] <= level]

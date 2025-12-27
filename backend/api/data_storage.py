@@ -251,19 +251,41 @@ def retrieve_chunks(repo_id: int) -> list:
     try:
         supabase = get_supabase_client()
 
-        # Query chunks for this repo (Postgres handles concurrent reads efficiently)
-        result = supabase.table('chunks')\
-            .select('chunk_id, file_path, chunk_type, name, code, start_line, end_line, metadata')\
-            .eq('repo_id', repo_id)\
-            .execute()
+        # Query chunks for this repo with pagination (Supabase default limit is 1000)
+        # For mega-repos (100K+ chunks), we must paginate
+        all_data = []
+        page_size = 1000
+        offset = 0
+        
+        while True:
+            result = supabase.table('chunks')\
+                .select('chunk_id, file_path, chunk_type, name, code, start_line, end_line, metadata')\
+                .eq('repo_id', repo_id)\
+                .range(offset, offset + page_size - 1)\
+                .execute()
+            
+            if not result.data:
+                break
+                
+            all_data.extend(result.data)
+            
+            # Log progress for mega-repos
+            if len(all_data) % 10000 == 0:
+                logging.info(f"   Loading chunks: {len(all_data):,} loaded...")
+            
+            # If we got less than page_size, we've reached the end
+            if len(result.data) < page_size:
+                break
+                
+            offset += page_size
 
-        if not result.data:
+        if not all_data:
             logging.warning(f"⚠️ No chunks found for repo_id={repo_id}")
             return []
 
         # Convert Supabase format to internal format
         chunks = []
-        for row in result.data:
+        for row in all_data:
             chunks.append({
                 'chunk_id': row['chunk_id'],
                 'file_path': row['file_path'],
@@ -277,7 +299,7 @@ def retrieve_chunks(repo_id: int) -> list:
 
         # Store in cache for future queries
         _chunks_cache[repo_id] = chunks
-        logging.info(f"✅ Chunks cache MISS for repo_id={repo_id}, fetched {len(chunks)} chunks from Supabase (cached for future)")
+        logging.info(f"✅ Chunks cache MISS for repo_id={repo_id}, fetched {len(chunks):,} chunks from Supabase (cached for future)")
 
         return chunks
 
