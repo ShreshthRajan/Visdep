@@ -323,8 +323,46 @@ async def upload_repo(link: RepoLink):
                 logging.info(f"   Chunks: {pre['chunk_count']}, Nodes: {pre['node_count']}")
                 logging.info(f"   Has: summaries={pre['has_summaries']}, positions={pre['has_positions']}, BM25={pre['has_bm25_index']}")
                 
-                # Return pre-indexed repo_id instantly (no processing needed)
+                # Set global repo_id for latest upload
                 latest_repo_id = pre['repo_id']
+                
+                # =====================================================================
+                # CRITICAL FIX: Link pre-indexed repo to user in user_repos table
+                # Without this, frontend can't find the repo and loads wrong one!
+                # =====================================================================
+                if link.user_id:
+                    try:
+                        logging.info(f"🔗 Linking pre-indexed repo to user: user_id={link.user_id}, repo_id={pre['repo_id']}")
+                        
+                        # Check if this repo already exists for this user
+                        existing = supabase.table('user_repos')\
+                            .select('*')\
+                            .eq('user_id', link.user_id)\
+                            .eq('repo_name', repo_name)\
+                            .execute()
+                        
+                        if existing.data and len(existing.data) > 0:
+                            # Update last_accessed and ensure local_repo_id is correct
+                            logging.info(f"📝 Updating existing repo record (id={existing.data[0]['id']})")
+                            supabase.table('user_repos').update({
+                                'last_accessed': 'now()',
+                                'local_repo_id': pre['repo_id']
+                            }).eq('id', existing.data[0]['id']).execute()
+                            logging.info(f"✅ Updated pre-indexed repo access for user {link.user_id}")
+                        else:
+                            # Create new user_repo link
+                            logging.info(f"➕ Creating new user_repos record for pre-indexed repo")
+                            result = supabase.table('user_repos').insert({
+                                'user_id': link.user_id,
+                                'repo_name': repo_name,
+                                'repo_url': repo_url,
+                                'is_private': False,  # Pre-indexed repos are always public
+                                'local_repo_id': pre['repo_id']
+                            }).execute()
+                            logging.info(f"✅ Linked pre-indexed repo {repo_name} to user {link.user_id}, supabase_id={result.data[0]['id'] if result.data else 'unknown'}")
+                    except Exception as link_error:
+                        # Don't fail the request if linking fails
+                        logging.warning(f"⚠️ Failed to link pre-indexed repo to user: {link_error}")
                 
                 return {
                     "message": f"Pre-indexed repository loaded instantly.",
