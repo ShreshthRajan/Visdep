@@ -1,6 +1,13 @@
 -- Mega-Repos Support: Additional Supabase Schema
 -- Run these in Supabase SQL Editor after the main SUPABASE_SETUP.sql
 
+-- =============================================================================
+-- IMPORTANT: Create Supabase Storage bucket for large graphs
+-- Go to Supabase Dashboard > Storage > New bucket:
+--   Name: repo-data
+--   Public: false
+-- =============================================================================
+
 -- 1. Repository Summaries table (HCGS - Hierarchical Code Graph Summarization)
 -- Stores pre-computed summaries at repo, package, and file levels
 CREATE TABLE IF NOT EXISTS repo_summaries (
@@ -57,4 +64,36 @@ CREATE TRIGGER update_repo_summaries_updated_at BEFORE UPDATE ON repo_summaries
 
 CREATE TRIGGER update_preindexed_repos_updated_at BEFORE UPDATE ON preindexed_repos
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 5. Graph data storage (for Railway/deployed access)
+-- Small graphs (<2MB) stored as JSONB, large graphs reference Supabase Storage
+CREATE TABLE IF NOT EXISTS repo_graphs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repo_id INTEGER NOT NULL UNIQUE,
+    graph_data JSONB NOT NULL,  -- Full graph OR {storage_path, compressed, node_count}
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_graphs_repo ON repo_graphs(repo_id);
+
+-- 6. BM25 indexes storage
+CREATE TABLE IF NOT EXISTS repo_bm25_indexes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repo_id INTEGER NOT NULL UNIQUE,
+    corpus JSONB NOT NULL,  -- Array of tokenized documents
+    chunk_ids JSONB NOT NULL,  -- Array of chunk IDs
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_bm25_repo ON repo_bm25_indexes(repo_id);
+
+-- 7. PageRank scores storage
+CREATE TABLE IF NOT EXISTS repo_pagerank (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repo_id INTEGER NOT NULL UNIQUE,
+    scores JSONB NOT NULL,  -- {chunk_id: score, ...}
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_pagerank_repo ON repo_pagerank(repo_id);
 

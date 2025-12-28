@@ -359,6 +359,9 @@ def cluster_edges(G):
     return G
 
 def save_graph_as_json(graph: nx.DiGraph, file_path: str = "dependency_graph.json", repo_id: int = None) -> None:
+    """Save graph to local file and Supabase (Storage for large graphs)."""
+    import gzip
+    
     # Phase 2: Use repo-specific filename if repo_id provided
     if repo_id:
         file_path = f"dependency_graph_{repo_id}.json"
@@ -373,16 +376,54 @@ def save_graph_as_json(graph: nx.DiGraph, file_path: str = "dependency_graph.jso
             from .supabase_client import get_supabase_client
             supabase = get_supabase_client()
             
-            supabase.table('repo_graphs').upsert({
-                'repo_id': repo_id,
-                'graph_data': data
-            }, on_conflict='repo_id').execute()
+            # Check file size - use Storage for large graphs (>2MB)
+            json_str = json.dumps(data)
+            size_mb = len(json_str.encode('utf-8')) / (1024 * 1024)
             
-            logging.info(f"✅ Saved graph to Supabase for repo_id={repo_id}")
+            if size_mb > 2:
+                # Large graph: Use Supabase Storage
+                logging.info(f"📤 Graph is {size_mb:.1f}MB - using Supabase Storage")
+                
+                compressed = gzip.compress(json_str.encode('utf-8'))
+                storage_path = f"graphs/{repo_id}.json.gz"
+                
+                try:
+                    supabase.storage.from_('repo-data').remove([storage_path])
+                except:
+                    pass
+                
+                supabase.storage.from_('repo-data').upload(
+                    storage_path,
+                    compressed,
+                    file_options={"content-type": "application/gzip"}
+                )
+                
+                # Store reference in table
+                supabase.table('repo_graphs').upsert({
+                    'repo_id': repo_id,
+                    'graph_data': {
+                        'storage_path': storage_path,
+                        'compressed': True,
+                        'node_count': len(data.get('nodes', []))
+                    }
+                }, on_conflict='repo_id').execute()
+                
+                logging.info(f"✅ Saved large graph to Supabase Storage for repo_id={repo_id}")
+            else:
+                # Small graph: Use table directly
+                supabase.table('repo_graphs').upsert({
+                    'repo_id': repo_id,
+                    'graph_data': data
+                }, on_conflict='repo_id').execute()
+                
+                logging.info(f"✅ Saved graph to Supabase for repo_id={repo_id}")
         except Exception as e:
             logging.warning(f"⚠️ Failed to save graph to Supabase: {e}")
 
 def load_graph_from_json(file_path: str = "dependency_graph.json", repo_id: int = None) -> nx.DiGraph:
+    """Load graph from local file or Supabase (Storage for large graphs)."""
+    import gzip
+    
     # Phase 2: Use repo-specific filename if repo_id provided
     if repo_id:
         file_path = f"dependency_graph_{repo_id}.json"
@@ -410,7 +451,26 @@ def load_graph_from_json(file_path: str = "dependency_graph.json", repo_id: int 
                 
                 if result.data and len(result.data) > 0:
                     data = result.data[0]['graph_data']
-                    logging.info(f"✅ Loaded graph from Supabase for repo_id={repo_id}")
+                    
+                    # Check if graph is stored in Supabase Storage
+                    if isinstance(data, dict) and data.get('storage_path'):
+                        storage_path = data['storage_path']
+                        logging.info(f"📥 Loading large graph from Supabase Storage: {storage_path}")
+                        
+                        # Download from Storage
+                        compressed_data = supabase.storage.from_('repo-data').download(storage_path)
+                        
+                        # Decompress
+                        if data.get('compressed', False):
+                            json_bytes = gzip.decompress(compressed_data)
+                            data = json.loads(json_bytes.decode('utf-8'))
+                        else:
+                            data = json.loads(compressed_data.decode('utf-8'))
+                        
+                        logging.info(f"✅ Loaded large graph from Supabase Storage for repo_id={repo_id}")
+                    else:
+                        logging.info(f"✅ Loaded graph from Supabase table for repo_id={repo_id}")
+                    
                     return json_graph.node_link_graph(data)
                 else:
                     logging.error(f"❌ Graph not found locally or in Supabase for repo_id={repo_id}")

@@ -109,23 +109,23 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
     
     try:
         # 1. Fetch repository content
-        logging.info("📥 Step 1/7: Fetching repository content...")
+        logging.info("📥 Step 1/8: Fetching repository content...")
         repo_url = f"https://github.com/{repo_name}"
         repo_content = fetch_repo_content_via_git(repo_url, subdirectory)
         logging.info(f"   Fetched {len(repo_content)} files")
         
         # 2. Parse to AST
-        logging.info("🔍 Step 2/7: Parsing code to AST...")
+        logging.info("🔍 Step 2/8: Parsing code to AST...")
         parsed_data = parse_code_to_ast(repo_content)
         logging.info(f"   Parsed {len(parsed_data)} files")
         
         # 3. Process into chunks
-        logging.info("📦 Step 3/7: Processing into chunks...")
+        logging.info("📦 Step 3/8: Processing into chunks...")
         chunks = process_repository_to_chunks(parsed_data)
         logging.info(f"   Generated {len(chunks)} chunks")
         
         # 4. Store in Supabase
-        logging.info("💾 Step 4/7: Storing in Supabase...")
+        logging.info("💾 Step 4/8: Storing in Supabase...")
         repo_id = store_repository_metadata(repo_name, {
             'full_name': repo_name,
             'preindexed': True,
@@ -135,7 +135,7 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
         logging.info(f"   Stored with repo_id={repo_id}")
         
         # 5. Build and save indexes
-        logging.info("📊 Step 5/7: Building search indexes...")
+        logging.info("📊 Step 5/8: Building search indexes...")
         logging.info(f"   Processing {len(chunks):,} chunks (this may take 1-3 hours for mega-repos)")
         
         # Build chunk graph
@@ -218,17 +218,15 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
         hybrid_retriever.save_indexes(repo_id)
         logging.info("   ✅ Saved BM25 and PageRank indexes")
         
-        # 6. Create graph (positions saved by frontend after you load it)
-        logging.info("🎨 Step 6/7: Creating graph structure...")
+        # 6. Create graph structure
+        logging.info("🎨 Step 6/8: Creating graph structure...")
         graph = create_chunk_level_graph(chunks)
         save_graph_as_json(graph, repo_id=repo_id)
         
         logging.info(f"   Graph created with {len(graph.nodes())} nodes")
-        logging.info(f"   ⚠️ IMPORTANT: Load this repo in frontend to save ForceAtlas2 positions!")
-        logging.info(f"   After vis-network stabilizes, positions will be auto-saved.")
         
         # 7. Generate hierarchical summaries
-        logging.info("📝 Step 7/7: Generating hierarchical summaries...")
+        logging.info("📝 Step 7/8: Generating hierarchical summaries...")
         anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         summaries = await generate_hierarchical_summaries(
             chunks=chunks,
@@ -239,8 +237,13 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
         store_summaries(repo_id, summaries)
         logging.info(f"   Generated {summaries['stats']['total_files']} file summaries, {summaries['stats']['total_packages']} package summaries")
         
+        # 8. Pre-render graph positions via headless browser
+        logging.info("🖥️ Step 8/8: Pre-rendering graph positions via browser...")
+        from backend.api.graph_prerender import run_prerender
+        
+        prerender_success = run_prerender(repo_name, base_url="https://visdep.com")
+        
         # Register as pre-indexed
-        # Note: has_positions=False until you load in frontend
         supabase = get_supabase_client()
         supabase.table('preindexed_repos').upsert({
             'repo_name': repo_name,
@@ -248,12 +251,17 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
             'chunk_count': len(chunks),
             'node_count': len(graph.nodes()),
             'has_summaries': True,
-            'has_positions': False,  # Set to True after frontend saves positions
+            'has_positions': prerender_success,  # True if pre-render succeeded
             'has_bm25_index': True,
             'has_pagerank': True,
             'has_faiss_index': True,
             'processing_time_seconds': int(time.time() - start_time)
         }, on_conflict='repo_name').execute()
+        
+        if prerender_success:
+            logging.info("✅ Graph positions saved to Supabase")
+        else:
+            logging.warning("⚠️ Graph pre-render failed - positions not saved (users will need to wait for stabilization)")
         
         elapsed = time.time() - start_time
         logging.info(f"✅ PRE-INDEXING COMPLETE: {repo_name}")

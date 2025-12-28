@@ -27,3 +27,4 @@ tiktoken
 psycopg2-binary
 tree-sitter-language-pack
 supabase
+playwright==1.40.0
