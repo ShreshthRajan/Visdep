@@ -76,6 +76,20 @@ CREATE TABLE IF NOT EXISTS repo_graphs (
 
 CREATE INDEX IF NOT EXISTS idx_repo_graphs_repo ON repo_graphs(repo_id);
 
+-- 5b. FAISS index storage (for Railway/deployed access)
+-- Large indexes (>50MB) are split into chunks
+CREATE TABLE IF NOT EXISTS repo_faiss (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repo_id INTEGER NOT NULL UNIQUE,
+    storage_path TEXT NOT NULL,  -- Path to first chunk or single file
+    chunk_count INTEGER DEFAULT 1,  -- Number of chunks (1 for single file)
+    vector_count INTEGER,  -- Number of vectors in index
+    dimension INTEGER DEFAULT 1536,  -- Embedding dimension
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_faiss_repo ON repo_faiss(repo_id);
+
 -- 6. BM25 indexes storage
 CREATE TABLE IF NOT EXISTS repo_bm25_indexes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

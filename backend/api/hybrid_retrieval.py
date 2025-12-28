@@ -342,15 +342,16 @@ class HybridRetriever:
             logging.warning(f"⚠️ Failed to save PageRank to Supabase: {e}")
             return False
     
-    def save_indexes(self, repo_id: int) -> bool:
+    def save_indexes(self, repo_id: int, vector_store=None) -> bool:
         """
-        Save BM25 index and PageRank scores to disk and Supabase for future use
+        Save BM25 index, PageRank scores, and FAISS index to disk and Supabase for future use
         
         Call this after initial build for mega-repos to enable instant
         initialization on subsequent queries.
         
         Args:
             repo_id: Repository ID
+            vector_store: FAISS vector store (optional, for saving FAISS to Supabase)
             
         Returns:
             True if saved successfully
@@ -373,12 +374,111 @@ class HybridRetriever:
             self._save_bm25_to_supabase(repo_id)
             self._save_pagerank_to_supabase(repo_id)
             
+            # Save FAISS to Supabase Storage if vector_store provided
+            if vector_store:
+                self._save_faiss_to_supabase(repo_id, vector_store)
+            
             logging.info(f"✅ Saved indexes for repo_id={repo_id} (BM25: {len(self.chunk_ids)} docs, PageRank: {len(self.pagerank_scores)} nodes)")
             logging.info(f"✅ Saved BM25/PageRank to Supabase for repo_id={repo_id}")
             return True
             
         except Exception as e:
             logging.error(f"❌ Failed to save indexes: {e}")
+            return False
+    
+    def _save_faiss_to_supabase(self, repo_id: int, vector_store) -> bool:
+        """
+        Save FAISS index to Supabase Storage for Railway access
+        
+        Args:
+            repo_id: Repository ID
+            vector_store: FAISS vector store
+            
+        Returns:
+            True if saved successfully
+        """
+        try:
+            import gzip
+            import shutil
+            import tempfile
+            import httpx
+            from .supabase_client import get_supabase_client
+            from .data_storage import FAISS_DIR
+            
+            # Save FAISS to temporary directory first
+            os.makedirs(FAISS_DIR, exist_ok=True)
+            temp_faiss_path = f"{FAISS_DIR}/{repo_id}_temp"
+            
+            # Save FAISS index
+            vector_store.save_local(temp_faiss_path)
+            
+            # Create zip archive of FAISS directory
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_zip:
+                zip_path = tmp_zip.name
+            
+            shutil.make_archive(zip_path.replace('.zip', ''), 'zip', temp_faiss_path)
+            
+            # Read zip file
+            with open(zip_path, 'rb') as f:
+                faiss_data = f.read()
+            
+            # Clean up temp files
+            os.unlink(zip_path)
+            shutil.rmtree(temp_faiss_path, ignore_errors=True)
+            
+            # Compress with gzip
+            compressed = gzip.compress(faiss_data)
+            compressed_mb = len(compressed) / (1024 * 1024)
+            
+            # Upload to Supabase Storage
+            storage_path = f"faiss/{repo_id}.faiss.gz"
+            
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+            
+            upload_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+            
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/gzip",
+                "x-upsert": "true"
+            }
+            
+            logging.info(f"📤 Uploading FAISS index ({compressed_mb:.1f}MB) to Supabase Storage...")
+            
+            with httpx.Client(timeout=300.0) as client:
+                response = client.post(
+                    upload_url,
+                    content=compressed,
+                    headers=headers
+                )
+                if response.status_code >= 400:
+                    logging.warning(f"⚠️ FAISS upload failed: {response.status_code} - {response.text}")
+                    return False
+            
+            # Store reference in table
+            supabase = get_supabase_client()
+            
+            # Get vector count from FAISS index
+            vector_count = None
+            if hasattr(vector_store, 'index') and hasattr(vector_store.index, 'ntotal'):
+                vector_count = vector_store.index.ntotal
+            
+            supabase.table('repo_faiss').upsert({
+                'repo_id': repo_id,
+                'storage_path': storage_path,
+                'vector_count': vector_count,
+                'dimension': 1536  # OpenAI text-embedding-3-small dimension
+            }, on_conflict='repo_id').execute()
+            
+            logging.info(f"✅ Saved FAISS to Supabase Storage for repo_id={repo_id}")
+            return True
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to save FAISS to Supabase: {e}")
+            import traceback
+            logging.debug(traceback.format_exc())
             return False
 
     def bm25_search(self, query: str, top_k: int = 100) -> List[Tuple[str, float]]:

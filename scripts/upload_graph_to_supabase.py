@@ -71,6 +71,10 @@ def upload_graph(repo_id: int):
         supabase_url = os.getenv('SUPABASE_URL')
         supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
         
+        if not supabase_key:
+            logging.error("❌ SUPABASE_SERVICE_KEY not found in environment")
+            return False
+        
         upload_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
         
         headers = {
@@ -81,9 +85,20 @@ def upload_graph(repo_id: int):
         }
         
         logging.info(f"   Uploading {compressed_mb:.1f}MB to {upload_url}...")
+        logging.info(f"   Service key length: {len(supabase_key)} chars")
+        
+        # Try to delete existing file first (in case of corruption)
+        try:
+            delete_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+            with httpx.Client(timeout=30.0) as client:
+                delete_response = client.delete(delete_url, headers=headers)
+                if delete_response.status_code in [200, 204, 404]:
+                    logging.info(f"   Cleared existing file (if any)")
+        except:
+            pass  # Ignore delete errors
         
         try:
-            with httpx.Client(timeout=300.0) as client:
+            with httpx.Client(timeout=600.0) as client:  # 10 min timeout for large files
                 response = client.post(
                     upload_url,
                     content=compressed,
@@ -92,10 +107,17 @@ def upload_graph(repo_id: int):
                 if response.status_code >= 400:
                     logging.error(f"❌ Upload failed: {response.status_code}")
                     logging.error(f"   Response: {response.text}")
+                    logging.error(f"   URL: {upload_url}")
+                    logging.error(f"   Headers: {list(headers.keys())}")
                     return False
                 logging.info(f"   ✅ Upload successful: {response.status_code}")
+        except httpx.TimeoutException:
+            logging.error(f"❌ Upload timed out (file too large or slow connection)")
+            return False
         except Exception as e:
             logging.error(f"❌ Upload failed: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
         
         # Store reference in table

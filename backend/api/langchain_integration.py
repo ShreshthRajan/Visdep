@@ -302,8 +302,9 @@ class ChatSession:
         Returns:
             FAISS vector store
         """
-        # Task 2.2: Try to load persisted FAISS index first
+        # Task 2.2: Try to load persisted FAISS index first (local disk, then Supabase Storage)
         if repo_id:
+            # First try local disk
             faiss_path = f"{FAISS_DIR}/{repo_id}"
             if os.path.exists(faiss_path):
                 try:
@@ -312,10 +313,104 @@ class ChatSession:
                         model="text-embedding-3-small"  # Must match creation model
                     )
                     vector_store = FAISS.load_local(faiss_path, embeddings, allow_dangerous_deserialization=True)
-                    logging.info(f"Loaded FAISS index from disk: {faiss_path} (fast path)")
+                    logging.info(f"✅ Loaded FAISS index from disk: {faiss_path} (fast path)")
                     return vector_store
                 except Exception as e:
-                    logging.warning(f"Failed to load FAISS from disk: {e}, rebuilding...")
+                    logging.warning(f"⚠️ Failed to load FAISS from disk: {e}, trying Supabase Storage...")
+            
+            # If local fails, try Supabase Storage
+            try:
+                from .supabase_client import get_supabase_client
+                import gzip
+                import shutil
+                import tempfile
+                import httpx
+                
+                supabase = get_supabase_client()
+                
+                # Check if FAISS exists in Supabase
+                result = supabase.table('repo_faiss')\
+                    .select('storage_path, chunk_count')\
+                    .eq('repo_id', repo_id)\
+                    .limit(1)\
+                    .execute()
+                
+                if result.data and len(result.data) > 0:
+                    storage_path = result.data[0]['storage_path']
+                    chunk_count = result.data[0].get('chunk_count', 1)
+                    logging.info(f"📥 Loading FAISS index from Supabase Storage: {storage_path} ({chunk_count} chunks)")
+                    
+                    # Download from Storage
+                    supabase_url = os.getenv('SUPABASE_URL')
+                    supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+                    
+                    headers = {
+                        "apikey": supabase_key,
+                        "Authorization": f"Bearer {supabase_key}"
+                    }
+                    
+                    with httpx.Client(timeout=600.0) as client:
+                        if chunk_count > 1:
+                            # Download all chunks and reassemble
+                            logging.info(f"   Downloading {chunk_count} chunks...")
+                            compressed_chunks = []
+                            base_path = storage_path.rsplit('.chunk000', 1)[0] if '.chunk000' in storage_path else storage_path.rsplit('.faiss.gz', 1)[0] + '.faiss.gz'
+                            
+                            for i in range(chunk_count):
+                                chunk_path = f"{base_path}.chunk{i:03d}"
+                                download_url = f"{supabase_url}/storage/v1/object/repo-data/{chunk_path}"
+                                
+                                response = client.get(download_url, headers=headers)
+                                if response.status_code == 200:
+                                    compressed_chunks.append(response.content)
+                                    logging.info(f"   Downloaded chunk {i+1}/{chunk_count}")
+                                else:
+                                    logging.warning(f"⚠️ Failed to download chunk {i+1}: {response.status_code}")
+                                    raise Exception(f"Failed to download chunk {i+1}")
+                            
+                            # Reassemble chunks
+                            compressed_data = b''.join(compressed_chunks)
+                            logging.info(f"   Reassembled {len(compressed_data) / (1024*1024):.1f}MB from {chunk_count} chunks")
+                        else:
+                            # Single file
+                            download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+                            response = client.get(download_url, headers=headers)
+                            if response.status_code != 200:
+                                logging.warning(f"⚠️ Failed to download FAISS from Supabase Storage: {response.status_code}")
+                                raise Exception(f"Failed to download: {response.status_code}")
+                            compressed_data = response.content
+                        
+                        # Decompress
+                        zip_data = gzip.decompress(compressed_data)
+                        
+                        # Extract to temporary directory
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            zip_path = os.path.join(tmpdir, f"{repo_id}.zip")
+                            with open(zip_path, 'wb') as f:
+                                f.write(zip_data)
+                            
+                            extract_path = os.path.join(tmpdir, str(repo_id))
+                            shutil.unpack_archive(zip_path, extract_path)
+                            
+                            # Load FAISS from extracted directory
+                            embeddings = OpenAIEmbeddings(
+                                api_key=os.getenv("OPENAI_API_KEY"),
+                                model="text-embedding-3-small"
+                            )
+                            vector_store = FAISS.load_local(extract_path, embeddings, allow_dangerous_deserialization=True)
+                            
+                            # Also save to local disk for future fast loading
+                            os.makedirs(FAISS_DIR, exist_ok=True)
+                            local_faiss_path = f"{FAISS_DIR}/{repo_id}"
+                            vector_store.save_local(local_faiss_path)
+                            
+                            logging.info(f"✅ Loaded FAISS from Supabase Storage and saved to disk: {local_faiss_path}")
+                            return vector_store
+                            
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to load FAISS from Supabase Storage: {e}, rebuilding...")
+                import traceback
+                logging.debug(traceback.format_exc())
 
         # Build FAISS index from chunks (original logic)
         documents = []

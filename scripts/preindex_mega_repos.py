@@ -46,38 +46,18 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Top 20 mega-repos to pre-index
+# Top 8 mega-repos to pre-index (Option A: Prioritized list)
 # These are the largest, most popular open-source codebases
 MEGA_REPOS = [
     # Major frameworks
-    "kubernetes/kubernetes",
     "tensorflow/tensorflow",
     "pytorch/pytorch",
-    "microsoft/vscode",
     "facebook/react",
-    
-    # Languages and runtimes
-    "golang/go",
-    "rust-lang/rust",
-    "nodejs/node",
-    "python/cpython",
-    
-    # Infrastructure
-    "apache/spark",
-    "elastic/elasticsearch",
-    "grafana/grafana",
-    "prometheus/prometheus",
-    "moby/moby",
-    "hashicorp/terraform",
+    "microsoft/vscode",
     
     # Web frameworks
     "django/django",
-    "pallets/flask",
     "fastapi/fastapi",
-    "rails/rails",
-    
-    # Tools
-    "ansible/ansible",
 ]
 
 
@@ -215,8 +195,8 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
         )
         
         logging.info("   Computing PageRank scores (this may take 10-30 min for mega-repos)...")
-        hybrid_retriever.save_indexes(repo_id)
-        logging.info("   ✅ Saved BM25 and PageRank indexes")
+        hybrid_retriever.save_indexes(repo_id, vector_store=vector_store)
+        logging.info("   ✅ Saved BM25, PageRank, and FAISS indexes")
         
         # 6. Create graph structure
         logging.info("🎨 Step 6/8: Creating graph structure...")
