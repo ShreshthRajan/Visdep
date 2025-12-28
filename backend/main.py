@@ -571,25 +571,44 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
                         node["x"] = positions[node_id]["x"]
                         node["y"] = positions[node_id]["y"]
 
-        # Check for mega-repo (simple database query, no global state)
+        # Check for mega-repo using node count from already-loaded graph (no database query)
+        # OPTIMIZATION: Use len(data["nodes"]) instead of retrieve_chunks() to avoid
+        # expensive paginated queries (153 queries for 152K chunks = timeout).
+        # Node count is always >= chunk count, so this is a safe threshold check.
         mega_repo_warning = None
         if target_repo_id:
-            # Count chunks from database
-            chunks = retrieve_chunks(target_repo_id)
-            chunk_count = len(chunks)
-
-            # Mega-repo threshold: 20,000 chunks (affects <1% of repos)
+            node_count = len(data["nodes"])
+            
+            # Mega-repo threshold: 20,000 nodes (affects <1% of repos)
             # Django: 11.7K works fine
             # PyTorch: 92K is too large
-            if chunk_count > 20000:
+            # Kubernetes: 172K nodes
+            if node_count > 20000:
+                # Try to get exact chunk_count from preindexed_repos (single fast query)
+                chunk_count = node_count  # Default fallback
+                try:
+                    from backend.api.supabase_client import get_supabase_client
+                    supabase = get_supabase_client()
+                    result = supabase.table('preindexed_repos')\
+                        .select('chunk_count')\
+                        .eq('repo_id', target_repo_id)\
+                        .limit(1)\
+                        .execute()
+                    if result.data and len(result.data) > 0:
+                        chunk_count = result.data[0]['chunk_count']
+                except Exception as e:
+                    # If query fails, use node_count (close enough for warning)
+                    logging.debug(f"Could not fetch chunk_count from preindexed_repos: {e}")
+                
                 mega_repo_warning = {
                     'chunk_count': chunk_count,
-                    'message': f"This repository is extremely large ({chunk_count:,} chunks).",
+                    'node_count': node_count,
+                    'message': f"This repository is extremely large ({chunk_count:,} chunks, {node_count:,} nodes).",
                     'recommendation': "For better performance, try using the 'subdirectory' field to focus on a specific module.",
                     'example': "For PyTorch: subdirectory='torch' or 'torch/nn'",
                     'has_precomputed_positions': precomputed_positions is not None
                 }
-                logging.info(f"⚠️ Mega-repo warning for graph page: {chunk_count:,} chunks, precomputed={precomputed_positions is not None}")
+                logging.info(f"⚠️ Mega-repo warning for graph page: {chunk_count:,} chunks, {node_count:,} nodes, precomputed={precomputed_positions is not None}")
 
         return {
             "nodes": data["nodes"],
