@@ -685,6 +685,8 @@ async def upload_repo_stream(link: RepoLink):
                         "repo_id": pre['repo_id'],
                         "chunks": pre['chunk_count'],
                         "files_processed": pre['node_count'],
+                        "node_count": pre['node_count'],
+                        "edge_count": 0,  # Edge count not stored in preindexed_repos
                         "preindexed": True
                     })
                     return
