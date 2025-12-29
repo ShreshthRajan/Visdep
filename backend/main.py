@@ -1003,6 +1003,10 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
         # =====================================================================
         # For mega-repos (>10K nodes), positions are pre-computed server-side
         # using ForceAtlas2 with high iterations. This enables instant render.
+        #
+        # CRITICAL: For very large repos (>20K nodes), we only compute positions
+        # for file structure (directories + files). In this case, filter the
+        # graph to ONLY show positioned nodes to prevent browser freeze.
         # =====================================================================
         precomputed_positions = None
         if target_repo_id:
@@ -1010,7 +1014,35 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
             if positions:
                 precomputed_positions = positions
                 logging.info(f"📍 Loaded pre-computed positions for {len(positions)} nodes")
-                
+
+                # Check if this is partial positions (file structure only)
+                total_nodes = len(data["nodes"])
+                MEGA_THRESHOLD = 20000
+
+                if total_nodes > MEGA_THRESHOLD and len(positions) < total_nodes * 0.5:
+                    # Partial positions (file structure only): Filter graph to positioned nodes
+                    logging.info(f"🔍 MEGA-REPO FILTER: {len(positions)} positions for {total_nodes} nodes - filtering to file structure")
+
+                    positioned_node_ids = set(positions.keys())
+
+                    # Filter nodes to only those with pre-computed positions
+                    filtered_nodes = [
+                        node for node in data["nodes"]
+                        if node["id"] in positioned_node_ids
+                    ]
+
+                    # Filter edges to only connect filtered nodes
+                    filtered_node_ids = set(node["id"] for node in filtered_nodes)
+                    filtered_edges = [
+                        edge for edge in data["links"]
+                        if edge["source"] in filtered_node_ids and edge["target"] in filtered_node_ids
+                    ]
+
+                    logging.info(f"   Reduced: {total_nodes} → {len(filtered_nodes)} nodes, {len(data['links'])} → {len(filtered_edges)} edges")
+
+                    data["nodes"] = filtered_nodes
+                    data["links"] = filtered_edges
+
                 # Merge positions into node data
                 for node in data["nodes"]:
                     node_id = node["id"]
