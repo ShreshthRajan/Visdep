@@ -459,6 +459,56 @@ async def upload_repo(link: RepoLink):
         save_graph_as_json(graph, repo_id=repo_id)
         logging.info(f"💾 Graph saved to dependency_graph_{repo_id}.json")
 
+        # =======================================================================
+        # MEGA-REPO AUTO-POSITIONS: Pre-compute positions for large repos
+        # =======================================================================
+        # For repos >10K nodes, compute positions server-side during upload.
+        # This ensures full beautiful graph on first load (no LOD fallback).
+        # Uses networkx spring_layout with Barnes-Hut optimization.
+        # =======================================================================
+        POSITION_THRESHOLD = 10000  # Compute positions for repos larger than this
+        node_count = len(graph.nodes())
+
+        if node_count > POSITION_THRESHOLD:
+            logging.info(f"📍 MEGA-REPO: Computing positions for {node_count:,} nodes (this may take 1-2 minutes)...")
+            try:
+                import networkx as nx
+                from backend.api.graph_generator import store_graph_positions
+
+                # Use spring layout with Barnes-Hut optimization
+                # k = optimal distance between nodes (smaller = tighter clusters)
+                # iterations = more = better quality but slower
+                if node_count < 50000:
+                    positions = nx.spring_layout(
+                        graph,
+                        k=2.0 / (node_count ** 0.5),
+                        iterations=100,
+                        scale=10000,
+                        seed=42
+                    )
+                else:
+                    # Very large: fewer iterations
+                    positions = nx.spring_layout(
+                        graph,
+                        k=3.0 / (node_count ** 0.5),
+                        iterations=50,
+                        scale=20000,
+                        seed=42
+                    )
+
+                # Convert to storage format
+                positions_dict = {
+                    str(node_id): {'x': float(pos[0]), 'y': float(pos[1])}
+                    for node_id, pos in positions.items()
+                }
+
+                store_graph_positions(repo_id, positions_dict)
+                logging.info(f"✅ MEGA-REPO: Saved {len(positions_dict):,} positions for instant full graph rendering")
+
+            except Exception as pos_error:
+                # Don't fail upload if position computation fails
+                logging.warning(f"⚠️ Position computation failed (graph will use LOD fallback): {pos_error}")
+
         # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
         from backend.api.data_storage import invalidate_cache_for_repo
         invalidate_cache_for_repo(repo_id)
