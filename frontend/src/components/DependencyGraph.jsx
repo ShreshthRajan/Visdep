@@ -776,40 +776,60 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         }
 
         // =========================================================================
-        // LOD FALLBACK: For mega-repos without pre-computed positions
+        // LOD FALLBACK: For mega-repos, show only nodes with positions
         // =========================================================================
-        // If >20K nodes and no pre-computed positions, rendering all nodes will
-        // freeze the browser. Instead, show file structure only (directories + files).
-        // This maintains graph beauty while preventing freeze.
+        // For very large repos (>20K nodes), we compute positions only for file
+        // structure (directories + files). This keeps the graph beautiful and fast.
         // Users can still ask questions about any code - RAG works on full chunks.
+        //
+        // Logic:
+        // 1. If ALL nodes have positions → render all (full graph)
+        // 2. If SOME nodes have positions → render only positioned nodes (file structure)
+        // 3. If NO nodes have positions → filter to file structure (safety fallback)
         // =========================================================================
-        const hasPrecomputedPositions = data.nodes.some(n => n.x !== undefined && n.y !== undefined);
         const MEGA_REPO_THRESHOLD = 20000;
+        const nodesWithPositions = data.nodes.filter(n => n.x !== undefined && n.y !== undefined);
+        const positionedRatio = nodesWithPositions.length / data.nodes.length;
 
-        if (data.nodes.length > MEGA_REPO_THRESHOLD && !hasPrecomputedPositions) {
-          console.warn(`⚠️ LOD FALLBACK: ${data.nodes.length} nodes without positions - showing file structure only`);
+        if (data.nodes.length > MEGA_REPO_THRESHOLD) {
+          if (positionedRatio > 0.9) {
+            // >90% have positions: render all (full graph with positions)
+            console.log(`✅ MEGA-REPO: ${data.nodes.length} nodes, ${(positionedRatio * 100).toFixed(0)}% have positions - rendering full graph`);
+          } else if (nodesWithPositions.length > 0) {
+            // Some have positions: render only positioned nodes (file structure)
+            console.log(`📁 MEGA-REPO: ${data.nodes.length} nodes, only ${nodesWithPositions.length} have positions - showing file structure`);
 
-          // Filter to directories and files only (skip functions, methods, classes)
-          const structureTypes = new Set(['directory', 'file']);
-          const filteredNodes = data.nodes.filter(n => structureTypes.has(n.type));
-          const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+            const positionedIds = new Set(nodesWithPositions.map(n => n.id));
+            const filteredEdges = data.edges.filter(e =>
+              positionedIds.has(e.source) && positionedIds.has(e.target)
+            );
 
-          // Keep edges that connect visible nodes
-          const filteredEdges = data.edges.filter(e =>
-            filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
-          );
+            setMegaRepoWarning({
+              ...data.mega_repo_warning,
+              message: `Showing file structure (${nodesWithPositions.length.toLocaleString()} nodes). Full codebase (${data.nodes.length.toLocaleString()} nodes) available for questions.`,
+              lod_active: true
+            });
 
-          console.log(`   Reduced: ${data.nodes.length} → ${filteredNodes.length} nodes`);
-          console.log(`   Reduced: ${data.edges.length} → ${filteredEdges.length} edges`);
+            data = { ...data, nodes: nodesWithPositions, edges: filteredEdges };
+          } else {
+            // No positions: filter to file structure (safety fallback)
+            console.warn(`⚠️ LOD FALLBACK: ${data.nodes.length} nodes without positions - filtering to file structure`);
 
-          // Update warning to inform user
-          setMegaRepoWarning({
-            ...data.mega_repo_warning,
-            message: `Showing file structure only (${filteredNodes.length.toLocaleString()} nodes). Full codebase (${data.nodes.length.toLocaleString()} nodes) available for questions.`,
-            lod_active: true
-          });
+            const structureTypes = new Set(['directory', 'file']);
+            const filteredNodes = data.nodes.filter(n => structureTypes.has(n.type));
+            const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+            const filteredEdges = data.edges.filter(e =>
+              filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
+            );
 
-          data = { ...data, nodes: filteredNodes, edges: filteredEdges };
+            setMegaRepoWarning({
+              ...data.mega_repo_warning,
+              message: `Showing file structure only (${filteredNodes.length.toLocaleString()} nodes). Full codebase (${data.nodes.length.toLocaleString()} nodes) available for questions.`,
+              lod_active: true
+            });
+
+            data = { ...data, nodes: filteredNodes, edges: filteredEdges };
+          }
         }
 
         setGraphData(data);

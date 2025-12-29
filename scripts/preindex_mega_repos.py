@@ -217,12 +217,64 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
         store_summaries(repo_id, summaries)
         logging.info(f"   Generated {summaries['stats']['total_files']} file summaries, {summaries['stats']['total_packages']} package summaries")
         
-        # 8. Pre-render graph positions via headless browser
-        logging.info("🖥️ Step 8/8: Pre-rendering graph positions via browser...")
-        from backend.api.graph_prerender import run_prerender
-        
-        prerender_success = run_prerender(repo_name, base_url="https://visdep.com")
-        
+        # 8. Compute graph positions server-side (replaces flaky headless browser)
+        logging.info("📍 Step 8/8: Computing graph positions server-side...")
+        from backend.api.graph_generator import store_graph_positions
+        import networkx as nx
+
+        node_count = len(graph.nodes())
+        positions_success = False
+
+        try:
+            MEGA_THRESHOLD = 20000
+
+            if node_count > MEGA_THRESHOLD:
+                # Very large: compute for file structure only
+                logging.info(f"   MEGA-REPO: {node_count:,} nodes - computing file structure positions...")
+
+                structure_nodes = [
+                    n for n, data in graph.nodes(data=True)
+                    if data.get('type') in ('directory', 'file')
+                ]
+                G_structure = graph.subgraph(structure_nodes).copy()
+                structure_count = len(G_structure.nodes())
+                logging.info(f"   Reduced: {node_count:,} → {structure_count:,} nodes")
+
+                # Adaptive iterations for latency optimization
+                iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
+                logging.info(f"   Computing spring layout ({iterations} iterations)...")
+
+                positions = nx.spring_layout(
+                    G_structure,
+                    k=2.0 / (structure_count ** 0.5),
+                    iterations=iterations,
+                    scale=15000,
+                    seed=42
+                )
+            else:
+                # Medium: full spring layout
+                iterations = 50 if node_count > 15000 else 75 if node_count > 10000 else 100
+                logging.info(f"   Computing full layout for {node_count:,} nodes ({iterations} iterations)...")
+                positions = nx.spring_layout(
+                    graph,
+                    k=2.0 / (node_count ** 0.5),
+                    iterations=iterations,
+                    scale=10000,
+                    seed=42
+                )
+
+            # Save positions
+            positions_dict = {
+                str(node_id): {'x': float(pos[0]), 'y': float(pos[1])}
+                for node_id, pos in positions.items()
+            }
+            store_graph_positions(repo_id, positions_dict)
+            logging.info(f"   ✅ Saved {len(positions_dict):,} positions")
+            positions_success = True
+
+        except Exception as pos_error:
+            logging.warning(f"   ⚠️ Position computation failed: {pos_error}")
+
         # Register as pre-indexed
         supabase = get_supabase_client()
         supabase.table('preindexed_repos').upsert({
@@ -231,17 +283,17 @@ async def preindex_repo(repo_name: str, subdirectory: str = None):
             'chunk_count': len(chunks),
             'node_count': len(graph.nodes()),
             'has_summaries': True,
-            'has_positions': prerender_success,  # True if pre-render succeeded
+            'has_positions': positions_success,
             'has_bm25_index': True,
             'has_pagerank': True,
             'has_faiss_index': True,
             'processing_time_seconds': int(time.time() - start_time)
         }, on_conflict='repo_name').execute()
-        
-        if prerender_success:
-            logging.info("✅ Graph positions saved to Supabase")
+
+        if positions_success:
+            logging.info("✅ Graph positions computed and saved")
         else:
-            logging.warning("⚠️ Graph pre-render failed - positions not saved (users will need to wait for stabilization)")
+            logging.warning("⚠️ Positions not saved - graph will use LOD fallback")
         
         elapsed = time.time() - start_time
         logging.info(f"✅ PRE-INDEXING COMPLETE: {repo_name}")

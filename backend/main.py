@@ -464,35 +464,57 @@ async def upload_repo(link: RepoLink):
         # =======================================================================
         # For repos >10K nodes, compute positions server-side during upload.
         # This ensures full beautiful graph on first load (no LOD fallback).
-        # Uses networkx spring_layout with Barnes-Hut optimization.
+        #
+        # Strategy with latency optimization:
+        # - 10K-20K nodes: Full spring layout with adaptive iterations
+        # - >20K nodes: File structure only (directories + files)
+        #
+        # Iteration scaling (O(n²) per iteration):
+        # - <5K nodes: 100 iterations (~30s)
+        # - 5K-10K nodes: 50 iterations (~1 min)
+        # - >10K nodes: 30 iterations (~2 min)
         # =======================================================================
-        POSITION_THRESHOLD = 10000  # Compute positions for repos larger than this
+        POSITION_THRESHOLD = 10000
+        MEGA_THRESHOLD = 20000
         node_count = len(graph.nodes())
 
         if node_count > POSITION_THRESHOLD:
-            logging.info(f"📍 MEGA-REPO: Computing positions for {node_count:,} nodes (this may take 1-2 minutes)...")
             try:
                 import networkx as nx
                 from backend.api.graph_generator import store_graph_positions
 
-                # Use spring layout with Barnes-Hut optimization
-                # k = optimal distance between nodes (smaller = tighter clusters)
-                # iterations = more = better quality but slower
-                if node_count < 50000:
+                if node_count > MEGA_THRESHOLD:
+                    # Very large: compute for file structure only
+                    logging.info(f"📍 MEGA-REPO: {node_count:,} nodes - computing positions for file structure only...")
+
+                    structure_nodes = [
+                        n for n, data in graph.nodes(data=True)
+                        if data.get('type') in ('directory', 'file')
+                    ]
+                    G_structure = graph.subgraph(structure_nodes).copy()
+                    structure_count = len(G_structure.nodes())
+                    logging.info(f"   Reduced: {node_count:,} → {structure_count:,} nodes")
+
+                    # Adaptive iterations based on structure size
+                    iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
+                    logging.info(f"   Computing spring layout ({iterations} iterations)...")
+
                     positions = nx.spring_layout(
-                        graph,
-                        k=2.0 / (node_count ** 0.5),
-                        iterations=100,
-                        scale=10000,
+                        G_structure,
+                        k=2.0 / (structure_count ** 0.5),
+                        iterations=iterations,
+                        scale=15000,
                         seed=42
                     )
                 else:
-                    # Very large: fewer iterations
+                    # Medium-large: full spring layout with adaptive iterations
+                    iterations = 50 if node_count > 15000 else 75
+                    logging.info(f"📍 Computing positions for {node_count:,} nodes ({iterations} iterations)...")
                     positions = nx.spring_layout(
                         graph,
-                        k=3.0 / (node_count ** 0.5),
-                        iterations=50,
-                        scale=20000,
+                        k=2.0 / (node_count ** 0.5),
+                        iterations=iterations,
+                        scale=10000,
                         seed=42
                     )
 
@@ -503,7 +525,7 @@ async def upload_repo(link: RepoLink):
                 }
 
                 store_graph_positions(repo_id, positions_dict)
-                logging.info(f"✅ MEGA-REPO: Saved {len(positions_dict):,} positions for instant full graph rendering")
+                logging.info(f"✅ Saved {len(positions_dict):,} positions")
 
             except Exception as pos_error:
                 # Don't fail upload if position computation fails

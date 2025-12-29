@@ -41,8 +41,10 @@ def compute_positions_for_repo(repo_id: int, node_count: int = None) -> bool:
     """
     Compute and save graph positions for a repository.
 
-    Uses networkx spring_layout with Barnes-Hut optimization for O(n log n) performance.
-    For very large graphs (>50K nodes), uses chunked computation.
+    Strategy based on size:
+    - Small (<5K nodes): Full Kamada-Kawai layout
+    - Medium (<20K nodes): Full spring layout
+    - Large (>20K nodes): File structure only (directories + files)
 
     Args:
         repo_id: Repository ID in Supabase
@@ -72,32 +74,54 @@ def compute_positions_for_repo(repo_id: int, node_count: int = None) -> bool:
             logging.error("❌ Graph has no nodes!")
             return False
 
-        # Step 2: Compute positions using spring layout
+        # Step 2: Compute positions with adaptive iterations for latency optimization
         logging.info("📊 Step 2/3: Computing positions...")
 
-        # Choose algorithm based on size
-        if actual_node_count < 5000:
+        # For very large graphs, compute positions for file structure only
+        MEGA_THRESHOLD = 20000
+
+        if actual_node_count > MEGA_THRESHOLD:
+            logging.info(f"   ⚡ MEGA-REPO MODE: {actual_node_count:,} nodes too large for full layout")
+            logging.info(f"   Computing positions for file structure only (directories + files)...")
+
+            # Extract subgraph of directories and files only
+            structure_nodes = [
+                n for n, data in G.nodes(data=True)
+                if data.get('type') in ('directory', 'file')
+            ]
+            G_structure = G.subgraph(structure_nodes).copy()
+            structure_count = len(G_structure.nodes())
+
+            logging.info(f"   Reduced: {actual_node_count:,} → {structure_count:,} nodes")
+
+            # Adaptive iterations for latency optimization
+            # O(n²) per iteration: 30 iters @ 18K nodes ≈ 2-3 min
+            iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
+            logging.info(f"   Computing spring layout ({iterations} iterations)...")
+
+            positions = nx.spring_layout(
+                G_structure,
+                k=2.0 / (structure_count ** 0.5),
+                iterations=iterations,
+                scale=15000,
+                seed=42
+            )
+
+            logging.info(f"   ✅ Computed {len(positions):,} positions for file structure")
+
+        elif actual_node_count < 5000:
             # Small graph: Use Kamada-Kawai (higher quality, O(n²))
             logging.info("   Using Kamada-Kawai layout (high quality)")
             positions = nx.kamada_kawai_layout(G, scale=5000)
-        elif actual_node_count < 50000:
-            # Medium graph: Use spring layout with more iterations
-            logging.info("   Using spring layout with 100 iterations")
-            positions = nx.spring_layout(
-                G,
-                k=2.0 / (actual_node_count ** 0.5),  # Optimal spacing
-                iterations=100,
-                scale=10000,
-                seed=42  # Reproducible
-            )
         else:
-            # Large graph: Use spring layout with fewer iterations
-            logging.info("   Using spring layout with 50 iterations (large graph optimization)")
+            # Medium graph: Use spring layout with adaptive iterations
+            iterations = 50 if actual_node_count > 15000 else 75 if actual_node_count > 10000 else 100
+            logging.info(f"   Using spring layout ({iterations} iterations) for {actual_node_count:,} nodes...")
             positions = nx.spring_layout(
                 G,
-                k=3.0 / (actual_node_count ** 0.5),  # More spacing for large graphs
-                iterations=50,
-                scale=20000,
+                k=2.0 / (actual_node_count ** 0.5),
+                iterations=iterations,
+                scale=10000,
                 seed=42
             )
 
