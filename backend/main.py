@@ -588,6 +588,379 @@ async def upload_repo(link: RepoLink):
         logging.error(f"Full traceback:\n{error_traceback}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
+
+@app.post("/api/upload_repo_stream")
+async def upload_repo_stream(link: RepoLink):
+    """
+    Upload repository with real-time SSE progress streaming.
+
+    Streams progress events at each stage:
+    - init: Starting upload
+    - preindexed: Found pre-indexed repo (instant complete)
+    - clone: Cloning repository
+    - clone_done: Clone complete with file count
+    - filter: Filtering files
+    - parse: Parsing AST
+    - chunks: Processing chunks
+    - graph: Creating dependency graph
+    - positions: Computing positions (for large repos)
+    - done: Upload complete
+    - error: Error occurred
+    """
+    def sse_event(event_type: str, data: dict) -> str:
+        """Format SSE event with type and JSON data."""
+        payload = {"type": event_type, **data}
+        return f"data: {json.dumps(payload)}\n\n"
+
+    async def event_generator():
+        global latest_repo_id
+
+        try:
+            repo_url = link.repo_url
+            sub_directory = link.sub_directory
+            exclude_docs = link.exclude_docs
+            exclude_examples = link.exclude_examples
+            exclude_tests = link.exclude_tests
+            auth_token = os.getenv("GITHUB_AUTH_TOKEN")
+
+            # Extract repo name for display
+            repo_name = '/'.join(repo_url.rstrip('/').split('/')[-2:])
+
+            yield sse_event("init", {
+                "message": f"Initializing upload for {repo_name}...",
+                "progress": 5,
+                "repo_name": repo_name
+            })
+            await asyncio.sleep(0)  # Allow event to be sent
+
+            # Check for pre-indexed repository
+            try:
+                from backend.api.supabase_client import get_supabase_client
+                supabase = get_supabase_client()
+
+                preindexed = supabase.table('preindexed_repos')\
+                    .select('*')\
+                    .eq('repo_name', repo_name)\
+                    .limit(1)\
+                    .execute()
+
+                if preindexed.data and len(preindexed.data) > 0:
+                    pre = preindexed.data[0]
+                    latest_repo_id = pre['repo_id']
+
+                    # Link to user if provided
+                    if link.user_id:
+                        try:
+                            existing = supabase.table('user_repos')\
+                                .select('*')\
+                                .eq('user_id', link.user_id)\
+                                .eq('repo_name', repo_name)\
+                                .execute()
+
+                            if existing.data and len(existing.data) > 0:
+                                supabase.table('user_repos').update({
+                                    'last_accessed': 'now()',
+                                    'local_repo_id': pre['repo_id']
+                                }).eq('id', existing.data[0]['id']).execute()
+                            else:
+                                supabase.table('user_repos').insert({
+                                    'user_id': link.user_id,
+                                    'repo_name': repo_name,
+                                    'repo_url': repo_url,
+                                    'is_private': False,
+                                    'local_repo_id': pre['repo_id']
+                                }).execute()
+                        except Exception:
+                            pass
+
+                    yield sse_event("preindexed", {
+                        "message": f"Pre-indexed repository loaded instantly!",
+                        "progress": 100,
+                        "repo_id": pre['repo_id'],
+                        "chunks": pre['chunk_count'],
+                        "nodes": pre['node_count']
+                    })
+                    yield sse_event("done", {
+                        "message": "Repository ready",
+                        "repo_id": pre['repo_id'],
+                        "chunks": pre['chunk_count'],
+                        "files_processed": pre['node_count'],
+                        "preindexed": True
+                    })
+                    return
+            except Exception:
+                pass  # Continue with normal upload
+
+            # Step 1: Clone repository
+            yield sse_event("clone", {
+                "message": "Cloning repository...",
+                "progress": 10
+            })
+            await asyncio.sleep(0)
+
+            user_oauth_token = link.github_token or None
+            try:
+                repo_content = fetch_repo_content_via_git(repo_url, sub_directory, oauth_token=user_oauth_token)
+            except Exception as git_error:
+                api_token = link.github_token or auth_token
+                repo_content = fetch_repo_content(repo_url, api_token, sub_directory)
+
+            yield sse_event("clone_done", {
+                "message": f"Found {len(repo_content)} files",
+                "progress": 20,
+                "file_count": len(repo_content),
+                "sample_files": [f['path'] for f in repo_content[:5]]
+            })
+            await asyncio.sleep(0)
+
+            # Step 2: Filter content
+            yield sse_event("filter", {
+                "message": "Filtering dependency directories...",
+                "progress": 25
+            })
+            await asyncio.sleep(0)
+
+            repo_content, filter_metadata = filter_repository_content(
+                repo_content, exclude_docs, exclude_examples, exclude_tests
+            )
+
+            filtered_count = len(repo_content)
+            excluded_dirs = filter_metadata.get('excluded_dirs', [])
+
+            yield sse_event("filter_done", {
+                "message": f"Filtered to {filtered_count} files" + (f" (excluded: {', '.join(excluded_dirs)})" if excluded_dirs else ""),
+                "progress": 30,
+                "filtered_count": filtered_count,
+                "excluded_dirs": excluded_dirs
+            })
+            await asyncio.sleep(0)
+
+            # Step 3: Parse AST
+            yield sse_event("parse", {
+                "message": "Parsing code structure...",
+                "progress": 35
+            })
+            await asyncio.sleep(0)
+
+            repo_metadata = fetch_repo_metadata(repo_url, auth_token)
+            parsed_data = parse_code_to_ast(repo_content)
+
+            yield sse_event("parse_done", {
+                "message": f"Parsed {len(parsed_data)} files",
+                "progress": 45,
+                "parsed_count": len(parsed_data)
+            })
+            await asyncio.sleep(0)
+
+            # Step 4: Store metadata
+            yield sse_event("store", {
+                "message": "Storing repository metadata...",
+                "progress": 50
+            })
+            await asyncio.sleep(0)
+
+            repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
+            latest_repo_id = repo_id
+
+            # Step 5: Process chunks
+            yield sse_event("chunks", {
+                "message": "Processing code chunks...",
+                "progress": 55
+            })
+            await asyncio.sleep(0)
+
+            chunks = process_repository_to_chunks(parsed_data)
+            chunk_stats = get_chunk_stats(chunks)
+
+            yield sse_event("chunks_done", {
+                "message": f"Generated {chunk_stats['total']} chunks",
+                "progress": 65,
+                "chunk_count": chunk_stats['total'],
+                "by_type": chunk_stats.get('by_type', {})
+            })
+            await asyncio.sleep(0)
+
+            # Step 6: Store chunks
+            yield sse_event("store_chunks", {
+                "message": "Storing chunks in database...",
+                "progress": 70
+            })
+            await asyncio.sleep(0)
+
+            store_chunks_batch(repo_id, chunks)
+
+            # Step 7: Create graph
+            yield sse_event("graph", {
+                "message": "Building dependency graph...",
+                "progress": 75
+            })
+            await asyncio.sleep(0)
+
+            has_method_level_chunks = any(chunk.get('type') == 'method' for chunk in chunks)
+
+            if has_method_level_chunks:
+                graph = create_chunk_level_graph(chunks)
+            else:
+                graph = create_dependency_graph(parsed_data)
+
+            node_count = len(graph.nodes())
+            edge_count = len(graph.edges())
+
+            # Get sample nodes for visualization
+            sample_nodes = []
+            for node_id, node_data in list(graph.nodes(data=True))[:10]:
+                sample_nodes.append({
+                    "id": str(node_id),
+                    "label": node_data.get('label', str(node_id)),
+                    "type": node_data.get('type', 'unknown')
+                })
+
+            yield sse_event("graph_done", {
+                "message": f"Created graph with {node_count} nodes",
+                "progress": 80,
+                "node_count": node_count,
+                "edge_count": edge_count,
+                "sample_nodes": sample_nodes
+            })
+            await asyncio.sleep(0)
+
+            save_graph_as_json(graph, repo_id=repo_id)
+
+            # Step 8: Compute positions for large repos
+            POSITION_THRESHOLD = 10000
+            MEGA_THRESHOLD = 20000
+
+            if node_count > POSITION_THRESHOLD:
+                yield sse_event("positions", {
+                    "message": f"Computing layout for {node_count} nodes (this may take 1-2 minutes)...",
+                    "progress": 85,
+                    "node_count": node_count
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    import networkx as nx
+                    from backend.api.graph_generator import store_graph_positions
+
+                    if node_count > MEGA_THRESHOLD:
+                        structure_nodes = [
+                            n for n, data in graph.nodes(data=True)
+                            if data.get('type') in ('directory', 'file')
+                        ]
+                        G_structure = graph.subgraph(structure_nodes).copy()
+                        structure_count = len(G_structure.nodes())
+
+                        iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
+
+                        yield sse_event("positions_progress", {
+                            "message": f"Computing positions for {structure_count} file nodes...",
+                            "progress": 88,
+                            "structure_count": structure_count
+                        })
+                        await asyncio.sleep(0)
+
+                        positions = nx.spring_layout(
+                            G_structure,
+                            k=2.0 / (structure_count ** 0.5),
+                            iterations=iterations,
+                            scale=15000,
+                            seed=42
+                        )
+                    else:
+                        iterations = 50 if node_count > 15000 else 75
+                        positions = nx.spring_layout(
+                            graph,
+                            k=2.0 / (node_count ** 0.5),
+                            iterations=iterations,
+                            scale=10000,
+                            seed=42
+                        )
+
+                    positions_dict = {
+                        str(node_id): {'x': float(pos[0]), 'y': float(pos[1])}
+                        for node_id, pos in positions.items()
+                    }
+                    store_graph_positions(repo_id, positions_dict)
+
+                    yield sse_event("positions_done", {
+                        "message": f"Saved {len(positions_dict)} positions",
+                        "progress": 92,
+                        "positions_count": len(positions_dict)
+                    })
+                    await asyncio.sleep(0)
+
+                except Exception as pos_error:
+                    yield sse_event("positions_skipped", {
+                        "message": "Position computation skipped (will compute on first load)",
+                        "progress": 92
+                    })
+                    await asyncio.sleep(0)
+
+            # Step 9: Link to user
+            if link.user_id:
+                yield sse_event("link", {
+                    "message": "Linking repository to account...",
+                    "progress": 95
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    from backend.api.supabase_client import get_supabase_client
+                    supabase = get_supabase_client()
+
+                    existing = supabase.table('user_repos').select('*').eq('user_id', link.user_id).eq('repo_name', repo_metadata['full_name']).execute()
+
+                    if existing.data and len(existing.data) > 0:
+                        supabase.table('user_repos').update({
+                            'last_accessed': 'now()',
+                            'local_repo_id': repo_id
+                        }).eq('id', existing.data[0]['id']).execute()
+                    else:
+                        supabase.table('user_repos').insert({
+                            'user_id': link.user_id,
+                            'repo_name': repo_metadata['full_name'],
+                            'repo_url': repo_url,
+                            'is_private': bool(link.github_token),
+                            'local_repo_id': repo_id
+                        }).execute()
+                except Exception:
+                    pass
+
+            # Invalidate cache
+            from backend.api.data_storage import invalidate_cache_for_repo
+            invalidate_cache_for_repo(repo_id)
+
+            # Final done event
+            yield sse_event("done", {
+                "message": "Repository ready!",
+                "progress": 100,
+                "repo_id": repo_id,
+                "chunks": chunk_stats['total'],
+                "files_processed": chunk_stats.get('files_processed', 0),
+                "node_count": node_count,
+                "edge_count": edge_count
+            })
+
+        except Exception as e:
+            import traceback
+            logging.error(f"Error in upload_repo_stream: {e}")
+            logging.error(traceback.format_exc())
+            yield sse_event("error", {
+                "message": str(e),
+                "progress": 0
+            })
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @app.get("/api/dependency_graph")
 async def get_dependency_graph(repo_id: Optional[int] = None):
     """

@@ -100,7 +100,7 @@ const Loading = () => {
     networkInstance.current = new Network(container, data, options);
   }, []);
 
-  // Effect 3: Upload and progress visualization (runs ONCE on mount)
+  // Effect 3: Upload with real-time SSE streaming (runs ONCE on mount)
   useEffect(() => {
     if (!repoUrl) return;  // Guard clause - already redirected by Effect 1
 
@@ -109,35 +109,13 @@ const Loading = () => {
 
     const uploadRepo = async () => {
       const repoName = repoUrl.split('/').pop() || 'repository';
-
-      const steps = [
-        { progress: 5, log: `[LOAD]: Indexing repository...`, delay: 300 },
-        { progress: 10, log: `-> Found ${repoName}`, delay: 500, addNode: { id: 'root', label: repoName, x: 0, y: 0 } },
-        { progress: 15, log: '[GIT]: Cloning codebase...', delay: 700 },
-        { progress: 22, log: '-> Found 127 python files.', delay: 600, addNode: { id: 'src', label: 'src/', x: -100, y: 50 }, addEdge: { from: 'root', to: 'src' } },
-        { progress: 30, log: '[AST]: Building tree for /src/auth...', delay: 800, addNode: { id: 'auth', label: 'auth.py', x: -150, y: 120 }, addEdge: { from: 'src', to: 'auth' } },
-        { progress: 38, log: '[SUCCESS]: Node #127 linked.', delay: 700, addNode: { id: 'models', label: 'models.py', x: 100, y: 50 }, addEdge: { from: 'root', to: 'models' } },
-        { progress: 45, log: '[AST]: Building tree for /src/api...', delay: 900, addNode: { id: 'api', label: 'api.py', x: 0, y: 120 }, addEdge: { from: 'src', to: 'api' } },
-        { progress: 52, log: '[SUCCESS]: Node #284 linked.', delay: 600, addNode: { id: 'utils', label: 'utils.py', x: 150, y: 120 }, addEdge: { from: 'models', to: 'utils' } },
-        { progress: 60, log: '[CHUNK]: Processing method-level chunks...', delay: 1000 },
-        { progress: 68, log: '[EMBED]: OpenAI embeddings (batch 1/3)...', delay: 1100, addNode: { id: 'sessions', label: 'sessions', x: -100, y: 190 }, addEdge: { from: 'auth', to: 'sessions' } },
-        { progress: 75, log: '[EMBED]: OpenAI embeddings (batch 2/3)...', delay: 900, addNode: { id: 'hooks', label: 'hooks', x: 100, y: 190 }, addEdge: { from: 'api', to: 'hooks' } },
-        { progress: 82, log: '[FAISS]: Building vector index...', delay: 800 },
-        { progress: 88, log: '[SUCCESS]: Node #842 linked.', delay: 700 },
-        { progress: 92, log: '[GRAPH]: NetworkX force-atlas2...', delay: 600 },
-        { progress: 95, log: '[HYBRID]: Initializing retriever...', delay: 500 },
-        { progress: 97, log: '[CANVAS]: Preparing visualization...', delay: 800 },
-        { progress: 98, log: '[LAYOUT]: Computing node positions...', delay: 700 },
-        { progress: 99, log: '[RENDER]: Organizing clusters...', delay: 900 },
-        { progress: 100, log: '[READY]: AST engine initialized.', delay: 600 }
-      ];
+      let eventSource = null;
 
       try {
-        // Start real upload in background
-        // Phase 2: Include user_id and github_token for private repos
+        // Build upload payload
         const uploadPayload = {
           repo_url: repoUrl,
-          sub_directory: subDirectory
+          sub_directory: subDirectory || null
         };
 
         if (user && user.id) {
@@ -148,87 +126,266 @@ const Loading = () => {
           uploadPayload.github_token = githubToken;
         }
 
-        const uploadPromise = API.post('/api/upload_repo', uploadPayload);
+        // Use EventSource for SSE streaming
+        // Note: EventSource doesn't support POST, so we'll use fetch with streaming
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+        const response = await fetch(`${apiUrl}/api/upload_repo_stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(uploadPayload)
+        });
 
-        // Visual progress feedback
-        for (const stepData of steps) {
-          await new Promise(resolve => setTimeout(resolve, stepData.delay));
-
-          setProgress(stepData.progress);
-          setLogs(prev => [...prev, stepData.log]);
-
-          // Add ghost nodes to graph
-          if (stepData.addNode && networkInstance.current) {
-            const nodesDataSet = networkInstance.current.body.data.nodes;
-            nodesDataSet.add(stepData.addNode);
-          }
-
-          if (stepData.addEdge && networkInstance.current) {
-            const edgesDataSet = networkInstance.current.body.data.edges;
-            edgesDataSet.add({ id: `edge_${stepData.addEdge.from}_${stepData.addEdge.to}`, ...stepData.addEdge });
-          }
+        if (!response.ok) {
+          throw new Error(`Upload failed: ${response.statusText}`);
         }
 
-        // Show backend processing message (large repos take 2-5 min)
-        setLogs(prev => [...prev, '[BACKEND]: Processing repository on server...']);
-        setLogs(prev => [...prev, '[BACKEND]: Parsing code structure...']);
-        setLogs(prev => [...prev, '[BACKEND]: Building dependency graph...']);
-        setLogs(prev => [...prev, '[BACKEND]: Large repos (5000+ files) may take 3-5 minutes...']);
-        setLogs(prev => [...prev, '[BACKEND]: Please wait, do not refresh...']);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        const uploadStartTime = Date.now();
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Node tracking for ghost graph
+        let nodeCounter = 0;
+        const addedNodes = new Set();
 
-        // Wait for real upload to complete
-        await uploadPromise;
+        // Read SSE stream
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        const uploadDuration = Math.round((Date.now() - uploadStartTime) / 1000);
-        setLogs(prev => [...prev, `[BACKEND]: Completed in ${uploadDuration} seconds`]);
+          buffer += decoder.decode(value, { stream: true });
 
-        // Final success log
-        setLogs(prev => [...prev, '[COMPLETE]: Repository ready']);
+          // Split by SSE delimiter (double newline)
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-        // Phase 3: Fetch the repo that was just uploaded (for currentRepo state)
-        if (user) {
-          try {
-            const userReposResponse = await API.get(`/api/user/${user.id}/repos`);
-            const repos = userReposResponse.data;
+          for (const line of lines) {
+            if (!line.trim() || !line.startsWith('data: ')) continue;
 
-            if (repos && repos.length > 0) {
-              // Most recent repo (just uploaded)
-              const justUploaded = repos[0];
-              sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
-              console.log('✅ Stored current repo for GraphChat');
+            try {
+              const jsonData = line.substring(6); // Remove 'data: ' prefix
+              const event = JSON.parse(jsonData);
+
+              // Update progress
+              if (event.progress !== undefined) {
+                setProgress(event.progress);
+              }
+
+              // Handle different event types
+              switch (event.type) {
+                case 'init':
+                  setLogs(prev => [...prev, `[INIT]: ${event.message}`]);
+                  break;
+
+                case 'preindexed':
+                  setLogs(prev => [...prev, `[CACHED]: ${event.message}`]);
+                  setLogs(prev => [...prev, `-> ${event.chunks.toLocaleString()} chunks ready`]);
+                  setLogs(prev => [...prev, `-> ${event.nodes.toLocaleString()} nodes in graph`]);
+                  break;
+
+                case 'clone':
+                  setLogs(prev => [...prev, `[GIT]: ${event.message}`]);
+                  break;
+
+                case 'clone_done':
+                  setLogs(prev => [...prev, `-> Found ${event.file_count} files`]);
+
+                  // Add root node for actual repo
+                  if (networkInstance.current && !addedNodes.has('root')) {
+                    const nodesDataSet = networkInstance.current.body.data.nodes;
+                    nodesDataSet.add({ id: 'root', label: repoName, x: 0, y: 0 });
+                    addedNodes.add('root');
+                  }
+
+                  // Add sample files to graph
+                  if (event.sample_files && networkInstance.current) {
+                    const nodesDataSet = networkInstance.current.body.data.nodes;
+                    const edgesDataSet = networkInstance.current.body.data.edges;
+
+                    event.sample_files.slice(0, 5).forEach((filePath, idx) => {
+                      const fileName = filePath.split('/').pop();
+                      const nodeId = `file_${nodeCounter++}`;
+
+                      if (!addedNodes.has(nodeId)) {
+                        const angle = (idx / 5) * Math.PI * 2;
+                        const radius = 120;
+                        nodesDataSet.add({
+                          id: nodeId,
+                          label: fileName,
+                          x: Math.cos(angle) * radius,
+                          y: Math.sin(angle) * radius
+                        });
+                        edgesDataSet.add({
+                          id: `edge_root_${nodeId}`,
+                          from: 'root',
+                          to: nodeId
+                        });
+                        addedNodes.add(nodeId);
+                      }
+                    });
+                  }
+                  break;
+
+                case 'filter':
+                  setLogs(prev => [...prev, `[FILTER]: ${event.message}`]);
+                  break;
+
+                case 'filter_done':
+                  if (event.excluded_dirs && event.excluded_dirs.length > 0) {
+                    setLogs(prev => [...prev, `-> Filtered to ${event.filtered_count} files (excluded: ${event.excluded_dirs.join(', ')})`]);
+                  } else {
+                    setLogs(prev => [...prev, `-> ${event.filtered_count} files after filtering`]);
+                  }
+                  break;
+
+                case 'parse':
+                  setLogs(prev => [...prev, `[AST]: ${event.message}`]);
+                  break;
+
+                case 'parse_done':
+                  setLogs(prev => [...prev, `-> Parsed ${event.parsed_count} files`]);
+                  break;
+
+                case 'store':
+                  setLogs(prev => [...prev, `[DB]: ${event.message}`]);
+                  break;
+
+                case 'chunks':
+                  setLogs(prev => [...prev, `[CHUNK]: ${event.message}`]);
+                  break;
+
+                case 'chunks_done':
+                  setLogs(prev => [...prev, `-> Generated ${event.chunk_count.toLocaleString()} chunks`]);
+                  if (event.by_type) {
+                    const typeStr = Object.entries(event.by_type)
+                      .slice(0, 3)
+                      .map(([type, count]) => `${type}:${count}`)
+                      .join(', ');
+                    setLogs(prev => [...prev, `-> Types: ${typeStr}`]);
+                  }
+                  break;
+
+                case 'store_chunks':
+                  setLogs(prev => [...prev, `[DB]: ${event.message}`]);
+                  break;
+
+                case 'graph':
+                  setLogs(prev => [...prev, `[GRAPH]: ${event.message}`]);
+                  break;
+
+                case 'graph_done':
+                  setLogs(prev => [...prev, `-> Created ${event.node_count.toLocaleString()} nodes, ${event.edge_count.toLocaleString()} edges`]);
+
+                  // Add sample nodes from actual graph to visualization
+                  if (event.sample_nodes && networkInstance.current) {
+                    const nodesDataSet = networkInstance.current.body.data.nodes;
+                    const edgesDataSet = networkInstance.current.body.data.edges;
+
+                    event.sample_nodes.forEach((node, idx) => {
+                      const nodeId = `graph_${node.id}`;
+
+                      if (!addedNodes.has(nodeId)) {
+                        const angle = ((idx + 5) / 10) * Math.PI * 2;
+                        const radius = 200;
+                        nodesDataSet.add({
+                          id: nodeId,
+                          label: node.label,
+                          x: Math.cos(angle) * radius,
+                          y: Math.sin(angle) * radius
+                        });
+
+                        // Connect to root or random existing node
+                        const existingNodes = Array.from(addedNodes);
+                        const randomExisting = existingNodes[Math.floor(Math.random() * existingNodes.length)];
+                        edgesDataSet.add({
+                          id: `edge_${randomExisting}_${nodeId}`,
+                          from: randomExisting,
+                          to: nodeId
+                        });
+                        addedNodes.add(nodeId);
+                      }
+                    });
+                  }
+                  break;
+
+                case 'positions':
+                  setLogs(prev => [...prev, `[LAYOUT]: ${event.message}`]);
+                  setEta(120);  // Show 2 min ETA for position computation
+                  break;
+
+                case 'positions_progress':
+                  setLogs(prev => [...prev, `-> ${event.message}`]);
+                  break;
+
+                case 'positions_done':
+                  setLogs(prev => [...prev, `-> Saved ${event.positions_count.toLocaleString()} positions`]);
+                  setEta(null);
+                  break;
+
+                case 'positions_skipped':
+                  setLogs(prev => [...prev, `-> ${event.message}`]);
+                  setEta(null);
+                  break;
+
+                case 'link':
+                  setLogs(prev => [...prev, `[ACCOUNT]: ${event.message}`]);
+                  break;
+
+                case 'done':
+                  setLogs(prev => [...prev, `[COMPLETE]: ${event.message}`]);
+                  setLogs(prev => [...prev, `-> Chunks: ${event.chunks.toLocaleString()}`]);
+                  setLogs(prev => [...prev, `-> Nodes: ${event.node_count.toLocaleString()}`]);
+
+                  // Fetch user repos for currentRepo state
+                  if (user) {
+                    try {
+                      const userReposResponse = await API.get(`/api/user/${user.id}/repos`);
+                      const repos = userReposResponse.data;
+
+                      if (repos && repos.length > 0) {
+                        const justUploaded = repos[0];
+                        sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
+                      }
+                    } catch (err) {
+                      console.error('⚠️ Could not fetch uploaded repo:', err);
+                    }
+                  }
+
+                  // White-out flash transition
+                  await new Promise(resolve => setTimeout(resolve, 400));
+                  setShowFlash(true);
+                  await new Promise(resolve => setTimeout(resolve, 500));
+
+                  // Navigate to graph
+                  navigate('/graph-chat');
+                  break;
+
+                case 'error':
+                  setLogs(prev => [...prev, `[ERROR]: ${event.message}`]);
+                  setLogs(prev => [...prev, `[ERROR]: Upload failed. Please try again.`]);
+                  setEta(null);
+                  break;
+
+                default:
+                  console.warn('Unknown event type:', event.type);
+              }
+
+            } catch (parseError) {
+              console.error('Error parsing SSE event:', parseError);
             }
-          } catch (err) {
-            console.error('⚠️ Could not fetch uploaded repo:', err);
           }
         }
-
-        // Small delay for final log
-        await new Promise(resolve => setTimeout(resolve, 400));
-
-        // White-out flash transition (camera shutter)
-        setShowFlash(true);
-
-        // Wait for flash animation
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Navigate to graph
-        navigate('/graph-chat');
 
       } catch (error) {
         console.error('Upload error:', error);
-        setLogs(prev => [...prev, `[ERROR]: ${error.response?.data?.detail || error.message || 'Upload failed'}`]);
-        setLogs(prev => [...prev, `[ERROR]: Upload failed. Check backend is running.`]);
-
-        // Stay on loading page showing error (don't redirect)
-        // User can manually navigate back
+        setLogs(prev => [...prev, `[ERROR]: ${error.message || 'Upload failed'}`]);
+        setLogs(prev => [...prev, `[ERROR]: Please check your connection and try again.`]);
       }
     };
 
     uploadRepo();
-  }, [repoUrl, subDirectory, navigate]);
+  }, [repoUrl, subDirectory, navigate, user, githubToken]);
 
   return (
     <div
