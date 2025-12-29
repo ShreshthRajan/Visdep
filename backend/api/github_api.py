@@ -9,6 +9,67 @@ import os
 import shutil
 import logging
 
+# =============================================================================
+# DIRECTORY FILTERING: Exclude dependency/build directories from processing
+# =============================================================================
+# These directories contain third-party code, build artifacts, or caches that:
+# 1. Are not part of the actual codebase
+# 2. Dramatically inflate node counts (10K+ files in node_modules alone)
+# 3. Cause browser freezes when rendering graphs
+# 4. Reduce answer quality by polluting retrieval with irrelevant code
+# =============================================================================
+EXCLUDED_DIRS = {
+    # Version control
+    '.git', '.svn', '.hg',
+
+    # Python virtual environments & caches
+    '.venv', 'venv', 'env', '.env', 'virtualenv', '.virtualenv',
+    '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    '.tox', '.nox', '.eggs', '*.egg-info',
+
+    # Node.js / JavaScript
+    'node_modules', '.npm', '.yarn', '.pnpm-store',
+
+    # PHP
+    'vendor',
+
+    # Ruby
+    'bundle', '.bundle',
+
+    # Go
+    'vendor',  # Go modules vendor
+
+    # Rust
+    'target',
+
+    # Java / Kotlin
+    'target', 'build', '.gradle', '.mvn',
+
+    # .NET
+    'bin', 'obj', 'packages',
+
+    # iOS / macOS
+    'Pods', 'Carthage', '.build',
+
+    # Build outputs
+    'build', 'dist', 'out', '_build', 'output',
+
+    # Coverage & test artifacts
+    'coverage', '.coverage', 'htmlcov', '.nyc_output',
+
+    # IDE & editor
+    '.idea', '.vscode', '.vs', '.eclipse',
+
+    # Next.js / Nuxt / Svelte
+    '.next', '.nuxt', '.output', '.svelte-kit', '.vercel',
+
+    # Documentation builds (generated)
+    '_site', 'site', '.docusaurus',
+
+    # Misc caches
+    '.cache', '.parcel-cache', '.turbo', '.nx',
+}
+
 def normalize_repo_url(repo_url):
     # Remove trailing slash if present
     repo_url = repo_url.rstrip('/')
@@ -79,9 +140,16 @@ def fetch_repo_content_via_git(repo_url, sub_directory=None, oauth_token=None):
         repo_content = []
         target_dir = os.path.join(temp_dir, sub_directory) if sub_directory else temp_dir
 
+        excluded_count = 0
         for root, dirs, files in os.walk(target_dir):
-            # Skip .git directory
-            if '.git' in root:
+            # CRITICAL: Filter directories IN-PLACE to prevent os.walk from descending
+            # This is the standard Python pattern for pruning directory traversal
+            original_dir_count = len(dirs)
+            dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+            excluded_count += original_dir_count - len(dirs)
+
+            # Also skip if we're already inside an excluded directory (belt and suspenders)
+            if any(excluded in root for excluded in EXCLUDED_DIRS):
                 continue
 
             for filename in files:
@@ -108,6 +176,8 @@ def fetch_repo_content_via_git(repo_url, sub_directory=None, oauth_token=None):
                     # Skip files that can't be read as text
                     continue
 
+        if excluded_count > 0:
+            logging.info(f"🚫 Filtered {excluded_count} dependency/build directories (node_modules, vendor, .venv, etc.)")
         logging.info(f"✅ Parsed {len(repo_content)} files from repository")
         return repo_content
 

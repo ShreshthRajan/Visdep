@@ -761,7 +761,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         console.log('📡 Fetching from:', url);
 
         const response = await API.get(url);
-        const data = response.data;
+        let data = response.data;
 
         console.log('✅ Graph received:', {
           nodes: data.nodes.length,
@@ -773,6 +773,43 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         if (data.mega_repo_warning) {
           setMegaRepoWarning(data.mega_repo_warning);
           console.warn('⚠️ MEGA-REPO:', data.mega_repo_warning);
+        }
+
+        // =========================================================================
+        // LOD FALLBACK: For mega-repos without pre-computed positions
+        // =========================================================================
+        // If >20K nodes and no pre-computed positions, rendering all nodes will
+        // freeze the browser. Instead, show file structure only (directories + files).
+        // This maintains graph beauty while preventing freeze.
+        // Users can still ask questions about any code - RAG works on full chunks.
+        // =========================================================================
+        const hasPrecomputedPositions = data.nodes.some(n => n.x !== undefined && n.y !== undefined);
+        const MEGA_REPO_THRESHOLD = 20000;
+
+        if (data.nodes.length > MEGA_REPO_THRESHOLD && !hasPrecomputedPositions) {
+          console.warn(`⚠️ LOD FALLBACK: ${data.nodes.length} nodes without positions - showing file structure only`);
+
+          // Filter to directories and files only (skip functions, methods, classes)
+          const structureTypes = new Set(['directory', 'file']);
+          const filteredNodes = data.nodes.filter(n => structureTypes.has(n.type));
+          const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+
+          // Keep edges that connect visible nodes
+          const filteredEdges = data.edges.filter(e =>
+            filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
+          );
+
+          console.log(`   Reduced: ${data.nodes.length} → ${filteredNodes.length} nodes`);
+          console.log(`   Reduced: ${data.edges.length} → ${filteredEdges.length} edges`);
+
+          // Update warning to inform user
+          setMegaRepoWarning({
+            ...data.mega_repo_warning,
+            message: `Showing file structure only (${filteredNodes.length.toLocaleString()} nodes). Full codebase (${data.nodes.length.toLocaleString()} nodes) available for questions.`,
+            lod_active: true
+          });
+
+          data = { ...data, nodes: filteredNodes, edges: filteredEdges };
         }
 
         setGraphData(data);
