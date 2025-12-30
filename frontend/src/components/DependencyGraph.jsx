@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
+import LZString from 'lz-string';
 
 const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart, currentRepoId = null }) => {
   const networkRef = useRef(null);
@@ -758,22 +759,27 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         let data;
 
         // CHECK PRE-FETCHED: Use graph data loaded during Loading phase (instant load)
-        const prefetchedRaw = sessionStorage.getItem('visdep_prefetched_graph');
-        if (prefetchedRaw) {
+        // Data is LZ-string compressed to fit large graphs within sessionStorage quota
+        const compressedData = sessionStorage.getItem('visdep_prefetched_graph');
+        if (compressedData) {
           try {
-            const prefetched = JSON.parse(prefetchedRaw);
-            // Validate: correct repo and fresh (within 5 minutes)
-            const isFresh = Date.now() - prefetched.timestamp < 5 * 60 * 1000;
-            const isCorrectRepo = prefetched.repo_id === currentRepoId;
+            // Decompress LZ-string data (compressed in Loading.jsx)
+            const decompressed = LZString.decompressFromUTF16(compressedData);
+            if (decompressed) {
+              const prefetched = JSON.parse(decompressed);
+              // Validate: correct repo and fresh (within 5 minutes)
+              const isFresh = Date.now() - prefetched.timestamp < 5 * 60 * 1000;
+              const isCorrectRepo = prefetched.repo_id === currentRepoId;
 
-            if (isFresh && isCorrectRepo && prefetched.data) {
-              console.log('⚡ INSTANT LOAD: Using pre-fetched graph data');
-              data = prefetched.data;
-              // Clear after use (one-time optimization)
-              sessionStorage.removeItem('visdep_prefetched_graph');
+              if (isFresh && isCorrectRepo && prefetched.data) {
+                console.log('⚡ INSTANT LOAD: Using pre-fetched graph data (decompressed)');
+                data = prefetched.data;
+                // Clear after use (one-time optimization)
+                sessionStorage.removeItem('visdep_prefetched_graph');
+              }
             }
           } catch (parseErr) {
-            console.warn('⚠️ Pre-fetched data parse failed:', parseErr);
+            console.warn('⚠️ Pre-fetched data decompress/parse failed:', parseErr);
           }
         }
 

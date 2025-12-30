@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Network, DataSet } from 'vis-network/standalone';
 import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
+import LZString from 'lz-string';
 
 const Loading = () => {
   const [progress, setProgress] = useState(0);
@@ -356,16 +357,28 @@ const Loading = () => {
 
                   // PRE-FETCH GRAPH: Load graph data before navigating (eliminates 20s gap)
                   // This ensures GraphChat shows immediately with graph ready
+                  // Uses LZ-string compression to fit large graphs (9MB → ~1MB) within sessionStorage quota
                   if (repoId) {
                     setLogs(prev => [...prev, `[GRAPH]: Pre-loading graph data...`]);
                     try {
                       const graphResponse = await API.get(`/api/dependency_graph?repo_id=${repoId}`);
-                      sessionStorage.setItem('visdep_prefetched_graph', JSON.stringify({
+                      const nodeCount = graphResponse.data.nodes?.length || 0;
+
+                      // Compress graph data to fit within sessionStorage 5MB limit
+                      // LZ-string achieves ~88% compression on JSON (9MB → ~1MB)
+                      const payload = JSON.stringify({
                         data: graphResponse.data,
                         repo_id: repoId,
                         timestamp: Date.now()
-                      }));
-                      setLogs(prev => [...prev, `-> Graph ready: ${graphResponse.data.nodes?.length?.toLocaleString() || 0} nodes`]);
+                      });
+                      const compressed = LZString.compressToUTF16(payload);
+
+                      // Store compressed data
+                      sessionStorage.setItem('visdep_prefetched_graph', compressed);
+
+                      const compressionRatio = ((1 - compressed.length * 2 / payload.length) * 100).toFixed(1);
+                      console.log(`📦 Graph compressed: ${(payload.length / 1024).toFixed(1)}KB → ${(compressed.length * 2 / 1024).toFixed(1)}KB (${compressionRatio}% reduction)`);
+                      setLogs(prev => [...prev, `-> Graph ready: ${nodeCount.toLocaleString()} nodes`]);
                     } catch (err) {
                       console.warn('⚠️ Graph pre-fetch failed, will load on page:', err);
                       // Non-fatal: GraphChat will fetch if needed
