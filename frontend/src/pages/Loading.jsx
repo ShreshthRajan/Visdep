@@ -347,7 +347,7 @@ const Loading = () => {
                       if (repos && repos.length > 0) {
                         const justUploaded = repos[0];
                         sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
-                        repoId = justUploaded.repo_id;
+                        repoId = justUploaded.local_repo_id;
                       }
                     } catch (err) {
                       console.error('⚠️ Could not fetch uploaded repo:', err);
