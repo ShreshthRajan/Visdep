@@ -399,33 +399,37 @@ class ChatSession:
                                 logging.warning(f"⚠️ Failed to download FAISS from Supabase Storage: {response.status_code}")
                                 raise Exception(f"Failed to download: {response.status_code}")
                             compressed_data = response.content
-                        
-                        # Decompress
-                        zip_data = gzip.decompress(compressed_data)
-                        
-                        # Extract to temporary directory
-                        with tempfile.TemporaryDirectory() as tmpdir:
-                            zip_path = os.path.join(tmpdir, f"{repo_id}.zip")
-                            with open(zip_path, 'wb') as f:
-                                f.write(zip_data)
-                            
-                            extract_path = os.path.join(tmpdir, str(repo_id))
-                            shutil.unpack_archive(zip_path, extract_path)
-                            
-                            # Load FAISS from extracted directory
-                            embeddings = OpenAIEmbeddings(
-                                api_key=os.getenv("OPENAI_API_KEY"),
-                                model="text-embedding-3-small"
-                            )
-                            vector_store = FAISS.load_local(extract_path, embeddings, allow_dangerous_deserialization=True)
-                            
-                            # Also save to local disk for future fast loading
-                            os.makedirs(FAISS_DIR, exist_ok=True)
-                            local_faiss_path = f"{FAISS_DIR}/{repo_id}"
-                            vector_store.save_local(local_faiss_path)
-                            
-                            logging.info(f"✅ Loaded FAISS from Supabase Storage and saved to disk: {local_faiss_path}")
-                            return vector_store
+
+                    # =====================================================================
+                    # DECOMPRESS AND LOAD: Runs for BOTH single and multi-chunk downloads
+                    # =====================================================================
+                    logging.info(f"   📦 Decompressing {len(compressed_data) / (1024*1024):.1f}MB...")
+                    zip_data = gzip.decompress(compressed_data)
+                    logging.info(f"   📦 Decompressed to {len(zip_data) / (1024*1024):.1f}MB")
+
+                    # Extract to temporary directory
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        zip_path = os.path.join(tmpdir, f"{repo_id}.zip")
+                        with open(zip_path, 'wb') as f:
+                            f.write(zip_data)
+
+                        extract_path = os.path.join(tmpdir, str(repo_id))
+                        shutil.unpack_archive(zip_path, extract_path)
+
+                        # Load FAISS from extracted directory
+                        embeddings = OpenAIEmbeddings(
+                            api_key=os.getenv("OPENAI_API_KEY"),
+                            model="text-embedding-3-small"
+                        )
+                        vector_store = FAISS.load_local(extract_path, embeddings, allow_dangerous_deserialization=True)
+
+                        # Also save to local disk for future fast loading
+                        os.makedirs(FAISS_DIR, exist_ok=True)
+                        local_faiss_path = f"{FAISS_DIR}/{repo_id}"
+                        vector_store.save_local(local_faiss_path)
+
+                        logging.info(f"✅ Loaded FAISS from Supabase Storage and saved to disk: {local_faiss_path}")
+                        return vector_store
                             
             except Exception as e:
                 logging.warning(f"⚠️ Failed to load FAISS from Supabase Storage: {e}, rebuilding...")
