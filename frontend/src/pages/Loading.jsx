@@ -338,6 +338,7 @@ const Loading = () => {
                   setLogs(prev => [...prev, `-> Nodes: ${event.node_count.toLocaleString()}`]);
 
                   // Fetch user repos for currentRepo state
+                  let repoId = event.repo_id;
                   if (user) {
                     try {
                       const userReposResponse = await API.get(`/api/user/${user.id}/repos`);
@@ -346,9 +347,28 @@ const Loading = () => {
                       if (repos && repos.length > 0) {
                         const justUploaded = repos[0];
                         sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
+                        repoId = justUploaded.repo_id;
                       }
                     } catch (err) {
                       console.error('⚠️ Could not fetch uploaded repo:', err);
+                    }
+                  }
+
+                  // PRE-FETCH GRAPH: Load graph data before navigating (eliminates 20s gap)
+                  // This ensures GraphChat shows immediately with graph ready
+                  if (repoId) {
+                    setLogs(prev => [...prev, `[GRAPH]: Pre-loading graph data...`]);
+                    try {
+                      const graphResponse = await API.get(`/api/dependency_graph?repo_id=${repoId}`);
+                      sessionStorage.setItem('visdep_prefetched_graph', JSON.stringify({
+                        data: graphResponse.data,
+                        repo_id: repoId,
+                        timestamp: Date.now()
+                      }));
+                      setLogs(prev => [...prev, `-> Graph ready: ${graphResponse.data.nodes?.length?.toLocaleString() || 0} nodes`]);
+                    } catch (err) {
+                      console.warn('⚠️ Graph pre-fetch failed, will load on page:', err);
+                      // Non-fatal: GraphChat will fetch if needed
                     }
                   }
 

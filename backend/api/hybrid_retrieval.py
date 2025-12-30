@@ -820,23 +820,68 @@ def build_chunk_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
     """
     Build dependency graph at chunk level
 
+    PERFORMANCE OPTIMIZED: O(n×m) instead of O(n²×m)
+    - n = number of chunks (e.g., 152K for Kubernetes)
+    - m = average imports per chunk (e.g., 5-10)
+
+    Original: 152K × 10 × 152K = 231 trillion operations (HOURS)
+    Optimized: 152K × 10 × ~5 = 7.6 million operations (SECONDS)
+
     Args:
         chunks: List of all chunks
 
     Returns:
         NetworkX directed graph
     """
-    G = nx.DiGraph()
+    import time
+    start_time = time.time()
 
-    # Index chunks by file for efficient lookup
+    G = nx.DiGraph()
+    chunk_count = len(chunks)
+
+    logging.info(f"🔨 Building chunk graph for {chunk_count:,} chunks...")
+
+    # ===========================================================================
+    # PHASE 1: Build indexes for O(1) lookups (O(n) total)
+    # ===========================================================================
+
+    # Index by file path (for same-file relationships)
     chunks_by_file = {}
+
+    # Index by exact name (for import matching)
+    chunks_by_name = {}
+
+    # Index by name suffix (for "import foo.bar.MyClass" matching "MyClass")
+    # Key: last component of dotted name, Value: list of chunks
+    chunks_by_suffix = {}
+
     for chunk in chunks:
         file_path = chunk['file_path']
+        name = chunk['name']
+
+        # File index
         if file_path not in chunks_by_file:
             chunks_by_file[file_path] = []
         chunks_by_file[file_path].append(chunk)
 
-    # Add all chunks as nodes
+        # Exact name index
+        if name not in chunks_by_name:
+            chunks_by_name[name] = []
+        chunks_by_name[name].append(chunk)
+
+        # Suffix index: extract last component of dotted names
+        # "Session.request" -> "request", "MyClass" -> "MyClass"
+        suffix = name.split('.')[-1] if '.' in name else name
+        if suffix not in chunks_by_suffix:
+            chunks_by_suffix[suffix] = []
+        chunks_by_suffix[suffix].append(chunk)
+
+    index_time = time.time() - start_time
+    logging.info(f"   ✅ Indexes built in {index_time:.2f}s (names: {len(chunks_by_name):,}, suffixes: {len(chunks_by_suffix):,})")
+
+    # ===========================================================================
+    # PHASE 2: Add all chunks as nodes (O(n))
+    # ===========================================================================
     for chunk in chunks:
         G.add_node(
             chunk['chunk_id'],
@@ -845,28 +890,59 @@ def build_chunk_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
             file=chunk['file_path']
         )
 
-    # Add edges based on imports and relationships
+    # ===========================================================================
+    # PHASE 3: Add import edges using indexed lookups (O(n×m) instead of O(n²×m))
+    # ===========================================================================
+    import_edges_added = 0
+
     for chunk in chunks:
         chunk_id = chunk['chunk_id']
         imports = chunk['metadata'].get('imports', [])
 
-        # Find chunks that define imported symbols
         for imp in imports:
-            # Simple heuristic: if import name matches chunk name
-            for other_chunk in chunks:
-                if other_chunk['name'] == imp or imp.endswith(other_chunk['name']):
-                    if other_chunk['chunk_id'] != chunk_id:
-                        G.add_edge(other_chunk['chunk_id'], chunk_id, relation='imports')
+            matched_chunks = set()  # Avoid duplicate edges
 
-        # Add file-level relationships (chunks in same file are related)
-        file_path = chunk['file_path']
-        for sibling in chunks_by_file.get(file_path, []):
-            if sibling['chunk_id'] != chunk_id:
-                # Weak edge: same file
-                if not G.has_edge(chunk_id, sibling['chunk_id']):
-                    G.add_edge(chunk_id, sibling['chunk_id'], relation='same_file', weight=0.3)
+            # FAST PATH: Exact name match (O(1) lookup)
+            if imp in chunks_by_name:
+                for target in chunks_by_name[imp]:
+                    if target['chunk_id'] != chunk_id:
+                        matched_chunks.add(target['chunk_id'])
 
-    logging.info(f"Chunk graph built: {len(G.nodes())} nodes, {len(G.edges())} edges")
+            # FAST PATH: Suffix match for dotted imports (O(1) + small iteration)
+            # e.g., import "foo.bar.MyClass" matches chunk named "MyClass"
+            imp_suffix = imp.split('.')[-1] if '.' in imp else imp
+            if imp_suffix in chunks_by_suffix:
+                for target in chunks_by_suffix[imp_suffix]:
+                    # Verify the full endswith condition
+                    if imp.endswith(target['name']) and target['chunk_id'] != chunk_id:
+                        matched_chunks.add(target['chunk_id'])
+
+            # Add edges for all matches
+            for target_id in matched_chunks:
+                G.add_edge(target_id, chunk_id, relation='imports')
+                import_edges_added += 1
+
+    # ===========================================================================
+    # PHASE 4: Add same-file relationships (O(n × avg_chunks_per_file))
+    # ===========================================================================
+    # For mega-repos, skip same-file edges to reduce graph density
+    SAME_FILE_EDGE_THRESHOLD = 50000  # Skip if >50K chunks
+
+    if chunk_count <= SAME_FILE_EDGE_THRESHOLD:
+        for chunk in chunks:
+            chunk_id = chunk['chunk_id']
+            file_path = chunk['file_path']
+
+            for sibling in chunks_by_file.get(file_path, []):
+                if sibling['chunk_id'] != chunk_id:
+                    if not G.has_edge(chunk_id, sibling['chunk_id']):
+                        G.add_edge(chunk_id, sibling['chunk_id'], relation='same_file', weight=0.3)
+    else:
+        logging.info(f"   ⚡ Skipping same-file edges for mega-repo ({chunk_count:,} chunks)")
+
+    total_time = time.time() - start_time
+    logging.info(f"✅ Chunk graph built in {total_time:.2f}s: {len(G.nodes()):,} nodes, {len(G.edges()):,} edges ({import_edges_added:,} import edges)")
+
     return G
 
 

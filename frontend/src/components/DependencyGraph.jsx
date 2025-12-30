@@ -755,13 +755,36 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
         setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
 
-        // Phase 2: Pass repo_id explicitly (multi-repo support)
-        const url = `/api/dependency_graph?repo_id=${currentRepoId}`;
+        let data;
 
-        console.log('📡 Fetching from:', url);
+        // CHECK PRE-FETCHED: Use graph data loaded during Loading phase (instant load)
+        const prefetchedRaw = sessionStorage.getItem('visdep_prefetched_graph');
+        if (prefetchedRaw) {
+          try {
+            const prefetched = JSON.parse(prefetchedRaw);
+            // Validate: correct repo and fresh (within 5 minutes)
+            const isFresh = Date.now() - prefetched.timestamp < 5 * 60 * 1000;
+            const isCorrectRepo = prefetched.repo_id === currentRepoId;
 
-        const response = await API.get(url);
-        let data = response.data;
+            if (isFresh && isCorrectRepo && prefetched.data) {
+              console.log('⚡ INSTANT LOAD: Using pre-fetched graph data');
+              data = prefetched.data;
+              // Clear after use (one-time optimization)
+              sessionStorage.removeItem('visdep_prefetched_graph');
+            }
+          } catch (parseErr) {
+            console.warn('⚠️ Pre-fetched data parse failed:', parseErr);
+          }
+        }
+
+        // FALLBACK: Fetch from API if no pre-fetched data
+        if (!data) {
+          // Phase 2: Pass repo_id explicitly (multi-repo support)
+          const url = `/api/dependency_graph?repo_id=${currentRepoId}`;
+          console.log('📡 Fetching from:', url);
+          const response = await API.get(url);
+          data = response.data;
+        }
 
         console.log('✅ Graph received:', {
           nodes: data.nodes.length,
