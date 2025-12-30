@@ -228,6 +228,43 @@ def store_chunks_batch(repo_id: int, chunks: list):
 
     logging.info(f"✅ Stored {len(chunks)} total chunks in Supabase for repo_id={repo_id}")
 
+
+def cache_chunks_in_memory(repo_id: int, chunks: list):
+    """
+    Directly cache chunks in memory after upload.
+
+    This eliminates cold-start latency for first query after upload.
+    Called immediately after store_chunks_batch() with chunks still in memory.
+
+    Performance impact:
+    - Without: First query loads from Supabase (30-60s for mega-repos)
+    - With: First query uses cached chunks (<1ms)
+
+    Args:
+        repo_id: Repository ID
+        chunks: List of chunk dictionaries (already in internal format)
+    """
+    global _chunks_cache
+    import logging
+
+    # Convert chunks to internal format if needed (handle both formats)
+    formatted_chunks = []
+    for chunk in chunks:
+        formatted_chunks.append({
+            'chunk_id': chunk.get('chunk_id'),
+            'file_path': chunk.get('file_path'),
+            'type': chunk.get('type'),
+            'name': chunk.get('name'),
+            'code': chunk.get('code'),
+            'start_line': chunk.get('start_line'),
+            'end_line': chunk.get('end_line'),
+            'metadata': chunk.get('metadata', {})
+        })
+
+    _chunks_cache[repo_id] = formatted_chunks
+    logging.info(f"✅ Cached {len(formatted_chunks)} chunks in memory for repo_id={repo_id} (instant first query)")
+
+
 def retrieve_chunks(repo_id: int) -> list:
     """
     Retrieve all chunks for a repository from Supabase with in-memory caching.

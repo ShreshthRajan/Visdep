@@ -3,12 +3,12 @@ import os
 import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata
 from backend.api.langchain_integration import get_jamba_response
 from backend.api.ast_parser import parse_code_to_ast
-from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks
+from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks, cache_chunks_in_memory
 from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import (
@@ -34,7 +34,64 @@ initialize_database()
 # Global variable to store latest repo_id (simple solution for prototype)
 latest_repo_id = None
 
-app = FastAPI()
+
+# =============================================================================
+# LIFESPAN: Modern async context manager for startup/shutdown events
+# =============================================================================
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    """
+    Lifespan context manager for startup and shutdown events.
+
+    Startup: Pre-warm chunks cache for pre-indexed mega-repos.
+    Shutdown: (None currently needed)
+    """
+    # STARTUP: Pre-warm chunks cache for pre-indexed repos
+    try:
+        from backend.api.supabase_client import get_supabase_client
+
+        supabase = get_supabase_client()
+
+        # Get all pre-indexed repos
+        result = supabase.table('preindexed_repos')\
+            .select('repo_id, repo_name, chunk_count')\
+            .execute()
+
+        if not result.data:
+            logging.info("📦 No pre-indexed repos to pre-warm")
+        else:
+            logging.info(f"🔥 PRE-WARMING: Loading {len(result.data)} pre-indexed repos into cache...")
+
+            for repo in result.data:
+                repo_id = repo['repo_id']
+                repo_name = repo['repo_name']
+                chunk_count = repo.get('chunk_count', 0)
+
+                logging.info(f"   🔥 Pre-warming {repo_name} ({chunk_count:,} chunks)...")
+
+                try:
+                    # This populates _chunks_cache in data_storage.py
+                    chunks = retrieve_chunks(repo_id)
+                    logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
+                except Exception as e:
+                    logging.warning(f"   ⚠️ Failed to pre-warm {repo_name}: {e}")
+                    continue
+
+            logging.info("🔥 PRE-WARMING COMPLETE: All pre-indexed repos cached in memory")
+
+    except Exception as e:
+        # Non-fatal: if pre-warming fails, first query will just be slower
+        logging.warning(f"⚠️ Pre-warming failed (non-fatal): {e}")
+
+    yield  # App runs here
+
+    # SHUTDOWN: Cleanup (none needed currently)
+    logging.info("🛑 Server shutdown")
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware to allow requests from the frontend
 # Supports both local development and production
@@ -791,6 +848,12 @@ async def upload_repo_stream(link: RepoLink):
 
             store_chunks_batch(repo_id, chunks)
 
+            # CRITICAL: Cache chunks immediately after upload (Fix 4)
+            # Chunks are already in memory - cache them now to eliminate cold-start
+            # Without this: First query loads from Supabase (30-60s for mega-repos)
+            # With this: First query uses cached chunks (<1ms)
+            cache_chunks_in_memory(repo_id, chunks)
+
             # Step 7: Create graph
             yield sse_event("graph", {
                 "message": "Building dependency graph...",
@@ -928,9 +991,42 @@ async def upload_repo_stream(link: RepoLink):
                 except Exception:
                     pass
 
-            # Invalidate cache
-            from backend.api.data_storage import invalidate_cache_for_repo
-            invalidate_cache_for_repo(repo_id)
+            # NOTE: We no longer call invalidate_cache_for_repo() here because:
+            # 1. cache_chunks_in_memory() already overwrites any old cached data
+            # 2. Calling invalidate would clear the cache we just set, defeating Fix 4
+            # 3. For re-uploads, the new chunks replace old ones in both DB and cache
+
+            # =====================================================================
+            # BACKGROUND FAISS BUILDING (Fix 4b): Build FAISS index after upload
+            # =====================================================================
+            # For large uploads (>5K chunks), start FAISS building in background.
+            # This ensures FAISS is ready by the time user asks first question.
+            # Smaller repos build fast enough that on-demand is fine.
+            # =====================================================================
+            BACKGROUND_FAISS_THRESHOLD = 5000
+
+            if len(chunks) > BACKGROUND_FAISS_THRESHOLD:
+                logging.info(f"🔄 Starting background FAISS build for {len(chunks):,} chunks...")
+
+                async def build_faiss_background(r_id: int, chunk_list: list):
+                    """Build FAISS index in background after upload"""
+                    try:
+                        from backend.api.langchain_integration import ChatSession
+
+                        # Create context dict from chunks
+                        context = {c['chunk_id']: c for c in chunk_list}
+
+                        # Initialize session which builds FAISS
+                        session = ChatSession(repo_id=r_id)
+                        await session.initialize_conversation_chain(context)
+
+                        logging.info(f"✅ Background FAISS build complete for repo_id={r_id}")
+                    except Exception as e:
+                        logging.warning(f"⚠️ Background FAISS build failed for repo_id={r_id}: {e}")
+
+                # Start as background task (non-blocking)
+                asyncio.create_task(build_faiss_background(repo_id, chunks))
+                logging.info(f"🚀 Background FAISS task started for repo_id={repo_id}")
 
             # Final done event
             yield sse_event("done", {
@@ -1089,12 +1185,21 @@ async def get_dependency_graph(repo_id: Optional[int] = None):
                 }
                 logging.info(f"⚠️ Mega-repo warning for graph page: {chunk_count:,} chunks, {node_count:,} nodes, precomputed={precomputed_positions is not None}")
 
-        return {
-            "nodes": data["nodes"],
-            "edges": data["links"],
-            "mega_repo_warning": mega_repo_warning,
-            "has_precomputed_positions": precomputed_positions is not None
-        }
+        # Return with Cache-Control headers to prevent browser/CDN caching stale data
+        # Critical for mega-repos where filtering reduces 172K→18K nodes
+        return JSONResponse(
+            content={
+                "nodes": data["nodes"],
+                "edges": data["links"],
+                "mega_repo_warning": mega_repo_warning,
+                "has_precomputed_positions": precomputed_positions is not None
+            },
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     except Exception as e:
         logging.error(f"Error in get_dependency_graph: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
