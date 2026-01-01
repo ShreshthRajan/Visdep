@@ -62,17 +62,23 @@ async def lifespan(app):
 
 async def prewarm_chunks_background():
     """
-    Background task to pre-warm chunks cache for pre-indexed repos.
+    Background task to pre-warm chunks cache AND FAISS indexes for pre-indexed repos.
 
     Runs AFTER app starts accepting requests, so startup is instant.
-    First query to a mega-repo may be slow if pre-warming hasn't finished,
-    but subsequent queries will be fast.
+
+    Pre-warming includes:
+    1. Chunks: Load into memory cache (for fast retrieval)
+    2. FAISS: Download to local disk (for fast vector search)
+
+    Without FAISS pre-warming, the first query would need to stream-download
+    774MB FAISS (~90 seconds), exceeding Railway's request timeout.
     """
     try:
         # Small delay to let server fully initialize
         await asyncio.sleep(1)
 
         from backend.api.supabase_client import get_supabase_client
+        from backend.api.langchain_integration import prewarm_faiss_to_disk
 
         supabase = get_supabase_client()
 
@@ -87,6 +93,9 @@ async def prewarm_chunks_background():
 
         logging.info(f"🔥 BACKGROUND PRE-WARMING: Loading {len(result.data)} pre-indexed repos...")
 
+        # Threshold for FAISS pre-loading (mega-repos only)
+        FAISS_PREWARM_THRESHOLD = 10000  # 10K+ chunks = definitely needs FAISS pre-loaded
+
         for repo in result.data:
             repo_id = repo['repo_id']
             repo_name = repo['repo_name']
@@ -95,10 +104,22 @@ async def prewarm_chunks_background():
             logging.info(f"   🔥 Pre-warming {repo_name} ({chunk_count:,} chunks)...")
 
             try:
-                # Run in executor to avoid blocking event loop
+                # STEP 1: Load chunks into memory cache
                 loop = asyncio.get_event_loop()
                 chunks = await loop.run_in_executor(None, retrieve_chunks, repo_id)
                 logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
+
+                # STEP 2: Pre-load FAISS to local disk (mega-repos only)
+                # This ensures first query uses fast local disk path (~1s)
+                # instead of streaming download (~90s)
+                if chunk_count >= FAISS_PREWARM_THRESHOLD:
+                    logging.info(f"   📥 Pre-loading FAISS for {repo_name} (mega-repo)...")
+                    faiss_success = await prewarm_faiss_to_disk(repo_id)
+                    if faiss_success:
+                        logging.info(f"   ✅ {repo_name}: FAISS pre-loaded to disk")
+                    else:
+                        logging.warning(f"   ⚠️ {repo_name}: FAISS pre-load skipped (will download on first query)")
+
             except Exception as e:
                 logging.warning(f"   ⚠️ Failed to pre-warm {repo_name}: {e}")
                 continue
@@ -106,7 +127,7 @@ async def prewarm_chunks_background():
             # Yield control between repos to keep server responsive
             await asyncio.sleep(0.1)
 
-        logging.info("🔥 BACKGROUND PRE-WARMING COMPLETE: All pre-indexed repos cached")
+        logging.info("🔥 BACKGROUND PRE-WARMING COMPLETE: All pre-indexed repos cached (chunks + FAISS)")
 
     except Exception as e:
         # Non-fatal: if pre-warming fails, first query will just be slower

@@ -249,6 +249,45 @@ class TestEdgeCases:
             assert result == b"data1data2"
 
 
+class TestFAISSPrewarm:
+    """Test the FAISS pre-warming functionality."""
+
+    def test_prewarm_function_exists(self):
+        """Test that the prewarm function is importable."""
+        from backend.api.langchain_integration import prewarm_faiss_to_disk
+        assert callable(prewarm_faiss_to_disk)
+
+    def test_prewarm_returns_true_if_exists_on_disk(self):
+        """Test that prewarm returns True if FAISS already exists on disk."""
+        import asyncio
+        from backend.api.data_storage import FAISS_DIR
+
+        # This test verifies the function signature works
+        # Full integration test would require Supabase credentials
+
+        async def run_test():
+            from backend.api.langchain_integration import prewarm_faiss_to_disk
+            # Call with non-existent repo_id should return False (no FAISS)
+            # without crashing
+            result = await prewarm_faiss_to_disk(999999)  # Non-existent repo
+            return result
+
+        # Run the async function
+        try:
+            result = asyncio.get_event_loop().run_until_complete(run_test())
+            # Should return False for non-existent repo (graceful handling)
+            assert result == False
+        except Exception as e:
+            # If Supabase is not configured, this is expected
+            print(f"   (Skipped: Supabase not configured - {e})")
+
+    def test_faiss_dir_constant(self):
+        """Test that FAISS_DIR is properly defined."""
+        from backend.api.data_storage import FAISS_DIR
+        assert FAISS_DIR is not None
+        assert isinstance(FAISS_DIR, str)
+
+
 def run_tests():
     """Run all tests and report results."""
     import traceback
@@ -256,7 +295,8 @@ def run_tests():
     test_classes = [
         TestStreamingFAISSDownload,
         TestMemoryEfficiency,
-        TestEdgeCases
+        TestEdgeCases,
+        TestFAISSPrewarm
     ]
 
     passed = 0

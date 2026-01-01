@@ -124,6 +124,186 @@ def fetch_parse_store_repo(repo_url, auth_token):
         logging.error(f"Error in fetch_parse_store_repo: {e}")
         raise
 
+
+# =============================================================================
+# FAISS PRE-LOADING: Download FAISS to local disk during startup
+# =============================================================================
+# This function is called during background pre-warming to ensure FAISS is
+# available on local disk before the first query. Without this, the first
+# query would need to stream-download 774MB FAISS (~90 seconds), exceeding
+# Railway's request timeout.
+#
+# After pre-warming:
+# - Local disk check: ~1 second
+# - No streaming download needed
+# - Query completes within timeout
+# =============================================================================
+
+async def prewarm_faiss_to_disk(repo_id: int) -> bool:
+    """
+    Pre-download FAISS index to local disk for fast query-time loading.
+
+    This is called during background pre-warming for mega-repos. It downloads
+    the FAISS index from Supabase Storage to local disk, so that the first
+    query can use the fast local disk path instead of streaming download.
+
+    Args:
+        repo_id: Repository ID
+
+    Returns:
+        True if FAISS is available on local disk (either pre-existing or downloaded)
+        False if download failed
+    """
+    import gzip
+    import shutil
+    import tempfile
+    import httpx
+
+    # Check if already exists on local disk
+    faiss_path = f"{FAISS_DIR}/{repo_id}"
+    if os.path.exists(faiss_path):
+        logging.info(f"   ✅ FAISS already on disk: {faiss_path}")
+        return True
+
+    # Check if FAISS exists in Supabase Storage
+    try:
+        from backend.api.supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+
+        result = supabase.table('repo_faiss')\
+            .select('storage_path, chunk_count')\
+            .eq('repo_id', repo_id)\
+            .limit(1)\
+            .execute()
+
+        if not result.data or len(result.data) == 0:
+            logging.info(f"   ℹ️ No FAISS in Storage for repo_id={repo_id} (will build on first query)")
+            return False
+
+        storage_path = result.data[0]['storage_path']
+        chunk_count = result.data[0].get('chunk_count', 1)
+
+        logging.info(f"   📥 Pre-loading FAISS from Storage: {storage_path} ({chunk_count} chunks)")
+
+        # Download configuration
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}"
+        }
+
+        # Use persistent temp directory for entire operation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            compressed_path = os.path.join(tmpdir, f"{repo_id}_compressed.gz")
+
+            if chunk_count > 1:
+                # PHASE 1: Parallel download chunks directly to temp files (memory-safe)
+                logging.info(f"      ⚡ STREAMING {chunk_count} chunks to disk...")
+                base_path = storage_path.rsplit('.chunk000', 1)[0] if '.chunk000' in storage_path else storage_path.rsplit('.faiss.gz', 1)[0] + '.faiss.gz'
+
+                async def download_chunk_to_file(chunk_index: int) -> str:
+                    """Stream download chunk directly to temp file"""
+                    chunk_path = f"{base_path}.chunk{chunk_index:03d}"
+                    download_url = f"{supabase_url}/storage/v1/object/repo-data/{chunk_path}"
+                    temp_chunk_path = os.path.join(tmpdir, f"chunk_{chunk_index:03d}")
+
+                    async with httpx.AsyncClient(timeout=300.0) as async_client:
+                        async with async_client.stream('GET', download_url, headers=headers) as response:
+                            if response.status_code != 200:
+                                raise Exception(f"Failed to download chunk {chunk_index+1}: {response.status_code}")
+
+                            bytes_written = 0
+                            with open(temp_chunk_path, 'wb') as f:
+                                async for data in response.aiter_bytes(chunk_size=8*1024*1024):
+                                    f.write(data)
+                                    bytes_written += len(data)
+
+                            return temp_chunk_path
+
+                # Parallel downloads with concurrency limit
+                MAX_CONCURRENT = 5
+                semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+                async def download_with_semaphore(chunk_index: int) -> str:
+                    async with semaphore:
+                        return await download_chunk_to_file(chunk_index)
+
+                # Execute parallel downloads
+                download_tasks = [download_with_semaphore(i) for i in range(chunk_count)]
+                temp_chunk_paths = await asyncio.gather(*download_tasks)
+
+                # PHASE 2: Concatenate temp files on disk
+                logging.info(f"      📎 Concatenating {chunk_count} chunks on disk...")
+                total_bytes = 0
+                with open(compressed_path, 'wb') as outfile:
+                    for temp_path in temp_chunk_paths:
+                        with open(temp_path, 'rb') as infile:
+                            while True:
+                                chunk_data = infile.read(64*1024*1024)
+                                if not chunk_data:
+                                    break
+                                outfile.write(chunk_data)
+                                total_bytes += len(chunk_data)
+                        os.unlink(temp_path)
+
+                logging.info(f"      ✅ Concatenated {total_bytes/(1024*1024):.1f}MB to disk")
+
+            else:
+                # Single file - stream directly to disk
+                download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+                async with httpx.AsyncClient(timeout=300.0) as async_client:
+                    async with async_client.stream('GET', download_url, headers=headers) as response:
+                        if response.status_code != 200:
+                            raise Exception(f"Failed to download: {response.status_code}")
+
+                        total_bytes = 0
+                        with open(compressed_path, 'wb') as f:
+                            async for data in response.aiter_bytes(chunk_size=8*1024*1024):
+                                f.write(data)
+                                total_bytes += len(data)
+
+                logging.info(f"      ✅ Streamed {total_bytes/(1024*1024):.1f}MB to disk")
+
+            # PHASE 3: Stream decompress on disk
+            zip_path = os.path.join(tmpdir, f"{repo_id}.zip")
+            compressed_size = os.path.getsize(compressed_path)
+            logging.info(f"      📦 Stream decompressing {compressed_size/(1024*1024):.1f}MB...")
+
+            with gzip.open(compressed_path, 'rb') as f_in:
+                with open(zip_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out, length=64*1024*1024)
+
+            os.unlink(compressed_path)
+
+            decompressed_size = os.path.getsize(zip_path)
+            logging.info(f"      📦 Decompressed to {decompressed_size/(1024*1024):.1f}MB")
+
+            # PHASE 4: Extract and save to local disk
+            extract_path = os.path.join(tmpdir, str(repo_id))
+            shutil.unpack_archive(zip_path, extract_path)
+
+            # Copy to persistent FAISS directory
+            os.makedirs(FAISS_DIR, exist_ok=True)
+            local_faiss_path = f"{FAISS_DIR}/{repo_id}"
+
+            # Copy extracted files to FAISS directory
+            if os.path.exists(local_faiss_path):
+                shutil.rmtree(local_faiss_path)
+            shutil.copytree(extract_path, local_faiss_path)
+
+            logging.info(f"   ✅ FAISS pre-loaded to disk: {local_faiss_path}")
+            return True
+
+    except Exception as e:
+        logging.warning(f"   ⚠️ FAISS pre-load failed for repo_id={repo_id}: {e}")
+        import traceback
+        logging.debug(traceback.format_exc())
+        return False
+
+
 async def initialize_retrieval_qa(context):
     """DEPRECATED - Old function, not used in current pipeline"""
     # Lazy import AI21 only if this function is called (which it isn't)
