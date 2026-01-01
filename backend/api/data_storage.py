@@ -281,9 +281,20 @@ def retrieve_chunks(repo_id: int) -> list:
 
     # Check in-memory cache first (massive speedup for repeated queries)
     global _chunks_cache
+
+    # DIAGNOSTIC: Log cache state for debugging cache misses
+    cache_keys = list(_chunks_cache.keys())
+    logging.info(f"🔍 retrieve_chunks called: repo_id={repo_id} (type={type(repo_id).__name__}), cache_keys={cache_keys}")
+
     if repo_id in _chunks_cache:
         logging.info(f"✅ Chunks cache HIT for repo_id={repo_id} ({len(_chunks_cache[repo_id])} chunks from memory)")
         return _chunks_cache[repo_id]
+
+    # DIAGNOSTIC: Log cache miss details
+    logging.warning(f"⚠️ Chunks cache MISS for repo_id={repo_id} - will fetch from Supabase")
+    if cache_keys:
+        logging.warning(f"   Cache has keys: {cache_keys} (types: {[type(k).__name__ for k in cache_keys]})")
+        logging.warning(f"   Looking for: {repo_id} (type: {type(repo_id).__name__})")
 
     try:
         supabase = get_supabase_client()
