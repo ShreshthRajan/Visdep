@@ -359,69 +359,116 @@ class ChatSession:
                     }
                     
                     # =====================================================================
-                    # PARALLEL FAISS DOWNLOAD: 6x speedup for mega-repos
+                    # STREAMING FAISS DOWNLOAD: Memory-efficient for mega-repos
                     # =====================================================================
-                    # Sequential: 20 chunks × 1.5s = 30s
-                    # Parallel:   20 chunks / 4 concurrent = 5-8s
+                    # Problem: Old approach held compressed (774MB) + decompressed (774MB)
+                    #          in memory simultaneously = 1.5GB peak → OOM on Railway
+                    # Solution: Stream to disk, decompress on disk, peak memory ~64MB
+                    # Speed: Parallel downloads maintained via concurrent temp file writes
                     # =====================================================================
                     import asyncio
 
-                    if chunk_count > 1:
-                        # PARALLEL DOWNLOAD: Download all chunks concurrently
-                        logging.info(f"   ⚡ PARALLEL downloading {chunk_count} chunks...")
-                        base_path = storage_path.rsplit('.chunk000', 1)[0] if '.chunk000' in storage_path else storage_path.rsplit('.faiss.gz', 1)[0] + '.faiss.gz'
+                    # Use persistent temp directory for entire operation
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        compressed_path = os.path.join(tmpdir, f"{repo_id}_compressed.gz")
 
-                        async def download_chunk(chunk_index: int) -> bytes:
-                            """Download a single FAISS chunk asynchronously"""
-                            chunk_path = f"{base_path}.chunk{chunk_index:03d}"
-                            download_url = f"{supabase_url}/storage/v1/object/repo-data/{chunk_path}"
+                        if chunk_count > 1:
+                            # PHASE 1: Parallel download chunks directly to temp files
+                            # Memory: ~8MB per concurrent download (streaming buffer)
+                            logging.info(f"   ⚡ STREAMING {chunk_count} chunks to disk (memory-safe)...")
+                            base_path = storage_path.rsplit('.chunk000', 1)[0] if '.chunk000' in storage_path else storage_path.rsplit('.faiss.gz', 1)[0] + '.faiss.gz'
+
+                            async def download_chunk_to_file(chunk_index: int) -> str:
+                                """Stream download chunk directly to temp file - never holds full chunk in memory"""
+                                chunk_path = f"{base_path}.chunk{chunk_index:03d}"
+                                download_url = f"{supabase_url}/storage/v1/object/repo-data/{chunk_path}"
+                                temp_chunk_path = os.path.join(tmpdir, f"chunk_{chunk_index:03d}")
+
+                                async with httpx.AsyncClient(timeout=300.0) as async_client:
+                                    # Use streaming response - writes to disk as data arrives
+                                    async with async_client.stream('GET', download_url, headers=headers) as response:
+                                        if response.status_code != 200:
+                                            raise Exception(f"Failed to download chunk {chunk_index+1}: {response.status_code}")
+
+                                        bytes_written = 0
+                                        with open(temp_chunk_path, 'wb') as f:
+                                            # 8MB streaming buffer - optimal for network I/O
+                                            async for data in response.aiter_bytes(chunk_size=8*1024*1024):
+                                                f.write(data)
+                                                bytes_written += len(data)
+
+                                        logging.info(f"   ✓ Chunk {chunk_index+1}/{chunk_count} → disk ({bytes_written/(1024*1024):.1f}MB)")
+                                        return temp_chunk_path
+
+                            # Parallel downloads with concurrency limit
+                            MAX_CONCURRENT = 5
+                            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+                            async def download_with_semaphore(chunk_index: int) -> str:
+                                async with semaphore:
+                                    return await download_chunk_to_file(chunk_index)
+
+                            # Execute parallel downloads to temp files
+                            download_tasks = [download_with_semaphore(i) for i in range(chunk_count)]
+                            temp_chunk_paths = await asyncio.gather(*download_tasks)
+
+                            # PHASE 2: Concatenate temp files on disk (sequential, memory-efficient)
+                            # Memory: 64MB buffer for disk-to-disk copy
+                            logging.info(f"   📎 Concatenating {chunk_count} chunks on disk...")
+                            total_bytes = 0
+                            with open(compressed_path, 'wb') as outfile:
+                                for i, temp_path in enumerate(temp_chunk_paths):
+                                    with open(temp_path, 'rb') as infile:
+                                        # 64MB buffer for optimal disk I/O
+                                        while True:
+                                            chunk_data = infile.read(64*1024*1024)
+                                            if not chunk_data:
+                                                break
+                                            outfile.write(chunk_data)
+                                            total_bytes += len(chunk_data)
+                                    # Delete temp chunk immediately to free disk space
+                                    os.unlink(temp_path)
+
+                            logging.info(f"   ✅ Concatenated {total_bytes/(1024*1024):.1f}MB to disk")
+
+                        else:
+                            # Single file - stream directly to disk
+                            download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+                            logging.info(f"   ⚡ STREAMING single file to disk...")
 
                             async with httpx.AsyncClient(timeout=300.0) as async_client:
-                                response = await async_client.get(download_url, headers=headers)
-                                if response.status_code == 200:
-                                    logging.info(f"   ✓ Chunk {chunk_index+1}/{chunk_count} downloaded")
-                                    return response.content
-                                else:
-                                    raise Exception(f"Failed to download chunk {chunk_index+1}: {response.status_code}")
+                                async with async_client.stream('GET', download_url, headers=headers) as response:
+                                    if response.status_code != 200:
+                                        raise Exception(f"Failed to download: {response.status_code}")
 
-                        # Download all chunks in parallel with semaphore to limit concurrency
-                        MAX_CONCURRENT = 5  # Limit to prevent overwhelming Supabase
-                        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+                                    total_bytes = 0
+                                    with open(compressed_path, 'wb') as f:
+                                        async for data in response.aiter_bytes(chunk_size=8*1024*1024):
+                                            f.write(data)
+                                            total_bytes += len(data)
 
-                        async def download_with_semaphore(chunk_index: int) -> bytes:
-                            async with semaphore:
-                                return await download_chunk(chunk_index)
+                                    logging.info(f"   ✅ Streamed {total_bytes/(1024*1024):.1f}MB to disk")
 
-                        # Execute all downloads in parallel
-                        download_tasks = [download_with_semaphore(i) for i in range(chunk_count)]
-                        compressed_chunks = await asyncio.gather(*download_tasks)
-
-                        # Reassemble chunks in order
-                        compressed_data = b''.join(compressed_chunks)
-                        logging.info(f"   ✅ Reassembled {len(compressed_data) / (1024*1024):.1f}MB from {chunk_count} chunks (parallel)")
-                    else:
-                        # Single file - use async client for consistency
-                        download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
-                        async with httpx.AsyncClient(timeout=300.0) as async_client:
-                            response = await async_client.get(download_url, headers=headers)
-                            if response.status_code != 200:
-                                logging.warning(f"⚠️ Failed to download FAISS from Supabase Storage: {response.status_code}")
-                                raise Exception(f"Failed to download: {response.status_code}")
-                            compressed_data = response.content
-
-                    # =====================================================================
-                    # DECOMPRESS AND LOAD: Runs for BOTH single and multi-chunk downloads
-                    # =====================================================================
-                    logging.info(f"   📦 Decompressing {len(compressed_data) / (1024*1024):.1f}MB...")
-                    zip_data = gzip.decompress(compressed_data)
-                    logging.info(f"   📦 Decompressed to {len(zip_data) / (1024*1024):.1f}MB")
-
-                    # Extract to temporary directory
-                    with tempfile.TemporaryDirectory() as tmpdir:
+                        # =====================================================================
+                        # PHASE 3: Stream decompress on disk (never holds both buffers in memory)
+                        # Memory: 64MB buffer vs old approach's 1.5GB (compressed + decompressed)
+                        # =====================================================================
                         zip_path = os.path.join(tmpdir, f"{repo_id}.zip")
-                        with open(zip_path, 'wb') as f:
-                            f.write(zip_data)
+                        compressed_size = os.path.getsize(compressed_path)
+                        logging.info(f"   📦 Stream decompressing {compressed_size/(1024*1024):.1f}MB...")
 
+                        with gzip.open(compressed_path, 'rb') as f_in:
+                            with open(zip_path, 'wb') as f_out:
+                                # 64MB buffer - optimal for gzip streaming
+                                shutil.copyfileobj(f_in, f_out, length=64*1024*1024)
+
+                        # Delete compressed file immediately to free disk space
+                        os.unlink(compressed_path)
+
+                        decompressed_size = os.path.getsize(zip_path)
+                        logging.info(f"   📦 Decompressed to {decompressed_size/(1024*1024):.1f}MB (peak mem: ~64MB)")
+
+                        # PHASE 4: Extract and load FAISS
                         extract_path = os.path.join(tmpdir, str(repo_id))
                         shutil.unpack_archive(zip_path, extract_path)
 
@@ -432,7 +479,7 @@ class ChatSession:
                         )
                         vector_store = FAISS.load_local(extract_path, embeddings, allow_dangerous_deserialization=True)
 
-                        # Also save to local disk for future fast loading
+                        # Save to local disk for future fast loading
                         os.makedirs(FAISS_DIR, exist_ok=True)
                         local_faiss_path = f"{FAISS_DIR}/{repo_id}"
                         vector_store.save_local(local_faiss_path)
