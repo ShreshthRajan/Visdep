@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata
-from backend.api.langchain_integration import get_jamba_response
+from backend.api.langchain_integration import get_jamba_response, IndexingInProgressError
 from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks, cache_chunks_in_memory
 from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
@@ -1009,20 +1009,29 @@ async def upload_repo_stream(link: RepoLink):
                 logging.info(f"🔄 Starting background FAISS build for {len(chunks):,} chunks...")
 
                 async def build_faiss_background(r_id: int, chunk_list: list):
-                    """Build FAISS index in background after upload"""
+                    """Build FAISS index and save BM25/PageRank indexes in background after upload"""
                     try:
                         from backend.api.langchain_integration import ChatSession
+
+                        logging.info(f"🔄 Background indexing started for repo_id={r_id} ({len(chunk_list):,} chunks)")
 
                         # Create context dict from chunks
                         context = {c['chunk_id']: c for c in chunk_list}
 
-                        # Initialize session which builds FAISS
+                        # Initialize session which builds FAISS, BM25, PageRank
                         session = ChatSession(repo_id=r_id)
                         await session.initialize_conversation_chain(context)
 
-                        logging.info(f"✅ Background FAISS build complete for repo_id={r_id}")
+                        # CRITICAL: Save indexes to Supabase Storage for persistence across Railway restarts
+                        if session.hybrid_retriever:
+                            logging.info(f"💾 Saving BM25/PageRank to Supabase Storage for repo_id={r_id}")
+                            session.hybrid_retriever.save_indexes(r_id, session.vector_store)
+
+                        logging.info(f"✅ Background indexing complete for repo_id={r_id}")
                     except Exception as e:
-                        logging.warning(f"⚠️ Background FAISS build failed for repo_id={r_id}: {e}")
+                        logging.warning(f"⚠️ Background indexing failed for repo_id={r_id}: {e}")
+                        import traceback
+                        logging.warning(traceback.format_exc())
 
                 # Start as background task (non-blocking)
                 asyncio.create_task(build_faiss_background(repo_id, chunks))
@@ -1261,6 +1270,16 @@ async def query_jamba(request: QueryRequest):
                 return {"response": response}
         else:
             raise HTTPException(status_code=500, detail="Failed to get a response from the model.")
+
+    except IndexingInProgressError as e:
+        # Graceful handling for queries during background indexing
+        # Return the message in chat format (no error, just info message)
+        logging.info(f"⏳ Query blocked - indexing in progress for repo_id={request.repo_id}")
+        return {
+            "response": str(e),
+            "highlighted_chunk_ids": [],
+            "indexing_in_progress": True
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")

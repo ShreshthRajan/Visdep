@@ -83,6 +83,15 @@ from langchain.memory import ConversationBufferMemory
 
 from typing import Dict, Any, List, Mapping, Optional
 
+
+class IndexingInProgressError(Exception):
+    """
+    Raised when query is attempted on a mega-repo that's still being indexed.
+
+    Used to return a graceful message to the user instead of timing out.
+    """
+    pass
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -608,6 +617,17 @@ class ChatSession:
             self.hybrid_retriever = None
             self.chunk_graph = None
             return
+
+        # MEGA-REPO GUARD: For very large repos, check if indexes exist before building
+        # This prevents 100+ second timeouts when querying repos still being indexed
+        MEGA_REPO_THRESHOLD = 50000  # 50K chunks = definitely needs pre-built indexes
+        if len(chunks_list) > MEGA_REPO_THRESHOLD and self.repo_id:
+            if not HybridRetriever.indexes_exist_in_storage(self.repo_id):
+                raise IndexingInProgressError(
+                    f"This repository ({len(chunks_list):,} chunks) is still being indexed. "
+                    "Please try again in 2-3 minutes."
+                )
+            logging.info(f"✅ Mega-repo indexes found in Storage for repo_id={self.repo_id}")
 
         # Build chunk-level graph
         logging.info("Building chunk-level dependency graph...")

@@ -19,11 +19,13 @@ import logging
 import os
 import pickle
 import json
+import gzip
 from typing import List, Dict, Any, Tuple, Optional
 from rank_bm25 import BM25Okapi
 import networkx as nx
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import httpx
 
 # Indexes directory - persistent storage for pre-computed indexes
 INDEXES_DIR = os.getenv('INDEXES_DIR', 'indexes')
@@ -183,209 +185,378 @@ class HybridRetriever:
         """Get path for PageRank scores file"""
         os.makedirs(INDEXES_DIR, exist_ok=True)
         return os.path.join(INDEXES_DIR, f"{repo_id}_pagerank.json")
-    
+
+    def _get_bm25_storage_path(self, repo_id: int) -> str:
+        """Supabase Storage path for BM25 index (gzipped pickle)"""
+        return f"indexes/{repo_id}/bm25.pkl.gz"
+
+    def _get_pagerank_storage_path(self, repo_id: int) -> str:
+        """Supabase Storage path for PageRank scores (gzipped JSON)"""
+        return f"indexes/{repo_id}/pagerank.json.gz"
+
     def _load_bm25_index(self, repo_id: int) -> bool:
         """
-        Load pre-built BM25 index from disk or Supabase
-        
+        Load pre-built BM25 index from disk or Supabase Storage
+
+        Priority:
+        1. Local disk (fast path for same Railway instance)
+        2. Supabase Storage (persists across Railway restarts)
+
         Returns:
             True if loaded successfully, False otherwise
         """
-        logging.info(f"📊 Attempting to load BM25 index for repo_id={repo_id}")
-        
-        # First try loading from local file
+        logging.info(f"📊 Loading BM25 index for repo_id={repo_id}")
+
+        # Fast path: local disk (same Railway instance)
         try:
             bm25_path = self._get_bm25_path(repo_id)
             if os.path.exists(bm25_path):
                 with open(bm25_path, 'rb') as f:
                     data = pickle.load(f)
-                
+
                 self.bm25 = data['bm25']
                 self.chunk_ids = data['chunk_ids']
-                
-                logging.info(f"✅ Loaded BM25 from local file for repo_id={repo_id} ({len(self.chunk_ids)} docs)")
+
+                logging.info(f"✅ Loaded BM25 from local disk ({len(self.chunk_ids):,} docs)")
                 return True
         except Exception as e:
-            logging.debug(f"Local BM25 load failed: {e}")
-        
-        # If local file not found, try Supabase
+            logging.debug(f"Local BM25 not available: {e}")
+
+        # Supabase Storage (persists across Railway restarts)
         try:
-            from .supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            
-            result = supabase.table('repo_bm25_indexes')\
-                .select('corpus, chunk_ids')\
-                .eq('repo_id', repo_id)\
-                .limit(1)\
-                .execute()
-            
-            if result.data and len(result.data) > 0:
-                tokenized_corpus = result.data[0]['corpus']
-                self.chunk_ids = result.data[0]['chunk_ids']
-                
-                # Reconstruct BM25 index from tokenized corpus
-                self.bm25 = BM25Okapi(tokenized_corpus)
-                self.tokenized_corpus = tokenized_corpus
-                
-                logging.info(f"✅ Loaded BM25 from Supabase for repo_id={repo_id} ({len(self.chunk_ids)} docs)")
-                return True
-            else:
-                logging.debug(f"BM25 not found in Supabase for repo_id={repo_id}")
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.info(f"⚠️ Supabase credentials not available for BM25 load")
                 return False
-            
+
+            storage_path = self._get_bm25_storage_path(repo_id)
+            download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}"
+            }
+
+            logging.info(f"   Downloading BM25 from Storage: {storage_path}")
+
+            with httpx.Client(timeout=120.0) as client:
+                response = client.get(download_url, headers=headers)
+
+                if response.status_code == 200:
+                    # Decompress and unpickle
+                    decompressed = gzip.decompress(response.content)
+                    data = pickle.loads(decompressed)
+
+                    self.bm25 = data['bm25']
+                    self.chunk_ids = data['chunk_ids']
+
+                    # Cache to local disk for future queries
+                    try:
+                        os.makedirs(os.path.dirname(self._get_bm25_path(repo_id)), exist_ok=True)
+                        with open(self._get_bm25_path(repo_id), 'wb') as f:
+                            pickle.dump(data, f)
+                    except Exception as cache_err:
+                        logging.debug(f"Could not cache BM25 to disk: {cache_err}")
+
+                    size_mb = len(response.content) / (1024 * 1024)
+                    logging.info(f"✅ Loaded BM25 from Supabase Storage ({len(self.chunk_ids):,} docs, {size_mb:.1f}MB)")
+                    return True
+                elif response.status_code == 404:
+                    logging.info(f"⚠️ BM25 not found in Storage for repo_id={repo_id}")
+                    return False
+                else:
+                    logging.warning(f"⚠️ BM25 download failed: {response.status_code}")
+                    return False
+
         except Exception as e:
-            logging.warning(f"⚠️ Failed to load BM25 index from Supabase: {e}")
+            logging.info(f"⚠️ Failed to load BM25 from Storage: {e}")
             return False
     
     def _load_pagerank(self, repo_id: int) -> bool:
         """
-        Load pre-computed PageRank scores from disk or Supabase
-        
+        Load pre-computed PageRank scores from disk or Supabase Storage
+
+        Priority:
+        1. Local disk (fast path for same Railway instance)
+        2. Supabase Storage (persists across Railway restarts)
+
         Returns:
             True if loaded successfully, False otherwise
         """
-        logging.info(f"📊 Attempting to load PageRank for repo_id={repo_id}")
-        
-        # First try loading from local file
+        logging.info(f"📊 Loading PageRank for repo_id={repo_id}")
+
+        # Fast path: local disk
         try:
             pagerank_path = self._get_pagerank_path(repo_id)
             if os.path.exists(pagerank_path):
                 with open(pagerank_path, 'r') as f:
                     self.pagerank_scores = json.load(f)
-                
-                logging.info(f"✅ Loaded PageRank from local file for repo_id={repo_id} ({len(self.pagerank_scores)} nodes)")
+
+                logging.info(f"✅ Loaded PageRank from local disk ({len(self.pagerank_scores):,} nodes)")
                 return True
         except Exception as e:
-            logging.debug(f"Local PageRank load failed: {e}")
-        
-        # If local file not found, try Supabase
+            logging.debug(f"Local PageRank not available: {e}")
+
+        # Supabase Storage (persists across Railway restarts)
         try:
-            from .supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            
-            result = supabase.table('repo_pagerank')\
-                .select('scores')\
-                .eq('repo_id', repo_id)\
-                .limit(1)\
-                .execute()
-            
-            if result.data and len(result.data) > 0:
-                self.pagerank_scores = result.data[0]['scores']
-                
-                logging.info(f"✅ Loaded PageRank from Supabase for repo_id={repo_id} ({len(self.pagerank_scores)} nodes)")
-                return True
-            else:
-                logging.debug(f"PageRank not found in Supabase for repo_id={repo_id}")
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.info(f"⚠️ Supabase credentials not available for PageRank load")
                 return False
-            
+
+            storage_path = self._get_pagerank_storage_path(repo_id)
+            download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}"
+            }
+
+            logging.info(f"   Downloading PageRank from Storage: {storage_path}")
+
+            with httpx.Client(timeout=60.0) as client:
+                response = client.get(download_url, headers=headers)
+
+                if response.status_code == 200:
+                    # Decompress and parse JSON
+                    decompressed = gzip.decompress(response.content)
+                    self.pagerank_scores = json.loads(decompressed.decode('utf-8'))
+
+                    # Cache to local disk
+                    try:
+                        os.makedirs(os.path.dirname(self._get_pagerank_path(repo_id)), exist_ok=True)
+                        with open(self._get_pagerank_path(repo_id), 'w') as f:
+                            json.dump(self.pagerank_scores, f)
+                    except Exception as cache_err:
+                        logging.debug(f"Could not cache PageRank to disk: {cache_err}")
+
+                    size_mb = len(response.content) / (1024 * 1024)
+                    logging.info(f"✅ Loaded PageRank from Supabase Storage ({len(self.pagerank_scores):,} nodes, {size_mb:.1f}MB)")
+                    return True
+                elif response.status_code == 404:
+                    logging.info(f"⚠️ PageRank not found in Storage for repo_id={repo_id}")
+                    return False
+                else:
+                    logging.warning(f"⚠️ PageRank download failed: {response.status_code}")
+                    return False
+
         except Exception as e:
-            logging.warning(f"⚠️ Failed to load PageRank from Supabase: {e}")
+            logging.info(f"⚠️ Failed to load PageRank from Storage: {e}")
             return False
     
-    def _save_bm25_to_supabase(self, repo_id: int) -> bool:
+    def _save_bm25_to_supabase_storage(self, repo_id: int) -> bool:
         """
-        Save BM25 index to Supabase for Railway access
-        
+        Save BM25 index to Supabase Storage (handles mega-repos)
+
+        Stores pickled BM25 object (~10-15MB gzipped for 152K chunks)
+        instead of tokenized corpus (~700MB) which exceeds table row limits.
+
         Args:
             repo_id: Repository ID
-            
+
         Returns:
             True if saved successfully
         """
         try:
-            from .supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            
-            # Get tokenized corpus (stored when building index)
-            tokenized_corpus = getattr(self, 'tokenized_corpus', None)
-            if not tokenized_corpus:
-                # If not stored, we can't save (shouldn't happen if _build_bm25_index was called)
-                logging.warning(f"⚠️ tokenized_corpus not available, cannot save BM25 to Supabase")
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.warning(f"⚠️ Supabase credentials not available for BM25 save")
                 return False
-            
-            supabase.table('repo_bm25_indexes').upsert({
-                'repo_id': repo_id,
-                'corpus': tokenized_corpus,
+
+            # Pickle BM25 object (much smaller than tokenized corpus)
+            data = {
+                'bm25': self.bm25,
                 'chunk_ids': self.chunk_ids
-            }, on_conflict='repo_id').execute()
-            
-            logging.info(f"✅ Saved BM25 to Supabase for repo_id={repo_id}")
+            }
+            pickled = pickle.dumps(data)
+            compressed = gzip.compress(pickled, compresslevel=6)
+
+            storage_path = self._get_bm25_storage_path(repo_id)
+            size_mb = len(compressed) / (1024 * 1024)
+            logging.info(f"   Uploading BM25 to Storage: {storage_path} ({size_mb:.1f}MB)")
+
+            upload_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/gzip",
+                "x-upsert": "true"
+            }
+
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(upload_url, content=compressed, headers=headers)
+
+                if response.status_code >= 400:
+                    logging.warning(f"⚠️ BM25 upload failed: {response.status_code} - {response.text}")
+                    return False
+
+            logging.info(f"✅ Saved BM25 to Storage ({len(self.chunk_ids):,} docs, {size_mb:.1f}MB)")
             return True
-            
+
         except Exception as e:
-            logging.warning(f"⚠️ Failed to save BM25 to Supabase: {e}")
+            logging.error(f"❌ Failed to save BM25 to Storage: {e}")
             return False
     
-    def _save_pagerank_to_supabase(self, repo_id: int) -> bool:
+    def _save_pagerank_to_supabase_storage(self, repo_id: int) -> bool:
         """
-        Save PageRank scores to Supabase for Railway access
-        
+        Save PageRank scores to Supabase Storage
+
+        Stores gzipped JSON (~2-3MB for 152K nodes).
+
         Args:
             repo_id: Repository ID
-            
+
         Returns:
             True if saved successfully
         """
         try:
-            from .supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-            
-            supabase.table('repo_pagerank').upsert({
-                'repo_id': repo_id,
-                'scores': self.pagerank_scores
-            }, on_conflict='repo_id').execute()
-            
-            logging.info(f"✅ Saved PageRank to Supabase for repo_id={repo_id}")
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.warning(f"⚠️ Supabase credentials not available for PageRank save")
+                return False
+
+            json_data = json.dumps(self.pagerank_scores)
+            compressed = gzip.compress(json_data.encode('utf-8'), compresslevel=6)
+
+            storage_path = self._get_pagerank_storage_path(repo_id)
+            size_mb = len(compressed) / (1024 * 1024)
+            logging.info(f"   Uploading PageRank to Storage: {storage_path} ({size_mb:.1f}MB)")
+
+            upload_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/gzip",
+                "x-upsert": "true"
+            }
+
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(upload_url, content=compressed, headers=headers)
+
+                if response.status_code >= 400:
+                    logging.warning(f"⚠️ PageRank upload failed: {response.status_code} - {response.text}")
+                    return False
+
+            logging.info(f"✅ Saved PageRank to Storage ({len(self.pagerank_scores):,} nodes, {size_mb:.1f}MB)")
             return True
-            
+
         except Exception as e:
-            logging.warning(f"⚠️ Failed to save PageRank to Supabase: {e}")
+            logging.error(f"❌ Failed to save PageRank to Storage: {e}")
             return False
     
     def save_indexes(self, repo_id: int, vector_store=None) -> bool:
         """
-        Save BM25 index, PageRank scores, and FAISS index to disk and Supabase for future use
-        
+        Save BM25 index, PageRank scores to disk and Supabase Storage
+
         Call this after initial build for mega-repos to enable instant
         initialization on subsequent queries.
-        
+
         Args:
             repo_id: Repository ID
             vector_store: FAISS vector store (optional, for saving FAISS to Supabase)
-            
+
         Returns:
             True if saved successfully
         """
         try:
-            # Save BM25 index to local file
-            bm25_path = self._get_bm25_path(repo_id)
-            with open(bm25_path, 'wb') as f:
-                pickle.dump({
-                    'bm25': self.bm25,
-                    'chunk_ids': self.chunk_ids
-                }, f)
-            
-            # Save PageRank scores to local file
-            pagerank_path = self._get_pagerank_path(repo_id)
-            with open(pagerank_path, 'w') as f:
-                json.dump(self.pagerank_scores, f)
-            
-            # Also save to Supabase for Railway access
-            self._save_bm25_to_supabase(repo_id)
-            self._save_pagerank_to_supabase(repo_id)
-            
+            # Save to local disk (fast path for same instance)
+            try:
+                bm25_path = self._get_bm25_path(repo_id)
+                os.makedirs(os.path.dirname(bm25_path), exist_ok=True)
+                with open(bm25_path, 'wb') as f:
+                    pickle.dump({'bm25': self.bm25, 'chunk_ids': self.chunk_ids}, f)
+
+                pagerank_path = self._get_pagerank_path(repo_id)
+                with open(pagerank_path, 'w') as f:
+                    json.dump(self.pagerank_scores, f)
+
+                logging.info(f"✅ Saved indexes to local disk for repo_id={repo_id}")
+            except Exception as disk_err:
+                logging.warning(f"⚠️ Could not save to local disk: {disk_err}")
+
+            # Save to Supabase Storage (persists across Railway restarts)
+            bm25_saved = self._save_bm25_to_supabase_storage(repo_id)
+            pagerank_saved = self._save_pagerank_to_supabase_storage(repo_id)
+
             # Save FAISS to Supabase Storage if vector_store provided
             if vector_store:
                 self._save_faiss_to_supabase(repo_id, vector_store)
-            
-            logging.info(f"✅ Saved indexes for repo_id={repo_id} (BM25: {len(self.chunk_ids)} docs, PageRank: {len(self.pagerank_scores)} nodes)")
-            logging.info(f"✅ Saved BM25/PageRank to Supabase for repo_id={repo_id}")
-            return True
-            
+
+            if bm25_saved and pagerank_saved:
+                logging.info(f"✅ Saved BM25/PageRank to Supabase Storage for repo_id={repo_id}")
+                return True
+            else:
+                logging.warning(f"⚠️ Partial save: BM25={bm25_saved}, PageRank={pagerank_saved}")
+                return bm25_saved or pagerank_saved
+
         except Exception as e:
             logging.error(f"❌ Failed to save indexes: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
-    
+
+    @staticmethod
+    def indexes_exist_in_storage(repo_id: int) -> bool:
+        """
+        Check if BM25/PageRank exist in Supabase Storage WITHOUT downloading.
+
+        Used for graceful handling of queries during indexing.
+        Returns True if both indexes are available.
+
+        Args:
+            repo_id: Repository ID
+
+        Returns:
+            True if both BM25 and PageRank exist in Storage
+        """
+        try:
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                return False
+
+            # Check BM25 exists (HEAD request is fastest)
+            bm25_path = f"indexes/{repo_id}/bm25.pkl.gz"
+            bm25_url = f"{supabase_url}/storage/v1/object/repo-data/{bm25_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}"
+            }
+
+            with httpx.Client(timeout=10.0) as client:
+                bm25_resp = client.head(bm25_url, headers=headers)
+                if bm25_resp.status_code != 200:
+                    logging.debug(f"BM25 not found in Storage for repo_id={repo_id}")
+                    return False
+
+                # Check PageRank exists
+                pagerank_path = f"indexes/{repo_id}/pagerank.json.gz"
+                pagerank_url = f"{supabase_url}/storage/v1/object/repo-data/{pagerank_path}"
+                pagerank_resp = client.head(pagerank_url, headers=headers)
+
+                if pagerank_resp.status_code != 200:
+                    logging.debug(f"PageRank not found in Storage for repo_id={repo_id}")
+                    return False
+
+            logging.debug(f"Indexes exist in Storage for repo_id={repo_id}")
+            return True
+
+        except Exception as e:
+            logging.debug(f"Storage check failed for repo_id={repo_id}: {e}")
+            return False
+
     def _save_faiss_to_supabase(self, repo_id: int, vector_store) -> bool:
         """
         Save FAISS index to Supabase Storage for Railway access
