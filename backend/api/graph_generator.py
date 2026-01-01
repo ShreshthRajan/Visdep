@@ -271,8 +271,18 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     # Perform edge clustering
     G = cluster_edges(G)
 
-    # Add spatial information
-    G = add_spatial_information(G)
+    # Add spatial information (skip for mega-repos - frontend uses Force-Atlas2 anyway)
+    SPATIAL_LAYOUT_THRESHOLD = 10000  # 10K nodes - spring layout is O(N²)
+    node_count = len(G.nodes())
+
+    if node_count < SPATIAL_LAYOUT_THRESHOLD:
+        G = add_spatial_information(G)
+    else:
+        # For mega-repos: set default positions (frontend ignores these, uses Force-Atlas2)
+        logging.info(f"⚡ Skipping spring layout for {node_count:,} nodes (O(N²) too expensive, frontend uses Force-Atlas2)")
+        for node in G.nodes():
+            G.nodes[node]['x'] = 0
+            G.nodes[node]['y'] = 0
 
     return G
 
