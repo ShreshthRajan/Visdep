@@ -45,11 +45,33 @@ async def lifespan(app):
     """
     Lifespan context manager for startup and shutdown events.
 
-    Startup: Pre-warm chunks cache for pre-indexed mega-repos.
+    Startup: Launch background pre-warming (non-blocking).
     Shutdown: (None currently needed)
     """
-    # STARTUP: Pre-warm chunks cache for pre-indexed repos
+    # Start app IMMEDIATELY - pre-warming runs in background
+    logging.info("🚀 Starting server (pre-warming will run in background)...")
+
+    # Launch background pre-warming task (non-blocking)
+    asyncio.create_task(prewarm_chunks_background())
+
+    yield  # App runs here - ready to accept requests immediately
+
+    # SHUTDOWN: Cleanup (none needed currently)
+    logging.info("🛑 Server shutdown")
+
+
+async def prewarm_chunks_background():
+    """
+    Background task to pre-warm chunks cache for pre-indexed repos.
+
+    Runs AFTER app starts accepting requests, so startup is instant.
+    First query to a mega-repo may be slow if pre-warming hasn't finished,
+    but subsequent queries will be fast.
+    """
     try:
+        # Small delay to let server fully initialize
+        await asyncio.sleep(1)
+
         from backend.api.supabase_client import get_supabase_client
 
         supabase = get_supabase_client()
@@ -61,34 +83,34 @@ async def lifespan(app):
 
         if not result.data:
             logging.info("📦 No pre-indexed repos to pre-warm")
-        else:
-            logging.info(f"🔥 PRE-WARMING: Loading {len(result.data)} pre-indexed repos into cache...")
+            return
 
-            for repo in result.data:
-                repo_id = repo['repo_id']
-                repo_name = repo['repo_name']
-                chunk_count = repo.get('chunk_count', 0)
+        logging.info(f"🔥 BACKGROUND PRE-WARMING: Loading {len(result.data)} pre-indexed repos...")
 
-                logging.info(f"   🔥 Pre-warming {repo_name} ({chunk_count:,} chunks)...")
+        for repo in result.data:
+            repo_id = repo['repo_id']
+            repo_name = repo['repo_name']
+            chunk_count = repo.get('chunk_count', 0)
 
-                try:
-                    # This populates _chunks_cache in data_storage.py
-                    chunks = retrieve_chunks(repo_id)
-                    logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
-                except Exception as e:
-                    logging.warning(f"   ⚠️ Failed to pre-warm {repo_name}: {e}")
-                    continue
+            logging.info(f"   🔥 Pre-warming {repo_name} ({chunk_count:,} chunks)...")
 
-            logging.info("🔥 PRE-WARMING COMPLETE: All pre-indexed repos cached in memory")
+            try:
+                # Run in executor to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                chunks = await loop.run_in_executor(None, retrieve_chunks, repo_id)
+                logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
+            except Exception as e:
+                logging.warning(f"   ⚠️ Failed to pre-warm {repo_name}: {e}")
+                continue
+
+            # Yield control between repos to keep server responsive
+            await asyncio.sleep(0.1)
+
+        logging.info("🔥 BACKGROUND PRE-WARMING COMPLETE: All pre-indexed repos cached")
 
     except Exception as e:
         # Non-fatal: if pre-warming fails, first query will just be slower
-        logging.warning(f"⚠️ Pre-warming failed (non-fatal): {e}")
-
-    yield  # App runs here
-
-    # SHUTDOWN: Cleanup (none needed currently)
-    logging.info("🛑 Server shutdown")
+        logging.warning(f"⚠️ Background pre-warming failed (non-fatal): {e}")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -1232,6 +1254,31 @@ async def query_jamba(request: QueryRequest):
             )
 
         target_repo_id = request.repo_id
+
+        # MEGA-REPO GUARD: Check if chunks are cached before triggering expensive fetch
+        # This prevents 60+ second timeouts when querying before pre-warming completes
+        from backend.api.data_storage import _chunks_cache
+        if target_repo_id not in _chunks_cache:
+            # Check if this is a mega-repo (preindexed with many chunks)
+            try:
+                from backend.api.supabase_client import get_supabase_client
+                supabase = get_supabase_client()
+                preindexed = supabase.table('preindexed_repos')\
+                    .select('chunk_count')\
+                    .eq('repo_id', target_repo_id)\
+                    .limit(1)\
+                    .execute()
+
+                if preindexed.data and preindexed.data[0].get('chunk_count', 0) > 50000:
+                    # Mega-repo not yet cached - return friendly message
+                    logging.warning(f"⏳ Query attempted on mega-repo {target_repo_id} before pre-warming complete")
+                    return {
+                        "response": "This repository is still warming up (loading 150K+ code chunks into memory). Please wait 30-60 seconds and try again. This only happens once after server restart.",
+                        "highlighted_chunk_ids": [],
+                        "warming_up": True
+                    }
+            except Exception as e:
+                logging.debug(f"Pre-indexed check failed: {e}")
 
         # Load chunks from database (same pattern as query_stream endpoint)
         chunks = retrieve_chunks(target_repo_id)
