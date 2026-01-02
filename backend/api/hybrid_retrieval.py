@@ -456,7 +456,7 @@ class HybridRetriever:
     
     def save_indexes(self, repo_id: int, vector_store=None) -> bool:
         """
-        Save BM25 index, PageRank scores to disk and Supabase Storage
+        Save BM25 index, PageRank scores, and chunk_graph to disk and Supabase Storage
 
         Call this after initial build for mega-repos to enable instant
         initialization on subsequent queries.
@@ -480,6 +480,17 @@ class HybridRetriever:
                 with open(pagerank_path, 'w') as f:
                     json.dump(self.pagerank_scores, f)
 
+                # Save chunk_graph to local disk
+                if self.chunk_graph and len(self.chunk_graph.nodes()) > 0:
+                    chunk_graph_path = self._get_chunk_graph_path(repo_id)
+                    adjacency = {}
+                    for node in self.chunk_graph.nodes():
+                        successors = list(self.chunk_graph.successors(node))
+                        if successors:
+                            adjacency[node] = successors
+                    with open(chunk_graph_path, 'w') as f:
+                        json.dump(adjacency, f)
+
                 logging.info(f"✅ Saved indexes to local disk for repo_id={repo_id}")
             except Exception as disk_err:
                 logging.warning(f"⚠️ Could not save to local disk: {disk_err}")
@@ -487,16 +498,17 @@ class HybridRetriever:
             # Save to Supabase Storage (persists across Railway restarts)
             bm25_saved = self._save_bm25_to_supabase_storage(repo_id)
             pagerank_saved = self._save_pagerank_to_supabase_storage(repo_id)
+            graph_saved = self._save_chunk_graph_to_storage(repo_id)
 
             # Save FAISS to Supabase Storage if vector_store provided
             if vector_store:
                 self._save_faiss_to_supabase(repo_id, vector_store)
 
-            if bm25_saved and pagerank_saved:
-                logging.info(f"✅ Saved BM25/PageRank to Supabase Storage for repo_id={repo_id}")
+            if bm25_saved and pagerank_saved and graph_saved:
+                logging.info(f"✅ Saved BM25/PageRank/ChunkGraph to Supabase Storage for repo_id={repo_id}")
                 return True
             else:
-                logging.warning(f"⚠️ Partial save: BM25={bm25_saved}, PageRank={pagerank_saved}")
+                logging.warning(f"⚠️ Partial save: BM25={bm25_saved}, PageRank={pagerank_saved}, ChunkGraph={graph_saved}")
                 return bm25_saved or pagerank_saved
 
         except Exception as e:
@@ -505,19 +517,190 @@ class HybridRetriever:
             logging.error(traceback.format_exc())
             return False
 
-    @staticmethod
-    def indexes_exist_in_storage(repo_id: int) -> bool:
-        """
-        Check if BM25/PageRank exist in Supabase Storage WITHOUT downloading.
+    # =========================================================================
+    # CHUNK GRAPH PERSISTENCE (Mega-repo optimization)
+    # =========================================================================
+    # For mega-repos (152K chunks), building chunk_graph takes 30-60 seconds.
+    # By caching the adjacency list, we skip this expensive step on queries.
+    # =========================================================================
 
-        Used for graceful handling of queries during indexing.
-        Returns True if both indexes are available.
+    def _get_chunk_graph_storage_path(self, repo_id: int) -> str:
+        """Supabase Storage path for chunk graph adjacency (gzipped JSON)"""
+        return f"indexes/{repo_id}/chunk_graph.json.gz"
+
+    def _get_chunk_graph_path(self, repo_id: int) -> str:
+        """Local disk path for chunk graph adjacency"""
+        os.makedirs(INDEXES_DIR, exist_ok=True)
+        return os.path.join(INDEXES_DIR, f"{repo_id}_chunk_graph.json")
+
+    def _save_chunk_graph_to_storage(self, repo_id: int) -> bool:
+        """
+        Save chunk_graph adjacency list to Supabase Storage.
+
+        Stores only the edge list (from -> to) which is sufficient for
+        graph expansion during retrieval. Much smaller than full NetworkX object.
 
         Args:
             repo_id: Repository ID
 
         Returns:
-            True if both BM25 and PageRank exist in Storage
+            True if saved successfully
+        """
+        try:
+            if not self.chunk_graph or len(self.chunk_graph.nodes()) == 0:
+                logging.warning(f"⚠️ No chunk_graph to save for repo_id={repo_id}")
+                return False
+
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.warning(f"⚠️ Supabase credentials not available for chunk_graph save")
+                return False
+
+            # Convert to adjacency list format (compact, JSON-serializable)
+            # Format: {node_id: [successor_ids]}
+            adjacency = {}
+            for node in self.chunk_graph.nodes():
+                successors = list(self.chunk_graph.successors(node))
+                if successors:  # Only store nodes with outgoing edges
+                    adjacency[node] = successors
+
+            # Serialize and compress
+            json_data = json.dumps(adjacency)
+            compressed = gzip.compress(json_data.encode('utf-8'), compresslevel=6)
+
+            storage_path = self._get_chunk_graph_storage_path(repo_id)
+            size_mb = len(compressed) / (1024 * 1024)
+            logging.info(f"   Uploading chunk_graph to Storage: {storage_path} ({size_mb:.1f}MB, {len(adjacency):,} nodes with edges)")
+
+            upload_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/gzip",
+                "x-upsert": "true"
+            }
+
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(upload_url, content=compressed, headers=headers)
+
+                if response.status_code >= 400:
+                    logging.warning(f"⚠️ chunk_graph upload failed: {response.status_code} - {response.text}")
+                    return False
+
+            logging.info(f"✅ Saved chunk_graph to Storage ({len(self.chunk_graph.nodes()):,} nodes, {len(self.chunk_graph.edges()):,} edges)")
+            return True
+
+        except Exception as e:
+            logging.error(f"❌ Failed to save chunk_graph to Storage: {e}")
+            return False
+
+    @staticmethod
+    def load_chunk_graph_from_storage(repo_id: int) -> Optional[nx.DiGraph]:
+        """
+        Load chunk_graph adjacency list from Supabase Storage.
+
+        Reconstructs a NetworkX DiGraph from the cached adjacency list.
+        This avoids the expensive 30-60 second rebuild for mega-repos.
+
+        Args:
+            repo_id: Repository ID
+
+        Returns:
+            NetworkX DiGraph if loaded successfully, None otherwise
+        """
+        logging.info(f"📊 Loading chunk_graph for repo_id={repo_id}")
+
+        # Fast path: local disk
+        try:
+            local_path = os.path.join(INDEXES_DIR, f"{repo_id}_chunk_graph.json")
+            if os.path.exists(local_path):
+                with open(local_path, 'r') as f:
+                    adjacency = json.load(f)
+
+                # Reconstruct graph
+                G = nx.DiGraph()
+                for node, successors in adjacency.items():
+                    for successor in successors:
+                        G.add_edge(node, successor, relation='imports')
+
+                logging.info(f"✅ Loaded chunk_graph from local disk ({len(G.nodes()):,} nodes, {len(G.edges()):,} edges)")
+                return G
+        except Exception as e:
+            logging.debug(f"Local chunk_graph not available: {e}")
+
+        # Supabase Storage
+        try:
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
+
+            if not supabase_url or not supabase_key:
+                logging.info(f"⚠️ Supabase credentials not available for chunk_graph load")
+                return None
+
+            storage_path = f"indexes/{repo_id}/chunk_graph.json.gz"
+            download_url = f"{supabase_url}/storage/v1/object/repo-data/{storage_path}"
+
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}"
+            }
+
+            logging.info(f"   Downloading chunk_graph from Storage: {storage_path}")
+
+            with httpx.Client(timeout=120.0) as client:
+                response = client.get(download_url, headers=headers)
+
+                if response.status_code == 200:
+                    # Decompress and parse
+                    decompressed = gzip.decompress(response.content)
+                    adjacency = json.loads(decompressed.decode('utf-8'))
+
+                    # Reconstruct graph
+                    G = nx.DiGraph()
+                    for node, successors in adjacency.items():
+                        for successor in successors:
+                            G.add_edge(node, successor, relation='imports')
+
+                    # Cache to local disk
+                    try:
+                        os.makedirs(INDEXES_DIR, exist_ok=True)
+                        local_path = os.path.join(INDEXES_DIR, f"{repo_id}_chunk_graph.json")
+                        with open(local_path, 'w') as f:
+                            json.dump(adjacency, f)
+                    except Exception as cache_err:
+                        logging.debug(f"Could not cache chunk_graph to disk: {cache_err}")
+
+                    size_mb = len(response.content) / (1024 * 1024)
+                    logging.info(f"✅ Loaded chunk_graph from Storage ({len(G.nodes()):,} nodes, {len(G.edges()):,} edges, {size_mb:.1f}MB)")
+                    return G
+
+                elif response.status_code == 404:
+                    logging.info(f"⚠️ chunk_graph not found in Storage for repo_id={repo_id}")
+                    return None
+                else:
+                    logging.warning(f"⚠️ chunk_graph download failed: {response.status_code}")
+                    return None
+
+        except Exception as e:
+            logging.info(f"⚠️ Failed to load chunk_graph from Storage: {e}")
+            return None
+
+    @staticmethod
+    def indexes_exist_in_storage(repo_id: int) -> bool:
+        """
+        Check if BM25/PageRank/ChunkGraph exist in Supabase Storage WITHOUT downloading.
+
+        Used for graceful handling of queries during indexing.
+        Returns True if all indexes are available.
+
+        Args:
+            repo_id: Repository ID
+
+        Returns:
+            True if BM25, PageRank, and ChunkGraph exist in Storage
         """
         try:
             supabase_url = os.getenv('SUPABASE_URL')
@@ -526,16 +709,15 @@ class HybridRetriever:
             if not supabase_url or not supabase_key:
                 return False
 
-            # Check BM25 exists (HEAD request is fastest)
-            bm25_path = f"indexes/{repo_id}/bm25.pkl.gz"
-            bm25_url = f"{supabase_url}/storage/v1/object/repo-data/{bm25_path}"
-
             headers = {
                 "apikey": supabase_key,
                 "Authorization": f"Bearer {supabase_key}"
             }
 
             with httpx.Client(timeout=10.0) as client:
+                # Check BM25 exists (HEAD request is fastest)
+                bm25_path = f"indexes/{repo_id}/bm25.pkl.gz"
+                bm25_url = f"{supabase_url}/storage/v1/object/repo-data/{bm25_path}"
                 bm25_resp = client.head(bm25_url, headers=headers)
                 if bm25_resp.status_code != 200:
                     logging.debug(f"BM25 not found in Storage for repo_id={repo_id}")
@@ -545,12 +727,19 @@ class HybridRetriever:
                 pagerank_path = f"indexes/{repo_id}/pagerank.json.gz"
                 pagerank_url = f"{supabase_url}/storage/v1/object/repo-data/{pagerank_path}"
                 pagerank_resp = client.head(pagerank_url, headers=headers)
-
                 if pagerank_resp.status_code != 200:
                     logging.debug(f"PageRank not found in Storage for repo_id={repo_id}")
                     return False
 
-            logging.debug(f"Indexes exist in Storage for repo_id={repo_id}")
+                # Check ChunkGraph exists
+                graph_path = f"indexes/{repo_id}/chunk_graph.json.gz"
+                graph_url = f"{supabase_url}/storage/v1/object/repo-data/{graph_path}"
+                graph_resp = client.head(graph_url, headers=headers)
+                if graph_resp.status_code != 200:
+                    logging.debug(f"ChunkGraph not found in Storage for repo_id={repo_id}")
+                    return False
+
+            logging.debug(f"All indexes exist in Storage for repo_id={repo_id}")
             return True
 
         except Exception as e:

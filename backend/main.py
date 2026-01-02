@@ -104,14 +104,19 @@ async def prewarm_chunks_background():
             logging.info(f"   🔥 Pre-warming {repo_name} ({chunk_count:,} chunks)...")
 
             try:
-                # STEP 1: Load chunks into memory cache
-                loop = asyncio.get_event_loop()
-                chunks = await loop.run_in_executor(None, retrieve_chunks, repo_id)
-                logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
+                # =================================================================
+                # MEMORY OPTIMIZATION: FAISS first, then chunks
+                # =================================================================
+                # Why this order matters:
+                # - FAISS download uses 64MB streaming buffer, then releases it
+                # - Chunks load into memory cache (~300MB for 152K chunks)
+                # - If chunks load FIRST: 300MB + 64MB = 364MB peak
+                # - If FAISS loads FIRST: max(64MB, 300MB) = 300MB peak
+                # This 64MB savings prevents OOM on Railway's ~512MB limit
+                # =================================================================
 
-                # STEP 2: Pre-load FAISS to local disk (mega-repos only)
-                # This ensures first query uses fast local disk path (~1s)
-                # instead of streaming download (~90s)
+                # STEP 1: Pre-load FAISS to local disk (mega-repos only)
+                # Do this FIRST while memory is maximally free
                 if chunk_count >= FAISS_PREWARM_THRESHOLD:
                     logging.info(f"   📥 Pre-loading FAISS for {repo_name} (mega-repo)...")
                     faiss_success = await prewarm_faiss_to_disk(repo_id)
@@ -119,6 +124,12 @@ async def prewarm_chunks_background():
                         logging.info(f"   ✅ {repo_name}: FAISS pre-loaded to disk")
                     else:
                         logging.warning(f"   ⚠️ {repo_name}: FAISS pre-load skipped (will download on first query)")
+
+                # STEP 2: Load chunks into memory cache
+                # Do this SECOND - FAISS buffer has been released
+                loop = asyncio.get_event_loop()
+                chunks = await loop.run_in_executor(None, retrieve_chunks, repo_id)
+                logging.info(f"   ✅ {repo_name}: {len(chunks):,} chunks loaded into cache")
 
             except Exception as e:
                 logging.warning(f"   ⚠️ Failed to pre-warm {repo_name}: {e}")
@@ -1052,7 +1063,7 @@ async def upload_repo_stream(link: RepoLink):
                 logging.info(f"🔄 Starting background FAISS build for {len(chunks):,} chunks...")
 
                 async def build_faiss_background(r_id: int, chunk_list: list):
-                    """Build FAISS index and save BM25/PageRank indexes in background after upload"""
+                    """Build FAISS index and save BM25/PageRank/ChunkGraph indexes in background after upload"""
                     try:
                         from backend.api.langchain_integration import ChatSession
 
@@ -1061,9 +1072,12 @@ async def upload_repo_stream(link: RepoLink):
                         # Create context dict from chunks
                         context = {c['chunk_id']: c for c in chunk_list}
 
-                        # Initialize session which builds FAISS, BM25, PageRank
+                        # Initialize session which builds FAISS, BM25, PageRank, ChunkGraph
+                        # CRITICAL: skip_index_check=True allows building indexes for mega-repos
+                        # Without this, mega-repos (>50K chunks) would fail with IndexingInProgressError
+                        # because we're trying to BUILD the indexes that don't exist yet
                         session = ChatSession(repo_id=r_id)
-                        await session.initialize_conversation_chain(context)
+                        await session.initialize_conversation_chain(context, skip_index_check=True)
 
                         # CRITICAL: Save indexes to Supabase Storage for persistence across Railway restarts
                         if session.hybrid_retriever:

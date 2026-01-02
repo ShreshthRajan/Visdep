@@ -419,7 +419,15 @@ class ChatSession:
         self.repo_id = repo_id  # Task 2.2: For FAISS persistence
         self.hierarchical_summaries = None  # HCGS: For full-repo understanding
 
-    async def initialize_conversation_chain(self, context):
+    async def initialize_conversation_chain(self, context, skip_index_check: bool = False):
+        """
+        Initialize the conversation chain with vector store, hybrid retriever, etc.
+
+        Args:
+            context: Dict of chunk_id -> chunk data
+            skip_index_check: If True, skip mega-repo index existence check.
+                              Pass True for BACKGROUND INDEXING, False (default) for QUERIES.
+        """
         try:
             self.full_context = context
             # Task 2.2: Pass repo_id for FAISS persistence
@@ -427,7 +435,7 @@ class ChatSession:
             self.dependency_graph = create_dependency_graph(context)
 
             # Step 2: Initialize hybrid retriever
-            await self.initialize_hybrid_retriever(context)
+            await self.initialize_hybrid_retriever(context, skip_index_check=skip_index_check)
 
             # NEW: Step 3 - Initialize reranker and context assembler
             self.reranker = CodeReranker()
@@ -814,7 +822,7 @@ class ChatSession:
 
         return vector_store
 
-    async def initialize_hybrid_retriever(self, context):
+    async def initialize_hybrid_retriever(self, context, skip_index_check: bool = False):
         """
         Initialize hybrid retriever for Step 2
 
@@ -822,6 +830,13 @@ class ChatSession:
         - BM25 index over chunks
         - Chunk-level dependency graph
         - Hybrid retriever combining all signals
+
+        Args:
+            context: Dict of chunk_id -> chunk data
+            skip_index_check: If True, skip the mega-repo index existence check.
+                              Use this for BACKGROUND INDEXING which needs to BUILD
+                              indexes that don't exist yet. Default False to protect
+                              user QUERIES from timeout on unindexed mega-repos.
         """
         # Extract chunks from context
         chunks_list = []
@@ -847,18 +862,37 @@ class ChatSession:
 
         # MEGA-REPO GUARD: For very large repos, check if indexes exist before building
         # This prevents 100+ second timeouts when querying repos still being indexed
+        # SKIP this check during background indexing (skip_index_check=True)
         MEGA_REPO_THRESHOLD = 50000  # 50K chunks = definitely needs pre-built indexes
-        if len(chunks_list) > MEGA_REPO_THRESHOLD and self.repo_id:
+        is_mega_repo = len(chunks_list) > MEGA_REPO_THRESHOLD
+
+        if is_mega_repo and self.repo_id and not skip_index_check:
             if not HybridRetriever.indexes_exist_in_storage(self.repo_id):
                 raise IndexingInProgressError(
                     f"This repository ({len(chunks_list):,} chunks) is still being indexed. "
                     "Please try again in 2-3 minutes."
                 )
             logging.info(f"✅ Mega-repo indexes found in Storage for repo_id={self.repo_id}")
+        elif is_mega_repo and skip_index_check:
+            logging.info(f"⚙️ Background indexing mode: Skipping index check for mega-repo ({len(chunks_list):,} chunks)")
 
-        # Build chunk-level graph
-        logging.info("Building chunk-level dependency graph...")
-        self.chunk_graph = build_chunk_graph(chunks_list)
+        # =================================================================
+        # CHUNK GRAPH: Load from cache or build
+        # =================================================================
+        # For mega-repos (152K chunks), building chunk_graph takes 30-60s.
+        # Loading from cache takes <5s. Try cache first for mega-repos.
+        # =================================================================
+        self.chunk_graph = None
+
+        if self.repo_id and is_mega_repo:
+            # Try to load cached chunk_graph (30-60s savings for mega-repos)
+            logging.info(f"📊 Attempting to load cached chunk_graph for mega-repo...")
+            self.chunk_graph = HybridRetriever.load_chunk_graph_from_storage(self.repo_id)
+
+        if self.chunk_graph is None:
+            # Build chunk_graph (fast for small repos, needed for uncached mega-repos)
+            logging.info("Building chunk-level dependency graph...")
+            self.chunk_graph = build_chunk_graph(chunks_list)
 
         # Initialize hybrid retriever
         logging.info("Initializing hybrid retriever...")
@@ -1440,6 +1474,43 @@ class ChatSession:
             from backend.api.data_storage import map_citations_to_chunk_ids
             highlighted_nodes = map_citations_to_chunk_ids(citations, self.repo_id)
             logging.info(f"✅ Mapped {len(citations)} citations to {len(highlighted_nodes)} highlighted nodes")
+
+            # =================================================================
+            # MEGA-REPO FIX: Convert chunk IDs to file paths for graph matching
+            # =================================================================
+            # For mega-repos (>50K chunks), the graph shows file structure only
+            # (directories + files), not individual functions/methods.
+            #
+            # Problem: highlighted_nodes are chunk IDs like "file.go::CreateServerChain"
+            # but graph node IDs are file paths like "file.go"
+            #
+            # Solution: Convert chunk IDs to file paths for mega-repos
+            # This ensures highlighted nodes match visible graph nodes
+            # =================================================================
+            MEGA_REPO_HIGHLIGHT_THRESHOLD = 50000  # Same as MEGA_REPO_THRESHOLD in initialize_hybrid_retriever
+
+            # Check if this is a mega-repo by counting chunks in context
+            chunk_count = len(self.full_context) if isinstance(self.full_context, dict) else 0
+
+            if chunk_count > MEGA_REPO_HIGHLIGHT_THRESHOLD and highlighted_nodes:
+                # Convert chunk IDs to file paths
+                # Chunk ID format: "path/to/file.go::FunctionName" or "path/to/file.go"
+                file_paths = []
+                for chunk_id in highlighted_nodes:
+                    # Extract file path (before :: if present)
+                    if '::' in chunk_id:
+                        file_path = chunk_id.split('::')[0]
+                    else:
+                        file_path = chunk_id
+
+                    # Deduplicate while preserving order
+                    if file_path not in file_paths:
+                        file_paths.append(file_path)
+
+                logging.info(f"🔄 MEGA-REPO: Converted {len(highlighted_nodes)} chunk IDs to {len(file_paths)} file paths for graph compatibility")
+                logging.info(f"   File paths: {file_paths[:5]}{'...' if len(file_paths) > 5 else ''}")
+                highlighted_nodes = file_paths
+
         elif not citations:
             logging.warning(f"⚠️ No citations found in Claude response - cannot highlight nodes")
         elif not self.repo_id:

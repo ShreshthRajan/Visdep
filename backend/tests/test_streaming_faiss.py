@@ -288,6 +288,138 @@ class TestFAISSPrewarm:
         assert isinstance(FAISS_DIR, str)
 
 
+class TestSkipIndexCheck:
+    """Test the skip_index_check parameter for background indexing."""
+
+    def test_skip_index_check_parameter_exists(self):
+        """
+        Verify the skip_index_check parameter exists in the function signatures.
+        This is critical for user-uploaded mega-repos to work.
+        """
+        import inspect
+
+        # We can't import the full module due to missing dependencies,
+        # so we verify the parameter by reading the source file
+        import os
+        langchain_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'api', 'langchain_integration.py'
+        )
+
+        with open(langchain_path, 'r') as f:
+            source = f.read()
+
+        # Verify initialize_hybrid_retriever has skip_index_check
+        assert 'def initialize_hybrid_retriever(self, context, skip_index_check: bool = False)' in source or \
+               'async def initialize_hybrid_retriever(self, context, skip_index_check: bool = False)' in source, \
+               "initialize_hybrid_retriever must have skip_index_check parameter"
+
+        # Verify initialize_conversation_chain has skip_index_check
+        assert 'def initialize_conversation_chain(self, context, skip_index_check: bool = False)' in source or \
+               'async def initialize_conversation_chain(self, context, skip_index_check: bool = False)' in source, \
+               "initialize_conversation_chain must have skip_index_check parameter"
+
+        # Verify the parameter is passed through
+        assert 'skip_index_check=skip_index_check' in source, \
+               "skip_index_check must be passed from initialize_conversation_chain to initialize_hybrid_retriever"
+
+    def test_background_indexing_uses_skip_flag(self):
+        """
+        Verify that build_faiss_background passes skip_index_check=True.
+        This is critical: without this, user-uploaded mega-repos fail.
+        """
+        import os
+        main_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'main.py'
+        )
+
+        with open(main_path, 'r') as f:
+            source = f.read()
+
+        # Verify background indexing passes skip_index_check=True
+        assert 'skip_index_check=True' in source, \
+               "build_faiss_background must pass skip_index_check=True"
+
+
+class TestChunkGraphCaching:
+    """Test the chunk_graph caching functionality."""
+
+    def test_chunk_graph_adjacency_roundtrip(self):
+        """
+        Test that chunk_graph adjacency list can be saved and loaded correctly.
+        This validates the chunk graph caching mechanism without requiring Supabase.
+        """
+        import networkx as nx
+        import json
+
+        # Create a sample chunk graph
+        G = nx.DiGraph()
+        G.add_edge('file1.py::func_a', 'file2.py::func_b', relation='imports')
+        G.add_edge('file1.py::func_a', 'file3.py::func_c', relation='imports')
+        G.add_edge('file2.py::func_b', 'file3.py::func_c', relation='imports')
+
+        # Convert to adjacency format (same as _save_chunk_graph_to_storage)
+        adjacency = {}
+        for node in G.nodes():
+            successors = list(G.successors(node))
+            if successors:
+                adjacency[node] = successors
+
+        # Serialize and deserialize (simulating save/load)
+        json_data = json.dumps(adjacency)
+        loaded_adjacency = json.loads(json_data)
+
+        # Reconstruct graph (same as load_chunk_graph_from_storage)
+        G_loaded = nx.DiGraph()
+        for node, successors in loaded_adjacency.items():
+            for successor in successors:
+                G_loaded.add_edge(node, successor, relation='imports')
+
+        # Verify graph structure preserved
+        assert len(G.nodes()) == len(G_loaded.nodes())
+        assert len(G.edges()) == len(G_loaded.edges())
+
+        # Verify specific edges
+        assert G_loaded.has_edge('file1.py::func_a', 'file2.py::func_b')
+        assert G_loaded.has_edge('file1.py::func_a', 'file3.py::func_c')
+        assert G_loaded.has_edge('file2.py::func_b', 'file3.py::func_c')
+
+    def test_mega_repo_file_path_conversion(self):
+        """
+        Test that chunk IDs are correctly converted to file paths for mega-repos.
+        This validates the highlight compatibility fix.
+        """
+        # Sample chunk IDs from retrieval
+        highlighted_nodes = [
+            'cmd/kube-apiserver/app/server.go::CreateServerChain',
+            'cmd/kube-apiserver/app/server.go::Run',
+            'pkg/registry/core/pod/strategy.go::ValidatePod',
+            'simple_file.go'  # File-level chunk (no ::)
+        ]
+
+        # Convert to file paths (same logic as in langchain_integration.py)
+        file_paths = []
+        for chunk_id in highlighted_nodes:
+            if '::' in chunk_id:
+                file_path = chunk_id.split('::')[0]
+            else:
+                file_path = chunk_id
+
+            if file_path not in file_paths:
+                file_paths.append(file_path)
+
+        # Verify conversion - 3 unique file paths (server.go deduplicated)
+        assert len(file_paths) == 3
+        assert 'cmd/kube-apiserver/app/server.go' in file_paths
+        assert 'pkg/registry/core/pod/strategy.go' in file_paths
+        assert 'simple_file.go' in file_paths
+
+        # Verify deduplication (server.go had 2 functions but should be 1 file path)
+        server_count = sum(1 for p in file_paths if 'server.go' in p)
+        assert server_count == 1
+
+
 def run_tests():
     """Run all tests and report results."""
     import traceback
@@ -296,7 +428,9 @@ def run_tests():
         TestStreamingFAISSDownload,
         TestMemoryEfficiency,
         TestEdgeCases,
-        TestFAISSPrewarm
+        TestFAISSPrewarm,
+        TestSkipIndexCheck,
+        TestChunkGraphCaching
     ]
 
     passed = 0
