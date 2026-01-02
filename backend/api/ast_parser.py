@@ -632,6 +632,165 @@ def extract_rust_info_tree_sitter(parse_result: Dict[str, Any]) -> Dict[str, Any
     info['content'] = content
     return info
 
+# PHP AST Parsing (using tree-sitter - PHASE 4)
+def parse_php_file_tree_sitter(file_path: str) -> Dict[str, Any]:
+    """Parse PHP with tree-sitter (error-tolerant, handles PHP 5.6 - 8.3+)"""
+    with open(file_path, 'r', encoding='utf-8') as file:
+        content = file.read()
+
+    parser = get_parser('php')
+    tree = parser.parse(bytes(content, 'utf8'))
+
+    return {'tree': tree, 'content': content}
+
+def extract_php_info_tree_sitter(parse_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract PHP functions/classes with method-level granularity.
+
+    Handles: classes, traits, interfaces, enums, functions, methods,
+    namespace imports (use statements), and PHP 8 attributes.
+    """
+    tree = parse_result['tree']
+    content = parse_result['content']
+
+    info = {
+        "functions": [],
+        "classes": [],
+        "imports": []
+    }
+
+    def find_nodes_by_type(node, target_type):
+        """Find all descendant nodes of a specific type"""
+        results = []
+        if node.type == target_type:
+            results.append(node)
+        for child in node.children:
+            results.extend(find_nodes_by_type(child, target_type))
+        return results
+
+    def extract_attributes(node):
+        """Extract PHP 8 #[Attribute] decorators from a node"""
+        decorators = []
+        for child in node.children:
+            if child.type == 'attribute_list':
+                for attr in find_nodes_by_type(child, 'attribute'):
+                    decorators.append(attr.text.decode('utf8'))
+        return decorators
+
+    def extract_bases(node):
+        """Extract extends and implements from class/interface/trait"""
+        bases = []
+        for child in node.children:
+            if child.type == 'base_clause':
+                # extends clause
+                for subchild in child.children:
+                    if subchild.type in ('name', 'qualified_name'):
+                        bases.append(subchild.text.decode('utf8'))
+            elif child.type == 'class_interface_clause':
+                # implements clause
+                for subchild in child.children:
+                    if subchild.type in ('name', 'qualified_name'):
+                        bases.append(subchild.text.decode('utf8'))
+        return bases
+
+    def extract_imports(root):
+        """Extract all use statements (namespace imports)"""
+        imports = []
+        for node in find_nodes_by_type(root, 'namespace_use_declaration'):
+            namespace_prefix = ''
+            for child in node.children:
+                if child.type == 'namespace_name':
+                    # Prefix for grouped imports: use App\Models\{User, Post};
+                    namespace_prefix = child.text.decode('utf8')
+                elif child.type == 'namespace_use_clause':
+                    # Single import: use App\Models\User;
+                    for subchild in child.children:
+                        if subchild.type == 'qualified_name':
+                            imports.append(subchild.text.decode('utf8'))
+                            break
+                elif child.type == 'namespace_use_group':
+                    # Grouped imports: use App\Models\{User, Post};
+                    for group_child in child.children:
+                        if group_child.type == 'namespace_use_clause':
+                            for item in group_child.children:
+                                if item.type == 'name':
+                                    full_import = f"{namespace_prefix}\\{item.text.decode('utf8')}"
+                                    imports.append(full_import)
+                                    break
+        return imports
+
+    def is_inside_class(node):
+        """Check if node is inside a class/trait/interface/enum body"""
+        parent = node.parent
+        while parent:
+            if parent.type in ('class_declaration', 'trait_declaration',
+                               'interface_declaration', 'enum_declaration'):
+                return True
+            parent = parent.parent
+        return False
+
+    def walk_node(node):
+        """Walk tree to extract functions and class-like declarations"""
+
+        # Top-level function definitions (not methods inside classes)
+        if node.type == 'function_definition':
+            if not is_inside_class(node):
+                name_node = node.child_by_field_name('name')
+                if name_node:
+                    info["functions"].append({
+                        "name": name_node.text.decode('utf8'),
+                        "lineno": node.start_point[0] + 1,
+                        "end_lineno": node.end_point[0] + 1,
+                        "is_async": False,  # PHP doesn't have native async
+                        "decorators": extract_attributes(node)
+                    })
+
+        # Class, trait, interface, enum declarations
+        elif node.type in ('class_declaration', 'trait_declaration',
+                           'interface_declaration', 'enum_declaration'):
+            name_node = node.child_by_field_name('name')
+            if name_node:
+                methods = []
+                body = node.child_by_field_name('body')
+
+                # Extract methods from declaration body
+                if body:
+                    for method in find_nodes_by_type(body, 'method_declaration'):
+                        method_name = method.child_by_field_name('name')
+                        if method_name:
+                            methods.append({
+                                "name": method_name.text.decode('utf8'),
+                                "lineno": method.start_point[0] + 1,
+                                "end_lineno": method.end_point[0] + 1,
+                                "is_async": False,
+                                "decorators": extract_attributes(method)
+                            })
+
+                info["classes"].append({
+                    "name": name_node.text.decode('utf8'),
+                    "lineno": node.start_point[0] + 1,
+                    "end_lineno": node.end_point[0] + 1,
+                    "methods": methods,
+                    "docstring_lines": 0,
+                    "decorators": extract_attributes(node),
+                    "bases": extract_bases(node)
+                })
+                # Don't recurse into class body (methods already extracted)
+                return
+
+        # Recurse into children
+        for child in node.children:
+            walk_node(child)
+
+    # Extract imports first (more efficient than walking)
+    info["imports"] = extract_imports(tree.root_node)
+
+    # Walk tree for functions and classes
+    walk_node(tree.root_node)
+
+    info['content'] = content
+    return info
+
 # JavaScript AST Parsing (using esprima - LEGACY FALLBACK)
 def parse_javascript_file(file_path: str) -> Dict:
     with open(file_path, 'r') as file:
@@ -820,6 +979,14 @@ def parse_code_file(file_path: str) -> Dict[str, Any]:
                 return extract_rust_info_tree_sitter(parsed_data)
             else:
                 # No legacy Rust parser available
+                return handle_non_code_file(file_path)
+        elif file_extension == '.php':
+            # PHASE 4: Use tree-sitter for PHP (error-tolerant, PHP 5.6 - 8.3+)
+            if TREE_SITTER_AVAILABLE:
+                parsed_data = parse_php_file_tree_sitter(file_path)
+                return extract_php_info_tree_sitter(parsed_data)
+            else:
+                # No legacy PHP parser available
                 return handle_non_code_file(file_path)
         elif file_extension == '.html':
             soup = parse_html_file(file_path)
