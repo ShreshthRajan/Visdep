@@ -575,7 +575,7 @@ class ChatSession:
                     # Solution: Stream to disk, decompress on disk, peak memory ~64MB
                     # Speed: Parallel downloads maintained via concurrent temp file writes
                     # =====================================================================
-                    import asyncio
+                    # Note: asyncio is imported at top of file (line 8)
 
                     # Use persistent temp directory for entire operation
                     with tempfile.TemporaryDirectory() as tmpdir:
