@@ -70,11 +70,11 @@ class HybridRetriever:
         # Try loading pre-computed indexes for mega-repos
         bm25_loaded = False
         pagerank_loaded = False
-        
+
         if use_cached_indexes and repo_id:
             bm25_loaded = self._load_bm25_index(repo_id)
             pagerank_loaded = self._load_pagerank(repo_id)
-        
+
         # Build BM25 index if not loaded
         if not bm25_loaded:
             self._build_bm25_index()
@@ -82,6 +82,11 @@ class HybridRetriever:
         # Compute PageRank if not loaded
         if not pagerank_loaded:
             self._compute_pagerank()
+
+        # Store cache status as instance attributes for external access
+        # Used by langchain_integration.py to decide whether to save indexes after query
+        self.bm25_loaded_from_cache = bm25_loaded
+        self.pagerank_loaded_from_cache = pagerank_loaded
 
         cache_status = f"BM25={'cached' if bm25_loaded else 'built'}, PageRank={'cached' if pagerank_loaded else 'computed'}"
         logging.info(f"HybridRetriever initialized with {len(chunks)} chunks ({cache_status})")

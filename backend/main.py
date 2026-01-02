@@ -1053,11 +1053,13 @@ async def upload_repo_stream(link: RepoLink):
             # =====================================================================
             # BACKGROUND FAISS BUILDING (Fix 4b): Build FAISS index after upload
             # =====================================================================
-            # For large uploads (>5K chunks), start FAISS building in background.
-            # This ensures FAISS is ready by the time user asks first question.
-            # Smaller repos build fast enough that on-demand is fine.
+            # For uploads (>100 chunks), start FAISS building in background.
+            # This ensures FAISS + BM25/PageRank indexes are ready and persisted
+            # to Supabase Storage before the user asks their first question.
+            # Threshold lowered from 5000 to 100 to ensure ALL meaningful repos
+            # get their indexes persisted (eliminates 400 BM25 errors on query).
             # =====================================================================
-            BACKGROUND_FAISS_THRESHOLD = 5000
+            BACKGROUND_FAISS_THRESHOLD = 100
 
             if len(chunks) > BACKGROUND_FAISS_THRESHOLD:
                 logging.info(f"🔄 Starting background FAISS build for {len(chunks):,} chunks...")

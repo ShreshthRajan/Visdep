@@ -924,6 +924,21 @@ class ChatSession:
             repo_id=self.repo_id  # Enable loading cached indexes from Supabase
         )
 
+        # =================================================================
+        # FIX 1: Save indexes after on-demand build (for ALL repos)
+        # =================================================================
+        # If BM25/PageRank were built fresh (not loaded from cache), save them
+        # to Supabase Storage for persistence across Railway restarts.
+        # This ensures ALL repos (not just >5K chunks) have persistent indexes.
+        # =================================================================
+        if self.repo_id and not self.hybrid_retriever.bm25_loaded_from_cache:
+            try:
+                logging.info(f"💾 Saving newly-built indexes to Supabase Storage for repo_id={self.repo_id}")
+                self.hybrid_retriever.save_indexes(self.repo_id, self.vector_store)
+            except Exception as save_err:
+                # Non-fatal: query can proceed even if save fails
+                logging.warning(f"⚠️ Failed to save indexes to Storage (non-fatal): {save_err}")
+
         logging.info("Hybrid retriever initialized successfully")
 
     def get_system_message(self):
@@ -1296,11 +1311,18 @@ class ChatSession:
         else:
             logging.info("Using Claude with full retrieval pipeline (Steps 1-3)")
 
-        # Detect query complexity
+        # Detect query complexity and flow queries
         query_lower = query.lower()
         is_complex = any(word in query_lower for word in
                         ['complete', 'entire', 'all', 'flow', 'trace', 'execution', 'how does'])
-        
+
+        # FIX 4: Detect flow/trace queries specifically for deeper retrieval
+        is_flow_query = any(phrase in query_lower for phrase in [
+            'trace', 'flow', 'execution', 'call chain', 'step by step',
+            'walk through', 'path from', 'sequence', 'what happens when',
+            'creation flow', 'how is', 'how are', 'how does'
+        ])
+
         # HCGS: Detect architectural/full-repo questions that benefit from hierarchical summaries
         is_architectural = any(phrase in query_lower for phrase in [
             'architecture', 'how does', 'interact', 'relationship', 'flow',
@@ -1308,7 +1330,29 @@ class ChatSession:
             'how are', 'what is the purpose', 'entry point', 'wire up'
         ])
 
-        logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}, architectural: {is_architectural}")
+        # FIX 4: Mega-repo guard for flow queries
+        chunk_count = len(self.full_context) if isinstance(self.full_context, dict) else 0
+        is_mega_repo = chunk_count > 50000
+
+        # Calculate retrieval parameters based on query type and repo size
+        if is_flow_query:
+            if is_mega_repo:
+                # Mega-repo: balance depth with performance
+                flow_top_k = 40
+                flow_expand_max = 60
+                flow_expand_depth = 3
+            else:
+                # Normal repo: deeper traversal for complete call chains
+                flow_top_k = 50
+                flow_expand_max = 100
+                flow_expand_depth = 4
+            logging.info(f"🔍 Flow query detected: top_k={flow_top_k}, expand_max={flow_expand_max}, depth={flow_expand_depth}")
+        else:
+            flow_top_k = 20
+            flow_expand_max = 30
+            flow_expand_depth = 3
+
+        logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}, flow: {is_flow_query}, architectural: {is_architectural}")
 
         # SOTA UPGRADE (Nov 2025): Enhanced retrieval with query processing
         # Implements 3 research-backed techniques for +40-65% improvement
@@ -1328,23 +1372,34 @@ class ChatSession:
             sub_queries = await decompose_query(query, self.claude_client)
             logging.info(f"🧩 Decomposed into {len(sub_queries)} sub-queries")
 
-            # Retrieve for each sub-query and aggregate
-            all_chunks_from_sub_queries = []
-            for i, sq in enumerate(sub_queries, 1):
-                logging.info(f"   Sub-query {i}: '{sq}'")
-                # Expand each sub-query
-                sq_expanded = await expand_query_with_llm(sq, language, self.claude_client)
+            # FIX 5: Parallelize sub-query processing for latency improvement
+            # Each sub-query: expansion (~200ms) + retrieval (~300ms) = ~500ms
+            # Serial: 3 queries × 500ms = 1.5s
+            # Parallel: max(500ms) = ~500ms (3x faster)
+            async def process_sub_query(sq: str, idx: int):
+                """Process a single sub-query: expand + retrieve"""
+                try:
+                    logging.info(f"   Sub-query {idx}: '{sq}'")
+                    sq_expanded = await expand_query_with_llm(sq, language, self.claude_client)
+                    return self.hybrid_retriever.hybrid_search(
+                        query=sq_expanded,
+                        top_k=flow_top_k // len(sub_queries) + 5,  # Distribute across sub-queries
+                        expand=True,
+                        expand_max=flow_expand_max // len(sub_queries),
+                        expand_depth=flow_expand_depth
+                    )
+                except Exception as e:
+                    logging.warning(f"   Sub-query {idx} failed: {e}")
+                    return []  # Graceful degradation
 
-                sq_chunks = self.hybrid_retriever.hybrid_search(
-                    query=sq_expanded,
-                    top_k=15,  # Get 15 per sub-query
-                    expand=True,
-                    expand_max=20,
-                    expand_depth=3
-                )
-                all_chunks_from_sub_queries.extend(sq_chunks)
+            # Execute sub-queries in parallel
+            tasks = [process_sub_query(sq, i) for i, sq in enumerate(sub_queries, 1)]
+            results = await asyncio.gather(*tasks)
 
-            # De-duplicate and take top 50
+            # Flatten results
+            all_chunks_from_sub_queries = [chunk for result in results for chunk in result]
+
+            # De-duplicate and take top chunks (use flow_top_k for flow queries)
             seen = set()
             deduped_chunks = []
             for chunk in all_chunks_from_sub_queries:
@@ -1352,8 +1407,9 @@ class ChatSession:
                     seen.add(chunk['chunk_id'])
                     deduped_chunks.append(chunk)
 
-            top_chunks = deduped_chunks[:50]  # Increased to 50 for complex queries
-            logging.info(f"✅ Decomposition: Aggregated {len(all_chunks_from_sub_queries)} → {len(top_chunks)} unique chunks")
+            max_chunks = flow_top_k if is_flow_query else 50
+            top_chunks = deduped_chunks[:max_chunks]
+            logging.info(f"✅ Decomposition (parallel): Aggregated {len(all_chunks_from_sub_queries)} → {len(top_chunks)} unique chunks")
 
         else:
             # Strategy 3: Agentic Self-Reflection (for simple queries)
@@ -1364,7 +1420,7 @@ class ChatSession:
                 anthropic_client=self.claude_client,
                 language=language,
                 max_iterations=2,
-                top_k=20
+                top_k=flow_top_k  # FIX 4: Use flow parameters
             )
             logging.info(f"✅ Agentic retrieval: {len(top_chunks)} chunks after self-reflection")
 
@@ -1427,10 +1483,13 @@ class ChatSession:
 
         logging.info(f"📊 SOTA retrieval returned {len(top_chunks)} chunks")
 
-        # Step 2: Use enhanced retrieval results directly
-        # Query expansion + decomposition/reflection already provides optimal ranking
-        reranked_chunks = top_chunks
-        logging.info(f"✅ Using SOTA-enhanced ranking (expansion + decomposition/reflection)")
+        # Step 2: Cross-encoder reranking for precision boost
+        # Research shows +10-15% improvement from cross-encoder reranking
+        # SOTA retrieval (expansion + decomposition) improves recall
+        # Cross-encoder reranking improves precision - they're complementary
+        rerank_k = 25 if is_complex else 15
+        reranked_chunks = self.reranker.rerank(query, top_chunks, top_k=rerank_k)
+        logging.info(f"✅ Cross-encoder reranking: {len(top_chunks)} → {len(reranked_chunks)} chunks")
 
         # Step 3: Assemble context with DYNAMIC token budget
         max_tokens = self._calculate_dynamic_token_budget(is_complex)
@@ -1716,15 +1775,47 @@ INSTRUCTIONS:
 
 Your answer:"""
         else:
-            query_part += f"""USER QUESTION:
+            # Detect flow/trace queries for specialized instructions
+            is_flow_query = any(word in query.lower() for word in
+                ['trace', 'flow', 'execution', 'call chain', 'step by step',
+                 'how does', 'walk through', 'path from', 'sequence', 'what happens when'])
+
+            if is_flow_query:
+                query_part += f"""USER QUESTION:
+{query}
+
+EXECUTION FLOW TRACING INSTRUCTIONS:
+1. Trace the COMPLETE execution path from entry point to final destination
+2. Show EVERY intermediate function/method in the call chain as numbered steps
+3. For each step include: function name, file:line, and key logic (2-3 lines)
+4. **ALWAYS include actual code snippets** in triple backticks with language identifier
+5. Format as: 1. Entry → 2. Handler → 3. Business logic → 4. Data layer
+6. Reference files with line numbers: `filename.php:42-68`
+7. Show data transformations at each step when relevant
+
+Example format:
+**Step 1: Entry Point** - `WallPresenter.php:267`
+```php
+public function renderMakePost(): void {{
+    $this->assertUserLoggedIn();
+```
+
+**Step 2: Validation** - `WallPresenter.php:280`
+...
+
+Your answer:"""
+            else:
+                query_part += f"""USER QUESTION:
 {query}
 
 INSTRUCTIONS:
 1. Answer based on the provided code context above
-2. Reference specific files and line numbers when discussing code (format: file.py:42-68)
-3. If the context doesn't contain enough information, say so clearly
-4. Be concise but thorough
-5. Use a confident, knowledgeable tone (like a senior engineer explaining to a teammate)
+2. **ALWAYS include actual code snippets** in triple backticks with language identifier
+3. Reference specific files and line numbers when discussing code (format: file.py:42-68)
+4. For "how does X work" questions: Show the actual implementation code
+5. If the context doesn't contain enough information, say so clearly
+6. Be concise but thorough - show code, don't just describe it
+7. Use a confident, knowledgeable tone (like a senior engineer explaining to a teammate)
 
 Your answer:"""
 
