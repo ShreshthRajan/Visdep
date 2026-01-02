@@ -432,7 +432,28 @@ class ChatSession:
             self.full_context = context
             # Task 2.2: Pass repo_id for FAISS persistence
             self.vector_store = await self.initialize_vector_store(context, repo_id=self.repo_id)
-            self.dependency_graph = create_dependency_graph(context)
+
+            # =================================================================
+            # MEGA-REPO OPTIMIZATION: Skip dependency_graph for large repos
+            # =================================================================
+            # create_dependency_graph() has O(n²) complexity in its directory-file
+            # edge creation loop. For 152K chunks (Kubernetes), this causes:
+            # - 10K directories × 20K files = 200 million operations
+            # - Query hangs for 3+ minutes
+            #
+            # This is SAFE to skip for mega-repos because:
+            # 1. Visual graph is pre-computed and stored in Supabase (separate)
+            # 2. Hybrid retrieval uses chunk_graph, NOT dependency_graph
+            # 3. dependency_graph is only used for legacy query classification
+            # =================================================================
+            SKIP_DEPENDENCY_GRAPH_THRESHOLD = 50000  # Same as MEGA_REPO_THRESHOLD
+            chunk_count = len(context) if context else 0
+
+            if chunk_count < SKIP_DEPENDENCY_GRAPH_THRESHOLD:
+                self.dependency_graph = create_dependency_graph(context)
+            else:
+                self.dependency_graph = None
+                logging.info(f"⚡ Skipping dependency_graph for mega-repo ({chunk_count:,} chunks) - using hybrid retrieval instead")
 
             # Step 2: Initialize hybrid retriever
             await self.initialize_hybrid_retriever(context, skip_index_check=skip_index_check)
@@ -918,7 +939,16 @@ class ChatSession:
     """
 
     def get_relevant_nodes(self, query: str, query_type: str) -> List[str]:
+        """
+        Legacy function for query classification-based node retrieval.
+        NOT used for mega-repos (which use hybrid retrieval instead).
+        """
         try:
+            # Safety guard: dependency_graph may be None for mega-repos
+            if self.dependency_graph is None:
+                logging.debug("dependency_graph is None (mega-repo), returning empty list")
+                return []
+
             if query_type == 'codebase':
                 return list(self.dependency_graph.nodes())
             elif query_type == 'directory':
@@ -973,11 +1003,21 @@ class ChatSession:
             return 6000
         
     def calculate_relevance(self, node: str, query: str) -> float:
+        """
+        Legacy function for relevance calculation.
+        NOT used for mega-repos (which use hybrid retrieval instead).
+        """
         try:
             node_embedding = self.vector_store.embeddings.embed_query(node)
             query_embedding = self.vector_store.embeddings.embed_query(query)
             similarity = cosine_similarity([node_embedding], [query_embedding])[0][0]
-            centrality = nx.pagerank(self.dependency_graph).get(node, 0)  # Default to 0 if node not in pagerank
+
+            # Safety guard: dependency_graph may be None for mega-repos
+            if self.dependency_graph is not None:
+                centrality = nx.pagerank(self.dependency_graph).get(node, 0)
+            else:
+                centrality = 0
+
             return similarity * 0.7 + centrality * 0.3
         except Exception as e:
             logging.error(f"Error calculating relevance: {e}")

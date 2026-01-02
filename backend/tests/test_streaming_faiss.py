@@ -341,6 +341,32 @@ class TestSkipIndexCheck:
         assert 'skip_index_check=True' in source, \
                "build_faiss_background must pass skip_index_check=True"
 
+    def test_mega_repo_skips_dependency_graph(self):
+        """
+        Verify that mega-repos skip create_dependency_graph to avoid O(n²) hang.
+        This is critical: without this, queries on 152K chunk repos hang for 3+ minutes.
+        """
+        import os
+        langchain_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'api', 'langchain_integration.py'
+        )
+
+        with open(langchain_path, 'r') as f:
+            source = f.read()
+
+        # Verify mega-repo optimization exists
+        assert 'SKIP_DEPENDENCY_GRAPH_THRESHOLD' in source, \
+               "SKIP_DEPENDENCY_GRAPH_THRESHOLD must be defined"
+
+        # Verify the skip logic exists
+        assert 'Skipping dependency_graph for mega-repo' in source, \
+               "Must log when skipping dependency_graph"
+
+        # Verify safety guards exist
+        assert 'dependency_graph is None' in source, \
+               "Safety guards must check for None dependency_graph"
+
 
 class TestChunkGraphCaching:
     """Test the chunk_graph caching functionality."""
