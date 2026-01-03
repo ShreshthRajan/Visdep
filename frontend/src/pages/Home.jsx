@@ -364,7 +364,7 @@ const Home = () => {
               letterSpacing: '0.05em'
             }}
           >
-            py · js · ts · java · go · cpp · rust
+            py · js · ts · java · go · c · c++ · rust · php
           </p>
         </div>
       </div>

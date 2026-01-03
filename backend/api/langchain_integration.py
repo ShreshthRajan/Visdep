@@ -1743,6 +1743,9 @@ RELEVANT CODE CONTEXT:
                 query_part += f"{role}: {content}\n"
             query_part += "\n"
 
+        # Default: not a flow query (will be set to True if detected below)
+        is_flow_query = False
+
         # Add node-focused instructions if this is a per-node/multi-node query
         if node_contexts and len(node_contexts) > 0:
             if len(node_contexts) == 1:
@@ -1831,7 +1834,8 @@ Your answer:"""
 
         return {
             'system_and_context': system_and_context,
-            'query_part': query_part
+            'query_part': query_part,
+            'is_flow_query': is_flow_query  # Used to set max_tokens in _query_claude
         }
 
     async def _query_claude(self, prompt_parts: Dict[str, str]) -> str:
@@ -1839,7 +1843,8 @@ Your answer:"""
         Query Claude 4.0 Sonnet (batch mode) with prompt caching
 
         Args:
-            prompt_parts: Dict with 'system_and_context' (cacheable) and 'query_part' (not cacheable)
+            prompt_parts: Dict with 'system_and_context' (cacheable), 'query_part' (not cacheable),
+                         and 'is_flow_query' (bool for token limit)
 
         Returns:
             Claude's response
@@ -1847,9 +1852,14 @@ Your answer:"""
         try:
             # Use Claude 4.0 Sonnet with prompt caching
             # Cache system + context (1,129-6,642 tokens) for 90% cost savings
+            # Flow queries need more tokens for detailed step-by-step traces (4000 vs 2000)
+            is_flow_query = prompt_parts.get('is_flow_query', False)
+            max_tokens = 4000 if is_flow_query else 2000
+            logging.info(f"🎯 Claude max_tokens={max_tokens} (is_flow_query={is_flow_query})")
+
             response = self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=2000,
+                max_tokens=max_tokens,
                 temperature=0.3,
                 messages=[
                     {
@@ -1902,18 +1912,24 @@ Your answer:"""
         Uses same caching strategy as batch mode.
 
         Args:
-            prompt_parts: Dict with 'system_and_context' (cacheable) and 'query_part' (not cacheable)
+            prompt_parts: Dict with 'system_and_context' (cacheable), 'query_part' (not cacheable),
+                         and 'is_flow_query' (bool for token limit)
 
         Yields:
             Token chunks from Claude
         """
         try:
             # Use Claude 4.0 Sonnet with streaming + caching
+            # Flow queries need more tokens for detailed step-by-step traces (4000 vs 2000)
+            is_flow_query = prompt_parts.get('is_flow_query', False)
+            max_tokens = 4000 if is_flow_query else 2000
+            logging.info(f"🎯 Claude stream max_tokens={max_tokens} (is_flow_query={is_flow_query})")
+
             full_response = ""
 
             with self.claude_client.messages.stream(
                 model="claude-sonnet-4-20250514",
-                max_tokens=2000,
+                max_tokens=max_tokens,
                 temperature=0.3,
                 messages=[
                     {

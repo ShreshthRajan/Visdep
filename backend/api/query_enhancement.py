@@ -92,9 +92,13 @@ def detect_primary_language(chunks: List[Dict[str, Any]]) -> str:
         'py': 'python',
         'js': 'javascript',
         'ts': 'typescript',
+        'c': 'c',
         'cpp': 'cpp',
+        'h': 'c',        # C header files
+        'hpp': 'cpp',    # C++ header files
         'go': 'go',
-        'java': 'java'
+        'java': 'java',
+        'php': 'php'
     }
 
     return lang_map.get(primary, primary)
@@ -133,12 +137,25 @@ def get_language_specific_terms(query: str, language: str) -> str:
         if 'concurrent' in query_lower or 'parallel' in query_lower:
             terms.extend(['goroutine', 'channel', 'waitgroup', 'context'])
 
+    # C-specific
+    elif language == 'c':
+        if 'memory' in query_lower or 'allocat' in query_lower:
+            terms.extend(['malloc', 'free', 'calloc', 'realloc', 'memcpy', 'memset'])
+        if 'string' in query_lower or 'buffer' in query_lower:
+            terms.extend(['strcpy', 'strncpy', 'strlen', 'sprintf', 'snprintf'])
+        if 'file' in query_lower or 'io' in query_lower:
+            terms.extend(['fopen', 'fclose', 'fread', 'fwrite', 'fprintf'])
+        if 'pointer' in query_lower or 'struct' in query_lower:
+            terms.extend(['struct', 'typedef', 'pointer', 'dereference'])
+
     # C++-specific
     elif language == 'cpp':
         if 'parse' in query_lower or 'json' in query_lower:
             terms.extend(['parser', 'lexer', 'tokenizer', 'sax'])
         if 'memory' in query_lower or 'allocat' in query_lower:
-            terms.extend(['unique_ptr', 'shared_ptr', 'allocator'])
+            terms.extend(['unique_ptr', 'shared_ptr', 'allocator', 'new', 'delete'])
+        if 'class' in query_lower or 'object' in query_lower:
+            terms.extend(['class', 'constructor', 'destructor', 'virtual', 'override'])
 
     # JavaScript/TypeScript-specific
     elif language in ['javascript', 'typescript']:
