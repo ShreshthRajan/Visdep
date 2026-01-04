@@ -590,6 +590,64 @@ def process_repository_to_chunks(ast_data: Dict[str, Any]) -> List[Dict[str, Any
     return all_chunks
 
 
+async def process_repository_to_chunks_with_progress(ast_data: Dict[str, Any]):
+    """
+    Convert entire repository AST data to chunks WITH progress reporting.
+
+    This is an async generator that yields progress events periodically,
+    allowing SSE events to be sent during long processing.
+
+    Args:
+        ast_data: dict of {file_path: ast_info}
+
+    Yields:
+        dict: Progress event with keys: processed_files, total_files, chunks_so_far
+        Final yield: dict with key 'final_chunks' containing the complete chunk list
+
+    Usage:
+        async for event in process_repository_to_chunks_with_progress(ast_data):
+            if 'final_chunks' in event:
+                chunks = event['final_chunks']
+            else:
+                # Send SSE progress event
+                yield sse_event('chunk_progress', event)
+    """
+    import asyncio
+
+    all_chunks = []
+    total_files = len(ast_data)
+    file_paths = list(ast_data.keys())
+
+    # Progress reporting interval: every 100 files or 5% of total, whichever is smaller
+    # Ensures at least 20 progress updates for large repos
+    report_interval = min(100, max(1, total_files // 20))
+
+    for idx, file_path in enumerate(file_paths):
+        ast_info = ast_data[file_path]
+        file_chunks = chunk_file(file_path, ast_info)
+        all_chunks.extend(file_chunks)
+
+        # Yield progress periodically
+        if (idx + 1) % report_interval == 0:
+            yield {
+                'processed_files': idx + 1,
+                'total_files': total_files,
+                'chunks_so_far': len(all_chunks),
+                'percent': round((idx + 1) / total_files * 100)
+            }
+            # Yield to event loop - allows SSE events to be sent
+            await asyncio.sleep(0)
+
+    # Final yield with complete chunks
+    yield {
+        'final_chunks': all_chunks,
+        'processed_files': total_files,
+        'total_files': total_files,
+        'chunks_so_far': len(all_chunks),
+        'percent': 100
+    }
+
+
 def validate_chunk(chunk: Dict[str, Any]) -> bool:
     """Validate chunk has required fields and sensible values"""
     required_fields = ['chunk_id', 'file_path', 'type', 'name', 'code',

@@ -522,21 +522,26 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
     // Drag-and-drop to chat using ghost element (bypasses canvas constraints)
     // HYBRID MODE: Enable local physics on drag for interactive feel
+    // MEGA-REPO OPTIMIZATION: Skip physics updates for >10K nodes (O(n) freezes UI)
+    const MEGA_REPO_DRAG_THRESHOLD = 10000;
+    const isMegaRepoDrag = data.nodes.length > MEGA_REPO_DRAG_THRESHOLD;
+
     newNetwork.on('dragStart', (params) => {
       if (params.nodes.length > 0) {
         const draggedNodeId = params.nodes[0];
         const draggedNode = nodes.get(draggedNodeId);
-        
+
         // HYBRID MODE: Enable local physics for dragged node + neighbors
-        if (effectiveMode === PHYSICS_MODE.HYBRID) {
+        // MEGA-REPO: Skip physics (O(n) node updates freeze 60K+ node graphs)
+        if (effectiveMode === PHYSICS_MODE.HYBRID && !isMegaRepoDrag) {
           const connectedNodes = newNetwork.getConnectedNodes(draggedNodeId);
-          
+
           // Get 2-hop neighbors for smooth local physics
           const affectedNodes = new Set([draggedNodeId, ...connectedNodes]);
           connectedNodes.forEach(n => {
             newNetwork.getConnectedNodes(n).forEach(nn => affectedNodes.add(nn));
           });
-          
+
           // Fix all OTHER nodes (they don't move)
           const allNodeIds = nodes.getIds();
           const updates = allNodeIds.map(nodeId => ({
@@ -544,7 +549,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
             fixed: affectedNodes.has(nodeId) ? false : { x: true, y: true }
           }));
           nodes.update(updates);
-          
+
           // Enable physics for local simulation
           newNetwork.setOptions({ physics: { enabled: true } });
           console.log(`🔧 HYBRID: Enabled local physics for ${affectedNodes.size} nodes`);
@@ -579,14 +584,15 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         }
       }
     });
-    
+
     // HYBRID MODE: Disable physics after drag ends, lock new positions
+    // MEGA-REPO: Skip (physics wasn't enabled in dragStart)
     newNetwork.on('dragEnd', (params) => {
-      if (effectiveMode === PHYSICS_MODE.HYBRID && params.nodes.length > 0) {
+      if (effectiveMode === PHYSICS_MODE.HYBRID && !isMegaRepoDrag && params.nodes.length > 0) {
         // Let physics settle briefly, then disable
         setTimeout(() => {
           newNetwork.setOptions({ physics: { enabled: false } });
-          
+
           // Unfix all nodes for next drag
           const allNodeIds = nodes.getIds();
           const updates = allNodeIds.map(nodeId => ({
@@ -594,13 +600,17 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
             fixed: false
           }));
           nodes.update(updates);
-          
+
           console.log('🔧 HYBRID: Physics disabled, positions locked');
         }, 500);  // 500ms for physics to settle
       }
     });
 
     // Enterprise-grade click handler with connected highlighting
+    // MEGA-REPO OPTIMIZATION: Skip opacity dimming for >10K nodes (causes freeze)
+    const MEGA_REPO_CLICK_THRESHOLD = 10000;
+    const isMegaRepo = data.nodes.length > MEGA_REPO_CLICK_THRESHOLD;
+
     newNetwork.on('click', (params) => {
       if (params.nodes.length > 0) {
         const clickedNodeId = params.nodes[0];
@@ -615,16 +625,18 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         newNetwork.selectNodes([clickedNodeId], true);
 
         // Enterprise feature: Dim non-connected nodes for focus
-        // Performance optimization: batch update with single pass
-        const allNodeIds = nodes.getIds();
-        const highlightedNodeIds = new Set([clickedNodeId, ...connectedNodeIds]);
+        // MEGA-REPO: Skip opacity dimming (O(n) update freezes for 60K nodes)
+        if (!isMegaRepo) {
+          const allNodeIds = nodes.getIds();
+          const highlightedNodeIds = new Set([clickedNodeId, ...connectedNodeIds]);
 
-        const nodesToUpdate = allNodeIds.map(nodeId => ({
-          id: nodeId,
-          opacity: highlightedNodeIds.has(nodeId) ? 1.0 : 0.1,  // 90% dimming - spatial focus
-        }));
+          const nodesToUpdate = allNodeIds.map(nodeId => ({
+            id: nodeId,
+            opacity: highlightedNodeIds.has(nodeId) ? 1.0 : 0.1,  // 90% dimming - spatial focus
+          }));
 
-        nodes.update(nodesToUpdate);  // Batch update for performance
+          nodes.update(nodesToUpdate);  // Batch update for performance
+        }
 
         // Log for debugging
         console.log('🖱️ Node clicked:', clickedNode.label, clickedNode.type);
@@ -649,16 +661,18 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         });
       } else {
         // Clicked on empty canvas - restore all nodes and deselect
-        const allNodeIds = nodes.getIds();
-        allNodeIds.forEach(nodeId => {
-          const nodeData = nodes.get(nodeId);
-          // Restore original opacity based on fading state
-          const originalOpacity = (nodeFading[nodeData.type] && !highlightedNodes.includes(nodeId)) ? 0.35 : 1.0;
-          nodes.update({
-            id: nodeId,
-            opacity: originalOpacity,
+        // MEGA-REPO: Skip opacity restoration (wasn't dimmed in the first place)
+        if (!isMegaRepo) {
+          // BATCH UPDATE: Single call instead of O(n) individual updates
+          const allNodeIds = nodes.getIds();
+          const nodesToUpdate = allNodeIds.map(nodeId => {
+            const nodeData = nodes.get(nodeId);
+            const originalOpacity = (nodeFading[nodeData.type] && !highlightedNodes.includes(nodeId)) ? 0.35 : 1.0;
+            return { id: nodeId, opacity: originalOpacity };
           });
-        });
+          nodes.update(nodesToUpdate);
+        }
+
         newNetwork.unselectAll();
         setSelectedNodeButtons(null);
         setActiveQueryInput(null);

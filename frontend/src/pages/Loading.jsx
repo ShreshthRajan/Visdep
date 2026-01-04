@@ -256,6 +256,18 @@ const Loading = () => {
                   setLogs(prev => [...prev, `[CHUNK]: ${event.message}`]);
                   break;
 
+                case 'chunk_progress':
+                  // Progress update during chunking - keeps UI alive for mega-repos
+                  // Only update log with major milestones to avoid spam
+                  if (event.processed_files && event.total_files) {
+                    const pct = Math.round((event.processed_files / event.total_files) * 100);
+                    // Update log every 25% milestone
+                    if (pct === 25 || pct === 50 || pct === 75) {
+                      setLogs(prev => [...prev, `-> Chunking progress: ${pct}% (${event.chunks_so_far?.toLocaleString() || '?'} chunks)`]);
+                    }
+                  }
+                  break;
+
                 case 'chunks_done':
                   setLogs(prev => [...prev, `-> Generated ${event.chunk_count.toLocaleString()} chunks`]);
                   if (event.by_type) {
@@ -611,6 +623,81 @@ const Loading = () => {
                         setEta(null);
                       } else if (hasPositions) {
                         setLogs(prev => [...prev, `-> Using cached positions`]);
+
+                        // =====================================================================
+                        // DENSITY CHECK FOR CACHED POSITIONS: Fix for pre-normalized repos
+                        // =====================================================================
+                        // Repos indexed before position normalization may have high density.
+                        // Check and normalize if needed (same logic as fresh layout).
+                        // =====================================================================
+                        const nodesWithPositions = graphData.nodes.filter(n => n.x !== undefined && n.y !== undefined);
+                        if (nodesWithPositions.length > 1000) { // Only check for large repos
+                          const TARGET_DENSITY = 20; // nodes per million unit²
+
+                          const xs = nodesWithPositions.map(n => n.x);
+                          const ys = nodesWithPositions.map(n => n.y);
+
+                          const minX = Math.min(...xs);
+                          const maxX = Math.max(...xs);
+                          const minY = Math.min(...ys);
+                          const maxY = Math.max(...ys);
+
+                          const currentSpanX = maxX - minX || 1;
+                          const currentSpanY = maxY - minY || 1;
+                          const currentArea = currentSpanX * currentSpanY;
+                          const currentDensity = (nodesWithPositions.length / currentArea) * 1e6;
+
+                          // Normalize if density exceeds 1.5x target (same threshold as fresh layout)
+                          if (currentDensity > TARGET_DENSITY * 1.5) {
+                            console.log(`⚠️ CACHED POSITIONS: High density detected (${currentDensity.toFixed(1)} nodes/M-unit²)`);
+                            setLogs(prev => [...prev, `-> Optimizing cached layout density...`]);
+
+                            const targetArea = (nodesWithPositions.length / TARGET_DENSITY) * 1e6;
+                            const targetSpan = Math.sqrt(targetArea);
+                            const scaleFactor = targetSpan / Math.max(currentSpanX, currentSpanY);
+
+                            const centerX = (minX + maxX) / 2;
+                            const centerY = (minY + maxY) / 2;
+
+                            // Apply normalization to graphData nodes
+                            graphData = {
+                              ...graphData,
+                              nodes: graphData.nodes.map(node => {
+                                if (node.x !== undefined && node.y !== undefined) {
+                                  return {
+                                    ...node,
+                                    x: (node.x - centerX) * scaleFactor,
+                                    y: (node.y - centerY) * scaleFactor
+                                  };
+                                }
+                                return node;
+                              })
+                            };
+
+                            const newDensity = (nodesWithPositions.length / (targetSpan * targetSpan)) * 1e6;
+                            console.log(`📐 CACHED NORMALIZATION: ${currentDensity.toFixed(1)} → ${newDensity.toFixed(1)} nodes/M-unit² (${scaleFactor.toFixed(2)}x scale)`);
+                            setLogs(prev => [...prev, `-> Density optimized for smooth rendering`]);
+
+                            // Save normalized positions back to backend for future loads
+                            const normalizedPositions = {};
+                            graphData.nodes.forEach(node => {
+                              if (node.x !== undefined && node.y !== undefined) {
+                                normalizedPositions[node.id] = { x: node.x, y: node.y };
+                              }
+                            });
+
+                            API.post('/api/save_graph_positions', {
+                              repo_id: repoId,
+                              positions: normalizedPositions
+                            }).then(() => {
+                              console.log(`✅ Saved normalized positions for future loads`);
+                            }).catch(err => {
+                              console.warn(`⚠️ Failed to save normalized positions: ${err.message}`);
+                            });
+                          } else {
+                            console.log(`✅ Cached density OK: ${currentDensity.toFixed(1)} nodes/M-unit²`);
+                          }
+                        }
                       }
 
                       // Compress and store graph data

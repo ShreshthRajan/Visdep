@@ -16,7 +16,7 @@ from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_gi
 from backend.api.langchain_integration import get_jamba_response, IndexingInProgressError
 from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks, cache_chunks_in_memory
-from backend.api.chunk_processor import process_repository_to_chunks, get_chunk_stats
+from backend.api.chunk_processor import process_repository_to_chunks, process_repository_to_chunks_with_progress, get_chunk_stats
 from backend.api.chatbot import router as chatbot_router
 from backend.api.graph_generator import (
     create_dependency_graph, 
@@ -848,18 +848,45 @@ async def upload_repo_stream(link: RepoLink):
             repo_id = store_repository_metadata(repo_metadata['full_name'], repo_metadata)
             latest_repo_id = repo_id
 
-            # Step 5: Process chunks
+            # Step 5: Process chunks WITH PROGRESS EVENTS
+            # Uses async generator to yield progress events during long chunking operation
+            # This prevents "dead" loading screen for mega-repos (3+ min chunking)
+            total_files = len(parsed_data)
             yield sse_event("chunks", {
-                "message": "Processing code chunks...",
-                "progress": 55
+                "message": f"Processing {total_files:,} files into chunks...",
+                "progress": 55,
+                "total_files": total_files
             })
             await asyncio.sleep(0)
 
-            chunks = process_repository_to_chunks(parsed_data)
+            chunks = None
+            last_progress_pct = 0
+
+            async for chunk_event in process_repository_to_chunks_with_progress(parsed_data):
+                if 'final_chunks' in chunk_event:
+                    # Final event - extract chunks
+                    chunks = chunk_event['final_chunks']
+                else:
+                    # Progress event - yield SSE update
+                    # Only yield if progress changed by at least 5% to avoid spam
+                    current_pct = chunk_event['percent']
+                    if current_pct >= last_progress_pct + 5:
+                        # Map chunking progress (0-100%) to overall progress (55-65%)
+                        overall_progress = 55 + (current_pct / 100) * 10
+                        yield sse_event("chunk_progress", {
+                            "message": f"Chunking: {chunk_event['processed_files']:,}/{chunk_event['total_files']:,} files ({chunk_event['chunks_so_far']:,} chunks)",
+                            "progress": round(overall_progress),
+                            "processed_files": chunk_event['processed_files'],
+                            "total_files": chunk_event['total_files'],
+                            "chunks_so_far": chunk_event['chunks_so_far']
+                        })
+                        await asyncio.sleep(0)
+                        last_progress_pct = current_pct
+
             chunk_stats = get_chunk_stats(chunks)
 
             yield sse_event("chunks_done", {
-                "message": f"Generated {chunk_stats['total']} chunks",
+                "message": f"Generated {chunk_stats['total']:,} chunks",
                 "progress": 65,
                 "chunk_count": chunk_stats['total'],
                 "by_type": chunk_stats.get('by_type', {})
