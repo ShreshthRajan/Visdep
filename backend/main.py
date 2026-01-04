@@ -578,76 +578,20 @@ async def upload_repo(link: RepoLink):
         logging.info(f"💾 Graph saved to dependency_graph_{repo_id}.json")
 
         # =======================================================================
-        # MEGA-REPO AUTO-POSITIONS: Pre-compute positions for large repos
+        # LAYOUT: Frontend ForceAtlas2 (WebGL-accelerated)
         # =======================================================================
-        # For repos >10K nodes, compute positions server-side during upload.
-        # This ensures full beautiful graph on first load (no LOD fallback).
+        # Positions are computed on the frontend Loading page using ForceAtlas2.
+        # This is 3-10x faster than backend spring_layout and produces beautiful
+        # radial clustering layouts (same quality as psf/requests).
         #
-        # Strategy with latency optimization:
-        # - 10K-20K nodes: Full spring layout with adaptive iterations
-        # - >20K nodes: File structure only (directories + files)
-        #
-        # Iteration scaling (O(n²) per iteration):
-        # - <5K nodes: 100 iterations (~30s)
-        # - 5K-10K nodes: 50 iterations (~1 min)
-        # - >10K nodes: 30 iterations (~2 min)
+        # Benefits:
+        # - WebGL acceleration (GPU parallelized)
+        # - ForceAtlas2 algorithm (superior to spring_layout)
+        # - User sees graph forming in real-time
+        # - Positions saved for instant future loads
         # =======================================================================
-        POSITION_THRESHOLD = 10000
-        MEGA_THRESHOLD = 20000
         node_count = len(graph.nodes())
-
-        if node_count > POSITION_THRESHOLD:
-            try:
-                import networkx as nx
-                from backend.api.graph_generator import store_graph_positions
-
-                if node_count > MEGA_THRESHOLD:
-                    # Very large: compute for file structure only
-                    logging.info(f"📍 MEGA-REPO: {node_count:,} nodes - computing positions for file structure only...")
-
-                    structure_nodes = [
-                        n for n, data in graph.nodes(data=True)
-                        if data.get('type') in ('directory', 'file')
-                    ]
-                    G_structure = graph.subgraph(structure_nodes).copy()
-                    structure_count = len(G_structure.nodes())
-                    logging.info(f"   Reduced: {node_count:,} → {structure_count:,} nodes")
-
-                    # Adaptive iterations based on structure size
-                    iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
-                    logging.info(f"   Computing spring layout ({iterations} iterations)...")
-
-                    positions = nx.spring_layout(
-                        G_structure,
-                        k=2.0 / (structure_count ** 0.5),
-                        iterations=iterations,
-                        scale=15000,
-                        seed=42
-                    )
-                else:
-                    # Medium-large: full spring layout with adaptive iterations
-                    iterations = 50 if node_count > 15000 else 75
-                    logging.info(f"📍 Computing positions for {node_count:,} nodes ({iterations} iterations)...")
-                    positions = nx.spring_layout(
-                        graph,
-                        k=2.0 / (node_count ** 0.5),
-                        iterations=iterations,
-                        scale=10000,
-                        seed=42
-                    )
-
-                # Convert to storage format
-                positions_dict = {
-                    str(node_id): {'x': float(pos[0]), 'y': float(pos[1])}
-                    for node_id, pos in positions.items()
-                }
-
-                store_graph_positions(repo_id, positions_dict)
-                logging.info(f"✅ Saved {len(positions_dict):,} positions")
-
-            except Exception as pos_error:
-                # Don't fail upload if position computation fails
-                logging.warning(f"⚠️ Position computation failed (graph will use LOD fallback): {pos_error}")
+        logging.info(f"⚡ Skipping backend layout ({node_count:,} nodes) - frontend ForceAtlas2 is faster and more beautiful")
 
         # Task 2.1: Invalidate cached queries for this repo (fresh upload = fresh answers)
         from backend.api.data_storage import invalidate_cache_for_repo
@@ -952,75 +896,15 @@ async def upload_repo_stream(link: RepoLink):
 
             save_graph_as_json(graph, repo_id=repo_id)
 
-            # Step 8: Compute positions for large repos
-            POSITION_THRESHOLD = 10000
-            MEGA_THRESHOLD = 20000
-
-            if node_count > POSITION_THRESHOLD:
-                yield sse_event("positions", {
-                    "message": f"Computing layout for {node_count} nodes (this may take 1-2 minutes)...",
-                    "progress": 85,
-                    "node_count": node_count
-                })
-                await asyncio.sleep(0)
-
-                try:
-                    import networkx as nx
-                    from backend.api.graph_generator import store_graph_positions
-
-                    if node_count > MEGA_THRESHOLD:
-                        structure_nodes = [
-                            n for n, data in graph.nodes(data=True)
-                            if data.get('type') in ('directory', 'file')
-                        ]
-                        G_structure = graph.subgraph(structure_nodes).copy()
-                        structure_count = len(G_structure.nodes())
-
-                        iterations = 30 if structure_count > 10000 else 50 if structure_count > 5000 else 100
-
-                        yield sse_event("positions_progress", {
-                            "message": f"Computing positions for {structure_count} file nodes...",
-                            "progress": 88,
-                            "structure_count": structure_count
-                        })
-                        await asyncio.sleep(0)
-
-                        positions = nx.spring_layout(
-                            G_structure,
-                            k=2.0 / (structure_count ** 0.5),
-                            iterations=iterations,
-                            scale=15000,
-                            seed=42
-                        )
-                    else:
-                        iterations = 50 if node_count > 15000 else 75
-                        positions = nx.spring_layout(
-                            graph,
-                            k=2.0 / (node_count ** 0.5),
-                            iterations=iterations,
-                            scale=10000,
-                            seed=42
-                        )
-
-                    positions_dict = {
-                        str(node_id): {'x': float(pos[0]), 'y': float(pos[1])}
-                        for node_id, pos in positions.items()
-                    }
-                    store_graph_positions(repo_id, positions_dict)
-
-                    yield sse_event("positions_done", {
-                        "message": f"Saved {len(positions_dict)} positions",
-                        "progress": 92,
-                        "positions_count": len(positions_dict)
-                    })
-                    await asyncio.sleep(0)
-
-                except Exception as pos_error:
-                    yield sse_event("positions_skipped", {
-                        "message": "Position computation skipped (will compute on first load)",
-                        "progress": 92
-                    })
-                    await asyncio.sleep(0)
+            # Step 8: Layout computed on frontend (ForceAtlas2 WebGL-accelerated)
+            # Positions will be computed on the Loading page using ForceAtlas2.
+            # This is 3-10x faster than backend spring_layout and produces beautiful layouts.
+            yield sse_event("layout_info", {
+                "message": f"Graph ready ({node_count:,} nodes) - layout computed on load",
+                "progress": 90,
+                "node_count": node_count
+            })
+            await asyncio.sleep(0)
 
             # Step 9: Link to user
             if link.user_id:

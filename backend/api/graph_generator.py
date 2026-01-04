@@ -180,14 +180,10 @@ def create_chunk_level_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
                 if chunk_id in G:
                     G.add_edge(package, chunk_id, relation="imports")
 
-    # Step 6: Skip spatial layout for performance
-    # Frontend uses Force-Atlas2 (WebGL) which ignores backend positions anyway
-    # spring_layout with 50 iterations on 13K+ nodes takes 3+ minutes - completely unnecessary
-    # Only compute for tiny repos where it's instant
-    if len(G.nodes()) < 500:
-        G = add_spatial_information(G)
-    else:
-        logging.info(f"⚡ Skipping spring_layout for {len(G.nodes()):,} nodes (frontend uses Force-Atlas2)")
+    # Step 6: Skip ALL backend layout computation
+    # Frontend uses ForceAtlas2 (WebGL-accelerated) for ALL repos.
+    # This produces beautiful radial clustering layouts and is faster than backend spring_layout.
+    logging.info(f"⚡ Layout: {len(G.nodes()):,} nodes will use frontend ForceAtlas2 (WebGL-accelerated)")
 
     logging.info(f"✅ Chunk-level graph created: {len(G.nodes())} nodes, {len(G.edges())} edges")
 
@@ -277,18 +273,11 @@ def create_dependency_graph(ast_data: Dict[str, Any]) -> nx.DiGraph:
     # Perform edge clustering
     G = cluster_edges(G)
 
-    # Add spatial information (skip for mega-repos - frontend uses Force-Atlas2 anyway)
-    SPATIAL_LAYOUT_THRESHOLD = 10000  # 10K nodes - spring layout is O(N²)
+    # Skip ALL backend layout computation
+    # Frontend uses ForceAtlas2 (WebGL-accelerated) for ALL repos.
+    # This produces beautiful radial clustering layouts and is faster than backend spring_layout.
     node_count = len(G.nodes())
-
-    if node_count < SPATIAL_LAYOUT_THRESHOLD:
-        G = add_spatial_information(G)
-    else:
-        # For mega-repos: set default positions (frontend ignores these, uses Force-Atlas2)
-        logging.info(f"⚡ Skipping spring layout for {node_count:,} nodes (O(N²) too expensive, frontend uses Force-Atlas2)")
-        for node in G.nodes():
-            G.nodes[node]['x'] = 0
-            G.nodes[node]['y'] = 0
+    logging.info(f"⚡ Layout: {node_count:,} nodes will use frontend ForceAtlas2 (WebGL-accelerated)")
 
     return G
 

@@ -310,23 +310,9 @@ const Loading = () => {
                   }
                   break;
 
-                case 'positions':
+                case 'layout_info':
+                  // Backend skips layout - will be computed on frontend with ForceAtlas2
                   setLogs(prev => [...prev, `[LAYOUT]: ${event.message}`]);
-                  setEta(120);  // Show 2 min ETA for position computation
-                  break;
-
-                case 'positions_progress':
-                  setLogs(prev => [...prev, `-> ${event.message}`]);
-                  break;
-
-                case 'positions_done':
-                  setLogs(prev => [...prev, `-> Saved ${event.positions_count.toLocaleString()} positions`]);
-                  setEta(null);
-                  break;
-
-                case 'positions_skipped':
-                  setLogs(prev => [...prev, `-> ${event.message}`]);
-                  setEta(null);
                   break;
 
                 case 'link':
@@ -355,32 +341,199 @@ const Loading = () => {
                     }
                   }
 
-                  // PRE-FETCH GRAPH: Load graph data before navigating (eliminates 20s gap)
-                  // This ensures GraphChat shows immediately with graph ready
-                  // Uses LZ-string compression to fit large graphs (9MB → ~1MB) within sessionStorage quota
+                  // PRE-FETCH GRAPH + COMPUTE FORCEATLAS2 LAYOUT
+                  // This ensures GraphChat shows immediately with beautiful positioned graph
                   if (repoId) {
                     setLogs(prev => [...prev, `[GRAPH]: Pre-loading graph data...`]);
                     try {
                       const graphResponse = await API.get(`/api/dependency_graph?repo_id=${repoId}`);
-                      const nodeCount = graphResponse.data.nodes?.length || 0;
+                      let graphData = graphResponse.data;
+                      const nodeCount = graphData.nodes?.length || 0;
 
-                      // Compress graph data to fit within sessionStorage 5MB limit
-                      // LZ-string achieves ~88% compression on JSON (9MB → ~1MB)
+                      // Check if nodes have pre-computed positions
+                      const hasPositions = graphData.nodes?.some(n => n.x !== undefined && n.y !== undefined);
+
+                      // =================================================================
+                      // FORCEATLAS2 LAYOUT: Compute beautiful positions on Loading page
+                      // =================================================================
+                      // ForceAtlas2 is WebGL-accelerated and produces beautiful radial
+                      // clustering layouts. This runs here so user waits on Loading page
+                      // (not on graph-chat page). Positions are saved for instant future loads.
+                      // =================================================================
+                      if (!hasPositions && nodeCount > 0) {
+                        // Estimate layout time for ETA display
+                        const getLayoutETA = (count) => {
+                          if (count < 500) return 5;
+                          if (count < 1000) return 10;
+                          if (count < 3000) return 20;
+                          if (count < 8000) return 45;
+                          if (count < 15000) return 90;
+                          return 150;
+                        };
+                        const estimatedSeconds = getLayoutETA(nodeCount);
+                        setEta(estimatedSeconds);
+                        setLogs(prev => [...prev, `[LAYOUT]: Computing ForceAtlas2 layout (~${estimatedSeconds}s)...`]);
+
+                        // Apply LOD filtering for mega-repos (>20K nodes)
+                        // Show only file structure to keep layout fast
+                        const MEGA_THRESHOLD = 20000;
+                        let layoutNodes = graphData.nodes;
+                        let layoutEdges = graphData.edges;
+                        let isFiltered = false;
+
+                        if (nodeCount > MEGA_THRESHOLD) {
+                          const structureTypes = new Set(['directory', 'file']);
+                          layoutNodes = graphData.nodes.filter(n => structureTypes.has(n.type));
+                          const layoutNodeIds = new Set(layoutNodes.map(n => n.id));
+                          layoutEdges = graphData.edges.filter(e =>
+                            layoutNodeIds.has(e.source) && layoutNodeIds.has(e.target)
+                          );
+                          isFiltered = true;
+                          setLogs(prev => [...prev, `-> Mega-repo: layouting ${layoutNodes.length.toLocaleString()} file nodes`]);
+                        }
+
+                        // Get iterations based on node count (adaptive for performance)
+                        const getIterations = (count) => {
+                          if (count < 200) return 300;
+                          if (count < 500) return 500;
+                          if (count < 1000) return 800;
+                          if (count < 3000) return 1000;
+                          if (count < 8000) return 1200;
+                          return 1500;
+                        };
+                        const iterations = getIterations(layoutNodes.length);
+
+                        // Create hidden container for layout computation
+                        const layoutContainer = document.createElement('div');
+                        layoutContainer.style.cssText = 'position:absolute;left:-9999px;width:1920px;height:1080px;';
+                        document.body.appendChild(layoutContainer);
+
+                        // Prepare vis-network data
+                        const visNodes = new DataSet(layoutNodes.map(node => ({
+                          id: node.id,
+                          label: node.label || node.name || node.id,
+                        })));
+
+                        const visEdges = new DataSet(layoutEdges.map((edge, idx) => ({
+                          id: `e${idx}`,
+                          from: edge.source,
+                          to: edge.target,
+                        })));
+
+                        // ForceAtlas2 options - same beautiful settings as DependencyGraph
+                        const layoutOptions = {
+                          layout: { randomSeed: 42 },
+                          physics: {
+                            enabled: true,
+                            solver: 'forceAtlas2Based',
+                            forceAtlas2Based: {
+                              gravitationalConstant: -150,
+                              centralGravity: 0.005,
+                              springLength: 150,
+                              springConstant: 0.04,
+                              damping: 0.6,
+                              avoidOverlap: 1.5,
+                            },
+                            stabilization: {
+                              enabled: true,
+                              iterations: iterations,
+                              updateInterval: 50,
+                              fit: true,
+                            },
+                          },
+                          nodes: { shape: 'dot', size: 10 },
+                          edges: { smooth: false },
+                        };
+
+                        // Create network and compute layout
+                        const layoutNetwork = new Network(
+                          layoutContainer,
+                          { nodes: visNodes, edges: visEdges },
+                          layoutOptions
+                        );
+
+                        // Wait for stabilization with progress updates
+                        await new Promise((resolve) => {
+                          let lastProgress = 0;
+
+                          layoutNetwork.on('stabilizationProgress', (params) => {
+                            const pct = Math.round((params.iterations / params.total) * 100);
+                            if (pct >= lastProgress + 20) {
+                              setLogs(prev => [...prev, `-> Stabilizing: ${pct}%`]);
+                              lastProgress = pct;
+                            }
+                          });
+
+                          layoutNetwork.once('stabilizationIterationsDone', () => {
+                            setLogs(prev => [...prev, `-> Layout complete!`]);
+                            resolve();
+                          });
+
+                          // Fallback timeout (shouldn't hit this normally)
+                          setTimeout(() => {
+                            console.warn('Layout timeout - proceeding anyway');
+                            resolve();
+                          }, estimatedSeconds * 1500); // 1.5x estimated time as safety
+                        });
+
+                        // Extract positions from network
+                        const positions = layoutNetwork.getPositions();
+
+                        // Apply positions to graph data
+                        const positionsMap = {};
+                        for (const [nodeId, pos] of Object.entries(positions)) {
+                          positionsMap[nodeId] = { x: pos.x, y: pos.y };
+                        }
+
+                        // Update nodes with positions
+                        graphData = {
+                          ...graphData,
+                          nodes: graphData.nodes.map(node => {
+                            if (positionsMap[node.id]) {
+                              return { ...node, x: positionsMap[node.id].x, y: positionsMap[node.id].y };
+                            }
+                            return node;
+                          })
+                        };
+
+                        // Cleanup
+                        layoutNetwork.destroy();
+                        document.body.removeChild(layoutContainer);
+
+                        // Save positions to backend for instant future loads
+                        setLogs(prev => [...prev, `-> Saving ${Object.keys(positionsMap).length.toLocaleString()} positions...`]);
+                        try {
+                          await API.post('/api/save_graph_positions', {
+                            repo_id: repoId,
+                            positions: positionsMap
+                          });
+                          setLogs(prev => [...prev, `-> Positions saved!`]);
+                        } catch (saveErr) {
+                          console.warn('⚠️ Failed to save positions:', saveErr);
+                          // Non-fatal - graph still works, just won't be cached
+                        }
+
+                        setEta(null);
+                      } else if (hasPositions) {
+                        setLogs(prev => [...prev, `-> Using cached positions`]);
+                      }
+
+                      // Compress and store graph data
                       const payload = JSON.stringify({
-                        data: graphResponse.data,
+                        data: graphData,
                         repo_id: repoId,
                         timestamp: Date.now()
                       });
                       const compressed = LZString.compressToUTF16(payload);
-
-                      // Store compressed data
                       sessionStorage.setItem('visdep_prefetched_graph', compressed);
 
                       const compressionRatio = ((1 - compressed.length * 2 / payload.length) * 100).toFixed(1);
                       console.log(`📦 Graph compressed: ${(payload.length / 1024).toFixed(1)}KB → ${(compressed.length * 2 / 1024).toFixed(1)}KB (${compressionRatio}% reduction)`);
                       setLogs(prev => [...prev, `-> Graph ready: ${nodeCount.toLocaleString()} nodes`]);
+
                     } catch (err) {
                       console.warn('⚠️ Graph pre-fetch failed, will load on page:', err);
+                      setEta(null);
                       // Non-fatal: GraphChat will fetch if needed
                     }
                   }

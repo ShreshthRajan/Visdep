@@ -76,45 +76,53 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     }
 
     // =========================================================================
-    // MEGA-REPO OPTIMIZATION: Tiered physics modes for different repo sizes
+    // LAYOUT: ForceAtlas2-based positioning (WebGL-accelerated)
     // =========================================================================
-    // - Small (<1K nodes): Full ForceAtlas2 (beautiful, ~5s)
-    // - Medium (1K-5K nodes): Barnes-Hut optimization (O(n log n), ~10s)
-    // - Large (5K-10K nodes): Barnes-Hut with reduced iterations
-    // - Mega (>10K nodes): Pre-computed positions + local physics on drag
+    // Positions are computed on the Loading page using ForceAtlas2 and saved.
+    // This ensures beautiful radial clustering layouts for ALL repos.
+    //
+    // Modes:
+    // - HYBRID: Pre-computed positions exist → instant render (most common)
+    // - FULL: ForceAtlas2 fallback for small repos if somehow no positions
+    // - BARNES_HUT: Fast fallback for medium repos if somehow no positions
     // =========================================================================
-    
+
     const PHYSICS_MODE = {
-      FULL: 'full',           // <1K nodes: Full ForceAtlas2
-      BARNES_HUT: 'barnesHut', // 1K-10K nodes: Barnes-Hut O(n log n)
-      HYBRID: 'hybrid'        // >10K nodes: Pre-computed + local physics
+      FULL: 'full',           // ForceAtlas2 (beautiful, best quality)
+      BARNES_HUT: 'barnesHut', // Barnes-Hut O(n log n) (fast fallback)
+      HYBRID: 'hybrid'        // Pre-computed positions (instant)
     };
-    
-    const getPhysicsMode = (nodeCount) => {
-      if (nodeCount < 1000) return PHYSICS_MODE.FULL;
-      if (nodeCount < 10000) return PHYSICS_MODE.BARNES_HUT;
-      return PHYSICS_MODE.HYBRID;
+
+    // Check if nodes have pre-computed positions (from Loading page ForceAtlas2)
+    const hasPrecomputedPositions = data.nodes.some(n => n.x !== undefined && n.y !== undefined);
+
+    // Determine physics mode based on positions and node count
+    const getPhysicsMode = (nodeCount, hasPositions) => {
+      // If positions exist, use HYBRID mode (instant render)
+      if (hasPositions) return PHYSICS_MODE.HYBRID;
+      // Fallback: compute layout here (shouldn't happen normally)
+      // ForceAtlas2 for small, BarnesHut for larger (performance)
+      if (nodeCount < 3000) return PHYSICS_MODE.FULL;
+      return PHYSICS_MODE.BARNES_HUT;
     };
-    
+
     const getStabilizationIterations = (nodeCount, mode) => {
       if (mode === PHYSICS_MODE.HYBRID) {
         // Pre-computed positions: No stabilization needed
         return 0;
       }
-      if (nodeCount < 200) return 300;      // Small: 1-2 seconds
-      if (nodeCount < 1000) return 800;     // Medium: 3-4 seconds
-      if (nodeCount < 3000) return 1200;    // Large: 5-6 seconds
-      return 1500;                          // Very large: 8-10 seconds
+      // Fallback iterations (shouldn't run normally - Loading page computes positions)
+      if (nodeCount < 200) return 300;
+      if (nodeCount < 500) return 500;
+      if (nodeCount < 1000) return 800;
+      if (nodeCount < 3000) return 1000;
+      return 1200;
     };
-    
-    const physicsMode = getPhysicsMode(data.nodes.length);
-    const stabilizationIterations = getStabilizationIterations(data.nodes.length, physicsMode);
-    
-    // Check if nodes have pre-computed positions (for HYBRID mode)
-    const hasPrecomputedPositions = data.nodes.some(n => n.x !== undefined && n.y !== undefined);
-    const effectiveMode = hasPrecomputedPositions && data.nodes.length > 5000 ? PHYSICS_MODE.HYBRID : physicsMode;
-    
-    console.log(`🚀 PERFORMANCE: ${data.nodes.length} nodes, mode=${effectiveMode}, iterations=${stabilizationIterations}, precomputed=${hasPrecomputedPositions}`);
+
+    const effectiveMode = getPhysicsMode(data.nodes.length, hasPrecomputedPositions);
+    const stabilizationIterations = getStabilizationIterations(data.nodes.length, effectiveMode);
+
+    console.log(`🚀 GRAPH: ${data.nodes.length} nodes, mode=${effectiveMode}, precomputed=${hasPrecomputedPositions}`);
 
     // Dual-mode filtering: Full structure view vs Highlight-focused view
     const filteredNodes = data.nodes.filter(node => {
