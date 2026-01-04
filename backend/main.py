@@ -1,6 +1,13 @@
 # backend/main.py
 import os
 import json
+import warnings
+
+# Suppress noisy deprecation warnings from dependencies (cosmetic cleanup for production logs)
+warnings.filterwarnings("ignore", category=FutureWarning, module="networkx")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain")
+warnings.filterwarnings("ignore", message=".*LangChainDeprecationWarning.*")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse

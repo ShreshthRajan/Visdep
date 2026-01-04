@@ -272,7 +272,8 @@ class HybridRetriever:
                     logging.info(f"⚠️ BM25 not found in Storage for repo_id={repo_id}")
                     return False
                 else:
-                    logging.warning(f"⚠️ BM25 download failed: {response.status_code}")
+                    # Expected for new repos - index doesn't exist yet, will be built on-demand
+                    logging.debug(f"BM25 not available in Storage (status={response.status_code}), will build on-demand")
                     return False
 
         except Exception as e:
@@ -346,7 +347,8 @@ class HybridRetriever:
                     logging.info(f"⚠️ PageRank not found in Storage for repo_id={repo_id}")
                     return False
                 else:
-                    logging.warning(f"⚠️ PageRank download failed: {response.status_code}")
+                    # Expected for new repos - index doesn't exist yet, will be computed on-demand
+                    logging.debug(f"PageRank not available in Storage (status={response.status_code}), will compute on-demand")
                     return False
 
         except Exception as e:
@@ -686,7 +688,8 @@ class HybridRetriever:
                     logging.info(f"⚠️ chunk_graph not found in Storage for repo_id={repo_id}")
                     return None
                 else:
-                    logging.warning(f"⚠️ chunk_graph download failed: {response.status_code}")
+                    # Expected for new repos - index doesn't exist yet, will be built on-demand
+                    logging.debug(f"chunk_graph not available in Storage (status={response.status_code}), will build on-demand")
                     return None
 
         except Exception as e:

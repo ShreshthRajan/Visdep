@@ -201,6 +201,9 @@ def get_language_specific_terms(query: str, language: str) -> str:
         # Validation patterns
         if 'valid' in query_lower or 'check' in query_lower:
             terms.extend(['validate', 'validator', 'assert', 'check', 'spam'])
+        # Database/ORM persistence patterns (for tracing save/store flows)
+        if 'save' in query_lower or 'store' in query_lower or 'persist' in query_lower or 'database' in query_lower:
+            terms.extend(['save', 'persist', 'insert', 'update', 'delete', 'ActiveRecord', 'RowModel', 'getTable', 'stmtCache'])
 
     return ' '.join(terms) if terms else ''
 
