@@ -430,6 +430,28 @@ class ChatSession:
         """
         try:
             self.full_context = context
+
+            # =================================================================
+            # MEGA-REPO GUARD: Check BEFORE expensive FAISS operations
+            # =================================================================
+            # CRITICAL FIX: This guard must run BEFORE initialize_vector_store()
+            # to prevent queries from triggering 126K+ embedding rebuilds when
+            # background indexing is still in progress or failed.
+            #
+            # Without this: Query → FAISS rebuild (126K embeddings) → rate limits → 500 error
+            # With this: Query → Guard check → "Still indexing" message → user retries later
+            # =================================================================
+            MEGA_REPO_THRESHOLD = 50000  # 50K chunks = definitely needs pre-built indexes
+            chunk_count = len(context) if context else 0
+
+            if chunk_count > MEGA_REPO_THRESHOLD and self.repo_id and not skip_index_check:
+                if not HybridRetriever.indexes_exist_in_storage(self.repo_id):
+                    raise IndexingInProgressError(
+                        f"🔄 This repository ({chunk_count:,} chunks) is still being indexed. "
+                        "Please try again in 2-3 minutes. The graph visualization works while indexing completes."
+                    )
+                logging.info(f"✅ Mega-repo indexes verified for repo_id={self.repo_id} - proceeding with query")
+
             # Task 2.2: Pass repo_id for FAISS persistence
             self.vector_store = await self.initialize_vector_store(context, repo_id=self.repo_id)
 
