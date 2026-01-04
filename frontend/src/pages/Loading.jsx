@@ -548,13 +548,14 @@ const Loading = () => {
                         const positionValues = Object.values(positions);
 
                         if (positionValues.length > 0) {
-                          const xs = positionValues.map(p => p.x);
-                          const ys = positionValues.map(p => p.y);
-
-                          const minX = Math.min(...xs);
-                          const maxX = Math.max(...xs);
-                          const minY = Math.min(...ys);
-                          const maxY = Math.max(...ys);
+                          // Use loop instead of spread operator to avoid stack overflow on large arrays (60K+ nodes)
+                          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                          for (const p of positionValues) {
+                            if (p.x < minX) minX = p.x;
+                            if (p.x > maxX) maxX = p.x;
+                            if (p.y < minY) minY = p.y;
+                            if (p.y > maxY) maxY = p.y;
+                          }
 
                           const currentSpanX = maxX - minX || 1;
                           const currentSpanY = maxY - minY || 1;
@@ -634,13 +635,14 @@ const Loading = () => {
                         if (nodesWithPositions.length > 1000) { // Only check for large repos
                           const TARGET_DENSITY = 20; // nodes per million unit²
 
-                          const xs = nodesWithPositions.map(n => n.x);
-                          const ys = nodesWithPositions.map(n => n.y);
-
-                          const minX = Math.min(...xs);
-                          const maxX = Math.max(...xs);
-                          const minY = Math.min(...ys);
-                          const maxY = Math.max(...ys);
+                          // Use reduce instead of spread operator to avoid stack overflow on large arrays (60K+ nodes)
+                          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                          for (const node of nodesWithPositions) {
+                            if (node.x < minX) minX = node.x;
+                            if (node.x > maxX) maxX = node.x;
+                            if (node.y < minY) minY = node.y;
+                            if (node.y > maxY) maxY = node.y;
+                          }
 
                           const currentSpanX = maxX - minX || 1;
                           const currentSpanY = maxY - minY || 1;
