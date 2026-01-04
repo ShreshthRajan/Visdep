@@ -180,8 +180,14 @@ def create_chunk_level_graph(chunks: List[Dict[str, Any]]) -> nx.DiGraph:
                 if chunk_id in G:
                     G.add_edge(package, chunk_id, relation="imports")
 
-    # Step 6: Add spatial layout (hierarchical positioning)
-    G = add_spatial_information(G)
+    # Step 6: Skip spatial layout for performance
+    # Frontend uses Force-Atlas2 (WebGL) which ignores backend positions anyway
+    # spring_layout with 50 iterations on 13K+ nodes takes 3+ minutes - completely unnecessary
+    # Only compute for tiny repos where it's instant
+    if len(G.nodes()) < 500:
+        G = add_spatial_information(G)
+    else:
+        logging.info(f"⚡ Skipping spring_layout for {len(G.nodes()):,} nodes (frontend uses Force-Atlas2)")
 
     logging.info(f"✅ Chunk-level graph created: {len(G.nodes())} nodes, {len(G.edges())} edges")
 
