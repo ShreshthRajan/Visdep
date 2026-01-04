@@ -281,7 +281,53 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     // =========================================================================
     // PHYSICS OPTIONS: Adaptive based on repo size
     // =========================================================================
-    const getPhysicsOptions = (mode, iterations) => {
+
+    // Adaptive ForceAtlas2 parameters - tighter clustering for larger repos
+    const getAdaptiveForceAtlas2Params = (nodeCount) => {
+      if (nodeCount < 1000) {
+        // Small repos: spread out, beautiful radial layout
+        return {
+          gravitationalConstant: -150,
+          centralGravity: 0.005,
+          springLength: 150,
+          springConstant: 0.04,
+          damping: 0.6,
+          avoidOverlap: 1.5,
+        };
+      } else if (nodeCount < 5000) {
+        // Medium repos: slightly tighter
+        return {
+          gravitationalConstant: -120,
+          centralGravity: 0.012,
+          springLength: 120,
+          springConstant: 0.05,
+          damping: 0.5,
+          avoidOverlap: 1.2,
+        };
+      } else if (nodeCount < 15000) {
+        // Large repos (like Django): tight clusters
+        return {
+          gravitationalConstant: -80,
+          centralGravity: 0.025,
+          springLength: 90,
+          springConstant: 0.06,
+          damping: 0.4,
+          avoidOverlap: 1.0,
+        };
+      } else {
+        // Mega repos: very tight, dense core
+        return {
+          gravitationalConstant: -50,
+          centralGravity: 0.04,
+          springLength: 70,
+          springConstant: 0.08,
+          damping: 0.35,
+          avoidOverlap: 0.8,
+        };
+      }
+    };
+
+    const getPhysicsOptions = (mode, iterations, nodeCount) => {
       if (mode === PHYSICS_MODE.HYBRID) {
         // HYBRID MODE: Pre-computed positions, no initial physics
         // Local physics enabled on drag (see dragStart handler below)
@@ -298,16 +344,19 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           stabilization: false  // Don't re-stabilize
         };
       }
-      
+
       if (mode === PHYSICS_MODE.BARNES_HUT) {
         // BARNES-HUT MODE: Fast O(n log n) for 1K-10K nodes
+        // Use adaptive params based on node count
+        const adaptiveGravity = nodeCount > 10000 ? 0.15 : 0.1;
+        const adaptiveSpring = nodeCount > 10000 ? 100 : 120;
         return {
           enabled: true,
           solver: 'barnesHut',  // O(n log n) vs O(n²) for forceAtlas2
           barnesHut: {
-            gravitationalConstant: -3000,  // Stronger repulsion for large graphs
-            centralGravity: 0.1,
-            springLength: 120,
+            gravitationalConstant: -3000,
+            centralGravity: adaptiveGravity,
+            springLength: adaptiveSpring,
             springConstant: 0.04,
             damping: 0.5,
             avoidOverlap: 0.5
@@ -322,19 +371,13 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           minVelocity: 0.5
         };
       }
-      
-      // FULL MODE: Beautiful ForceAtlas2 for small repos
+
+      // FULL MODE: Beautiful ForceAtlas2 with adaptive params
+      const forceAtlas2Params = getAdaptiveForceAtlas2Params(nodeCount);
       return {
         enabled: true,
         solver: 'forceAtlas2Based',  // Community detection algorithm (enterprise-grade)
-        forceAtlas2Based: {
-          gravitationalConstant: -150,  // Strong repulsion (spread nodes apart for readability)
-          centralGravity: 0.005,  // Very weak center (allows wide spreading)
-          springLength: 150,  // Longer springs (more space between nodes)
-          springConstant: 0.04,  // Weaker connections (less clustering force)
-          damping: 0.6,  // High damping (settle faster, less bouncing)
-          avoidOverlap: 1.5,  // Strong overlap prevention (critical for 400+ nodes)
-        },
+        forceAtlas2Based: forceAtlas2Params,
         stabilization: {
           enabled: true,
           iterations: iterations,
@@ -346,7 +389,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       };
     };
     
-    const physicsOptions = getPhysicsOptions(effectiveMode, stabilizationIterations);
+    const physicsOptions = getPhysicsOptions(effectiveMode, stabilizationIterations, data.nodes.length);
     
     const options = {
       layout: {

@@ -403,6 +403,54 @@ const Loading = () => {
                         };
                         const iterations = getIterations(layoutNodes.length);
 
+                        // Adaptive ForceAtlas2 parameters based on repo size
+                        // Larger repos need tighter clustering to avoid sprawling hairballs
+                        const getForceAtlas2Params = (count) => {
+                          if (count < 1000) {
+                            // Small repos: spread out, beautiful radial layout
+                            return {
+                              gravitationalConstant: -150,
+                              centralGravity: 0.005,
+                              springLength: 150,
+                              springConstant: 0.04,
+                              damping: 0.6,
+                              avoidOverlap: 1.5,
+                            };
+                          } else if (count < 5000) {
+                            // Medium repos: slightly tighter
+                            return {
+                              gravitationalConstant: -120,
+                              centralGravity: 0.012,
+                              springLength: 120,
+                              springConstant: 0.05,
+                              damping: 0.5,
+                              avoidOverlap: 1.2,
+                            };
+                          } else if (count < 15000) {
+                            // Large repos (like Django): tight clusters
+                            return {
+                              gravitationalConstant: -80,
+                              centralGravity: 0.025,
+                              springLength: 90,
+                              springConstant: 0.06,
+                              damping: 0.4,
+                              avoidOverlap: 1.0,
+                            };
+                          } else {
+                            // Mega repos: very tight, dense core
+                            return {
+                              gravitationalConstant: -50,
+                              centralGravity: 0.04,
+                              springLength: 70,
+                              springConstant: 0.08,
+                              damping: 0.35,
+                              avoidOverlap: 0.8,
+                            };
+                          }
+                        };
+                        const forceAtlas2Params = getForceAtlas2Params(layoutNodes.length);
+                        console.log(`🎨 ForceAtlas2 params for ${layoutNodes.length} nodes:`, forceAtlas2Params);
+
                         // Create hidden container for layout computation
                         const layoutContainer = document.createElement('div');
                         layoutContainer.style.cssText = 'position:absolute;left:-9999px;width:1920px;height:1080px;';
@@ -420,20 +468,13 @@ const Loading = () => {
                           to: edge.target,
                         })));
 
-                        // ForceAtlas2 options - same beautiful settings as DependencyGraph
+                        // ForceAtlas2 options - adaptive based on repo size
                         const layoutOptions = {
                           layout: { randomSeed: 42 },
                           physics: {
                             enabled: true,
                             solver: 'forceAtlas2Based',
-                            forceAtlas2Based: {
-                              gravitationalConstant: -150,
-                              centralGravity: 0.005,
-                              springLength: 150,
-                              springConstant: 0.04,
-                              damping: 0.6,
-                              avoidOverlap: 1.5,
-                            },
+                            forceAtlas2Based: forceAtlas2Params,
                             stabilization: {
                               enabled: true,
                               iterations: iterations,
