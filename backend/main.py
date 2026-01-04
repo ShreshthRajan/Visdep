@@ -219,7 +219,8 @@ def analyze_directory_contributions(repo_content):
     total_files = len(repo_content)
 
     # Directories to analyze (enterprise-grade filtering targets)
-    target_dirs = ['tests/', 'migrations/', 'locale/', 'static/', 'templates/', 'docs/', 'docs_src/', 'examples/']
+    # deps/ = vendored third-party code (Node.js bundles V8, libuv, etc.)
+    target_dirs = ['tests/', 'migrations/', 'locale/', 'static/', 'templates/', 'docs/', 'docs_src/', 'examples/', 'deps/']
 
     for file_info in repo_content:
         path = file_info['path']
