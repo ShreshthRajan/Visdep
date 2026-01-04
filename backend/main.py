@@ -274,9 +274,11 @@ def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=
     excluded_dirs = []
     notifications = []
 
-    # TIER 1: Always exclude docs and examples for large repos (>500 files)
+    # TIER 1: Always exclude docs, examples, and deps for large repos (>500 files)
+    # deps/ contains vendored third-party code (V8, libuv, etc.) - not the repo's own code
     has_docs = 'docs/' in dir_contributions or 'docs_src/' in dir_contributions
     has_examples = 'examples/' in dir_contributions
+    has_deps = 'deps/' in dir_contributions  # Third-party vendored dependencies (Node.js, etc.)
 
     if exclude_docs is None:
         exclude_docs = has_docs and total_files > 500
@@ -317,6 +319,25 @@ def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=
             'savings_pct': int((excluded_count / original_count) * 100)
         })
         logging.info(f"📁 Tier 1: Excluded examples/ ({excluded_count} files)")
+
+    # TIER 1b: Always exclude deps/ for large repos (vendored third-party code)
+    # Node.js bundles V8 (~20K files), libuv, etc. - these aren't "Node.js code"
+    if has_deps and total_files > 1000:
+        before = len(repo_content)
+        repo_content = [f for f in repo_content if not ('deps/' in f['path'] or f['path'].startswith('deps/'))]
+        after = len(repo_content)
+        excluded_count = before - after
+
+        if excluded_count > 0:
+            excluded_dirs.append('deps/')
+            notifications.append({
+                'type': 'tier1_auto',
+                'directory': 'deps/',
+                'files_excluded': excluded_count,
+                'reason': 'Vendored third-party dependencies (V8, libuv, etc.) are not the repository\'s own code',
+                'savings_pct': int((excluded_count / original_count) * 100)
+            })
+            logging.info(f"📁 Tier 1: Excluded deps/ ({excluded_count} files) - vendored third-party code")
 
     # TIER 2: Smart exclude tests if >40% contribution AND repo is large (>1000 files)
     if total_files > 1000:
