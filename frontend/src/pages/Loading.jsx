@@ -520,6 +520,60 @@ const Loading = () => {
                         // Extract positions from network
                         const positions = layoutNetwork.getPositions();
 
+                        // =====================================================================
+                        // POSITION SCALE NORMALIZATION: Prevent GPU overdraw on mega-repos
+                        // =====================================================================
+                        // ForceAtlas2 creates tight clusters for large repos, causing high
+                        // node density that freezes during zoom/pan (GPU overdraw).
+                        //
+                        // Solution: Normalize to target density of ~20 nodes per million unit²
+                        // (matching Kubernetes which renders smoothly with 18K nodes).
+                        //
+                        // This does NOT affect graph beauty - relative positions are preserved,
+                        // just scaled to optimal density for rendering performance.
+                        // =====================================================================
+                        const TARGET_DENSITY = 20; // nodes per million unit² (Kubernetes baseline)
+                        const positionValues = Object.values(positions);
+
+                        if (positionValues.length > 0) {
+                          const xs = positionValues.map(p => p.x);
+                          const ys = positionValues.map(p => p.y);
+
+                          const minX = Math.min(...xs);
+                          const maxX = Math.max(...xs);
+                          const minY = Math.min(...ys);
+                          const maxY = Math.max(...ys);
+
+                          const currentSpanX = maxX - minX || 1;
+                          const currentSpanY = maxY - minY || 1;
+                          const currentArea = currentSpanX * currentSpanY;
+                          const currentDensity = (positionValues.length / currentArea) * 1e6;
+
+                          // Calculate target span based on optimal density
+                          const targetArea = (positionValues.length / TARGET_DENSITY) * 1e6;
+                          const targetSpan = Math.sqrt(targetArea);
+
+                          // Only scale if density is too high (>1.5x target)
+                          if (currentDensity > TARGET_DENSITY * 1.5) {
+                            const scaleFactor = targetSpan / Math.max(currentSpanX, currentSpanY);
+
+                            // Center positions around origin, then scale
+                            const centerX = (minX + maxX) / 2;
+                            const centerY = (minY + maxY) / 2;
+
+                            for (const nodeId of Object.keys(positions)) {
+                              positions[nodeId].x = (positions[nodeId].x - centerX) * scaleFactor;
+                              positions[nodeId].y = (positions[nodeId].y - centerY) * scaleFactor;
+                            }
+
+                            const newDensity = (positionValues.length / (targetSpan * targetSpan)) * 1e6;
+                            console.log(`📐 SCALE NORMALIZATION: ${currentDensity.toFixed(1)} → ${newDensity.toFixed(1)} nodes/M-unit² (${scaleFactor.toFixed(2)}x scale)`);
+                            setLogs(prev => [...prev, `-> Optimizing layout density for smooth rendering...`]);
+                          } else {
+                            console.log(`✅ Density OK: ${currentDensity.toFixed(1)} nodes/M-unit² (target: ${TARGET_DENSITY})`);
+                          }
+                        }
+
                         // Apply positions to graph data
                         const positionsMap = {};
                         for (const [nodeId, pos] of Object.entries(positions)) {
