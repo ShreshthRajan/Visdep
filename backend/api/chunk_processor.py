@@ -356,17 +356,26 @@ def chunk_file(file_path: str, ast_info: Dict[str, Any]) -> List[Dict[str, Any]]
         return chunks
 
     # Check if we have NEW structured data (dicts) or OLD flat data (strings)
+    # OLD format: functions/classes are lists of STRINGS (just names)
+    # NEW format: functions/classes are lists of DICTS (with lineno, end_lineno, etc.)
+    # IMPORTANT: Empty lists [] are valid for NEW format (files with no declarations)
     functions = ast_info.get('functions', [])
     classes = ast_info.get('classes', [])
 
-    is_structured = (functions and isinstance(functions[0], dict)) or (classes and isinstance(classes[0], dict))
+    # Detect OLD format by checking if any element is a string (not dict)
+    # Empty lists are NOT old format - they're valid new format for files without declarations
+    is_old_string_format = (
+        (functions and isinstance(functions[0], str)) or
+        (classes and isinstance(classes[0], str))
+    )
 
-    if not is_structured:
+    if is_old_string_format:
         # OLD FORMAT: Fallback to legacy chunking for backward compatibility
         logging.warning(f"Using legacy chunking for {file_path} (old AST format)")
         return chunk_file_legacy(file_path, ast_info)
 
-    # NEW FORMAT: Method-level chunking
+    # NEW FORMAT: Proceed with method-level chunking
+    # Files with no functions/classes will simply return empty chunks (no warning needed)
 
     # Extract top-level function chunks
     for func_info in functions:
