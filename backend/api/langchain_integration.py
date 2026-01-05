@@ -2050,11 +2050,18 @@ async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int =
 
         if session_id not in chat_sessions:
             # Task 2.2: Pass repo_id to ChatSession for FAISS persistence
-            chat_sessions[session_id] = ChatSession(repo_id=repo_id)
-            # Convert context to chunk format if it's chunks from DB
-            # For Step 1: context is still file-level from frontend
-            # Vector store will handle both formats
-            await chat_sessions[session_id].initialize_conversation_chain(context)
+            new_session = ChatSession(repo_id=repo_id)
+            try:
+                # Convert context to chunk format if it's chunks from DB
+                # For Step 1: context is still file-level from frontend
+                # Vector store will handle both formats
+                await new_session.initialize_conversation_chain(context)
+                # Only cache session if initialization succeeded
+                chat_sessions[session_id] = new_session
+            except IndexingInProgressError:
+                # Don't cache broken session - let next query retry properly
+                logging.info(f"Session not cached - indexing still in progress (repo_id={repo_id})")
+                raise
 
         chat_session = chat_sessions[session_id]
 

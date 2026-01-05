@@ -192,6 +192,21 @@ const Loading = () => {
                 case 'clone_done':
                   setLogs(prev => [...prev, `-> Found ${event.file_count} files`]);
 
+                  // Calculate ETA based on file count
+                  // Based on benchmarks: parse ~2s/1000files, chunk ~5s/1000files, store ~3s/10K chunks
+                  // Layout varies by node count (handled separately)
+                  const estimateTotalTime = (fileCount) => {
+                    if (fileCount < 500) return 30;
+                    if (fileCount < 1000) return 60;
+                    if (fileCount < 3000) return 120;
+                    if (fileCount < 7000) return 240;
+                    if (fileCount < 15000) return 420;  // ~7 min for 10K+ files
+                    return 600;  // 10 min for mega-repos
+                  };
+                  const totalEta = estimateTotalTime(event.file_count);
+                  setEta(totalEta);
+                  setLogs(prev => [...prev, `-> Estimated processing time: ~${Math.round(totalEta / 60)} min`]);
+
                   // Add root node for actual repo
                   if (networkInstance.current && !addedNodes.has('root')) {
                     const nodesDataSet = networkInstance.current.body.data.nodes;
@@ -258,12 +273,12 @@ const Loading = () => {
 
                 case 'chunk_progress':
                   // Progress update during chunking - keeps UI alive for mega-repos
-                  // Only update log with major milestones to avoid spam
+                  // Show more frequent updates for better UX on long operations
                   if (event.processed_files && event.total_files) {
                     const pct = Math.round((event.processed_files / event.total_files) * 100);
-                    // Update log every 25% milestone
-                    if (pct === 25 || pct === 50 || pct === 75) {
-                      setLogs(prev => [...prev, `-> Chunking progress: ${pct}% (${event.chunks_so_far?.toLocaleString() || '?'} chunks)`]);
+                    // Update log every 10% milestone for better visibility
+                    if (pct % 10 === 0 && pct > 0 && pct < 100) {
+                      setLogs(prev => [...prev, `-> Chunking: ${pct}% (${event.processed_files.toLocaleString()}/${event.total_files.toLocaleString()} files, ${event.chunks_so_far?.toLocaleString() || '?'} chunks)`]);
                     }
                   }
                   break;
@@ -874,7 +889,11 @@ const Loading = () => {
                 }}
 
               >
-                {progress < 100 ? `processing... ${progress}%` : eta ? `completing... eta ${eta}s` : 'finishing...'}
+                {progress < 100
+                  ? eta
+                    ? `processing... ${progress}% (eta ${eta >= 60 ? `${Math.round(eta / 60)}m` : `${eta}s`})`
+                    : `processing... ${progress}%`
+                  : 'finishing...'}
               </div>
             </div>
           </div>

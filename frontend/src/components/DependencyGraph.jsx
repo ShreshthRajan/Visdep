@@ -1470,16 +1470,7 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
   return (
     <div className="h-full flex flex-col relative">
-      {/* Mega-Repo Warning */}
       {/* Modern 2025 Toolbar */}
-      {megaRepoWarning && (
-        <div style={{ backgroundColor: 'var(--elevated)', borderBottom: '1px solid var(--border-default)' }} className="p-2 text-center">
-          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontFamily: "'Inter', sans-serif" }}>
-            Large Repository ({megaRepoWarning.chunk_count.toLocaleString()} chunks) - {megaRepoWarning.message}
-          </span>
-          <button onClick={() => setMegaRepoWarning(null)} className="ml-3 hover:opacity-75 font-medium" style={{ color: 'var(--text-secondary)' }}>×</button>
-        </div>
-      )}
       {/* Search HUD - Top Center */}
       <div className="search-hud-container absolute top-6 left-1/2 -translate-x-1/2 z-20" style={{ width: '400px', maxWidth: '90vw' }}>
         <div className="relative">
