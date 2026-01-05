@@ -36,9 +36,10 @@ ENV PYTHONUNBUFFERED=1
 # Expose port (Railway will set PORT env var)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/api/dependency_graph || exit 1
+# Health check - uses simple /health endpoint that always returns 200
+# Increased start-period to 60s to allow for FAISS pre-warming on startup
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 # Start command - use startup script
 CMD ["/app/start.sh"]

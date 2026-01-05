@@ -425,6 +425,21 @@ def filter_repository_content(repo_content, exclude_docs=None, exclude_examples=
 
     return repo_content, metadata
 
+
+# =============================================================================
+# HEALTH CHECK ENDPOINT
+# =============================================================================
+@app.get("/health")
+async def health_check():
+    """
+    Simple health check endpoint for container orchestration (Docker/Railway).
+
+    Returns 200 OK immediately - no database or external service checks.
+    This ensures the health check never fails due to slow dependencies.
+    """
+    return {"status": "ok"}
+
+
 @app.post("/api/upload_repo")
 async def upload_repo(link: RepoLink):
     global latest_repo_id  # Declare global at function top
