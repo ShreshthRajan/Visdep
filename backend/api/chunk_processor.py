@@ -597,6 +597,10 @@ async def process_repository_to_chunks_with_progress(ast_data: Dict[str, Any]):
     This is an async generator that yields progress events periodically,
     allowing SSE events to be sent during long processing.
 
+    IMPORTANT: Yields based on BOTH file count AND time elapsed to prevent
+    SSE connection timeouts. Railway/proxy idle timeout is ~60s, so we yield
+    every 15 seconds to allow heartbeat sending.
+
     Args:
         ast_data: dict of {file_path: ast_info}
 
@@ -609,10 +613,11 @@ async def process_repository_to_chunks_with_progress(ast_data: Dict[str, Any]):
             if 'final_chunks' in event:
                 chunks = event['final_chunks']
             else:
-                # Send SSE progress event
+                # Send SSE progress event or heartbeat
                 yield sse_event('chunk_progress', event)
     """
     import asyncio
+    import time
 
     all_chunks = []
     total_files = len(ast_data)
@@ -622,21 +627,32 @@ async def process_repository_to_chunks_with_progress(ast_data: Dict[str, Any]):
     # Ensures at least 20 progress updates for large repos
     report_interval = min(100, max(1, total_files // 20))
 
+    # Time-based yielding to prevent proxy idle timeout (critical for mega-repos)
+    # Railway proxy kills connections after ~60s of no data, so yield every 15s
+    HEARTBEAT_INTERVAL = 15  # seconds
+    last_yield_time = time.time()
+
     for idx, file_path in enumerate(file_paths):
         ast_info = ast_data[file_path]
         file_chunks = chunk_file(file_path, ast_info)
         all_chunks.extend(file_chunks)
 
-        # Yield progress periodically
-        if (idx + 1) % report_interval == 0:
+        # Yield if: file count threshold OR time threshold (prevents timeout)
+        time_since_yield = time.time() - last_yield_time
+        file_threshold_met = (idx + 1) % report_interval == 0
+        time_threshold_met = time_since_yield > HEARTBEAT_INTERVAL
+
+        if file_threshold_met or time_threshold_met:
             yield {
                 'processed_files': idx + 1,
                 'total_files': total_files,
                 'chunks_so_far': len(all_chunks),
-                'percent': round((idx + 1) / total_files * 100)
+                'percent': round((idx + 1) / total_files * 100),
+                'heartbeat_needed': time_threshold_met and not file_threshold_met
             }
             # Yield to event loop - allows SSE events to be sent
             await asyncio.sleep(0)
+            last_yield_time = time.time()
 
     # Final yield with complete chunks
     yield {

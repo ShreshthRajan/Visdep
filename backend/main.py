@@ -897,6 +897,12 @@ async def upload_repo_stream(link: RepoLink):
                         })
                         await asyncio.sleep(0)
                         last_progress_pct = current_pct
+                    elif chunk_event.get('heartbeat_needed'):
+                        # SSE HEARTBEAT: Send comment to keep connection alive
+                        # Railway proxy has ~60s idle timeout - this prevents disconnection
+                        # SSE comment format: colon prefix, ignored by client parsers
+                        yield ": heartbeat\n\n"
+                        await asyncio.sleep(0)
 
             chunk_stats = get_chunk_stats(chunks)
 
