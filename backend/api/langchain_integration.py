@@ -20,6 +20,8 @@ from backend.api.query_enhancement import (
     decompose_query,
     agentic_retrieval_with_reflection,
     detect_primary_language,
+    detect_query_intent_language,
+    detect_query_intent_language_llm,
     enhance_query_multimodal
 )
 from backend.api.summarization import (
@@ -1376,13 +1378,48 @@ class ChatSession:
 
         logging.info(f"Query complexity: {'complex' if is_complex else 'simple'}, flow: {is_flow_query}, architectural: {is_architectural}")
 
-        # SOTA UPGRADE (Nov 2025): Enhanced retrieval with query processing
+        # SOTA UPGRADE (Jan 2026): Enhanced retrieval with query processing
         # Implements 3 research-backed techniques for +40-65% improvement
 
-        # Detect primary language from chunks
+        # Detect codebase language distribution from chunks
         chunks_list = list(self.full_context.values()) if isinstance(self.full_context, dict) else []
-        language = detect_primary_language(chunks_list)
-        logging.info(f"🌐 Primary language: {language}")
+
+        # Build language distribution for LLM-based intent detection
+        # This gives the LLM context about what languages are available
+        codebase_languages = {}
+        for chunk in chunks_list[:500]:  # Sample first 500 for speed
+            file_type = chunk.get('metadata', {}).get('file_type', 'unknown')
+            # Normalize file extensions to language names
+            lang_map = {
+                'rs': 'rust', 'py': 'python', 'js': 'javascript', 'ts': 'typescript',
+                'c': 'c', 'cpp': 'cpp', 'h': 'c', 'hpp': 'cpp', 'go': 'go',
+                'java': 'java', 'php': 'php', 'rb': 'ruby', 'swift': 'swift',
+                'kt': 'kotlin', 'scala': 'scala', 'jsx': 'javascript', 'tsx': 'typescript'
+            }
+            lang = lang_map.get(file_type, file_type)
+            codebase_languages[lang] = codebase_languages.get(lang, 0) + 1
+
+        # Get primary language (most files)
+        codebase_language = max(codebase_languages.items(), key=lambda x: x[1])[0] if codebase_languages else "unknown"
+
+        # SOTA (Jan 2026): LLM-based query intent language detection
+        # Uses Claude Haiku to semantically understand what language the query is about
+        # Research basis: "User intent understanding goes beyond keyword matching"
+        # (Knowledge-Oriented RAG Survey, 2025)
+        try:
+            language = await detect_query_intent_language_llm(
+                query=query,
+                codebase_languages=codebase_languages,
+                anthropic_client=self.claude_client,
+                use_cache=True
+            )
+        except Exception as e:
+            # Fallback to fast heuristic-based detection
+            logging.warning(f"LLM intent detection failed: {e}, using heuristic fallback")
+            language = detect_query_intent_language(query, codebase_language)
+
+        logging.info(f"🌐 Codebase languages: {codebase_languages}")
+        logging.info(f"🌐 Primary: {codebase_language} → Query intent: {language}")
 
         # Strategy 1: Query Expansion (+40% on vocabulary mismatch)
         # Expands query with code-specific terms to bridge semantic gap
