@@ -8,6 +8,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import API from '../api';
 import LZString from 'lz-string';
+import graphStorage from '../utils/graphStorage';
 
 const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart, currentRepoId = null }) => {
   const networkRef = useRef(null);
@@ -812,22 +813,25 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     const fetchGraphData = async () => {
       // MULTI-TENANT FIX: Don't fetch until we have a repo (prevents race condition)
       if (!currentRepoId) {
-        console.log('⏭️ Skipping graph fetch: No repo selected yet');
+        console.log('⏭️ GRAPH: Waiting for currentRepoId (will retry when available)');
         return;
       }
 
       try {
-        console.log('📡 FETCH GRAPH:', { currentRepoId });
+        console.log('📡 GRAPH FETCH START:', { currentRepoId, browser: navigator.userAgent.split(' ').pop() });
 
         setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
 
         let data;
+        let dataSource = 'none';
 
         // CHECK PRE-FETCHED: Use graph data loaded during Loading phase (instant load)
         // Data is LZ-string compressed to fit large graphs within sessionStorage quota
-        const compressedData = sessionStorage.getItem('visdep_prefetched_graph');
-        if (compressedData) {
-          try {
+        // NOTE: May be empty on Chrome/Safari if sessionStorage quota was exceeded
+        try {
+          const compressedData = sessionStorage.getItem('visdep_prefetched_graph');
+          if (compressedData) {
+            console.log(`📦 Found pre-fetched data: ${(compressedData.length * 2 / 1024).toFixed(1)}KB compressed`);
             // Decompress LZ-string data (compressed in Loading.jsx)
             const decompressed = LZString.decompressFromUTF16(compressedData);
             if (decompressed) {
@@ -837,29 +841,60 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
               const isCorrectRepo = prefetched.repo_id === currentRepoId;
 
               if (isFresh && isCorrectRepo && prefetched.data) {
-                console.log('⚡ INSTANT LOAD: Using pre-fetched graph data (decompressed)');
+                console.log('⚡ INSTANT LOAD: Using pre-fetched graph data');
                 data = prefetched.data;
+                dataSource = 'sessionStorage';
                 // Clear after use (one-time optimization)
                 sessionStorage.removeItem('visdep_prefetched_graph');
+              } else {
+                console.log(`⏭️ Pre-fetched data invalid: fresh=${isFresh}, correctRepo=${isCorrectRepo}`);
               }
+            } else {
+              console.warn('⚠️ LZString decompression returned null');
             }
-          } catch (parseErr) {
-            console.warn('⚠️ Pre-fetched data decompress/parse failed:', parseErr);
+          } else {
+            console.log('📭 No pre-fetched data in sessionStorage (quota may have been exceeded)');
+          }
+        } catch (storageErr) {
+          console.warn('⚠️ sessionStorage read/decompress failed:', storageErr.message);
+          // Non-fatal: will try IndexedDB, then API
+        }
+
+        // TIER 2: Try IndexedDB (for mega repos that exceed sessionStorage quota)
+        if (!data && graphStorage.isAvailable()) {
+          try {
+            console.log('📦 Checking IndexedDB for mega-repo cache...');
+            const idbData = await graphStorage.load(currentRepoId);
+            if (idbData) {
+              console.log(`⚡ IndexedDB LOAD: Found cached graph (${idbData.nodes?.length || 0} nodes)`);
+              data = idbData;
+              dataSource = 'IndexedDB';
+              // Clear after use (one-time optimization)
+              graphStorage.clear(currentRepoId);
+            } else {
+              console.log('📭 No IndexedDB cache found');
+            }
+          } catch (idbErr) {
+            console.warn('⚠️ IndexedDB read failed:', idbErr.message);
+            // Non-fatal: will fall back to API
           }
         }
 
-        // FALLBACK: Fetch from API if no pre-fetched data
+        // TIER 3: Fetch from API if no cached data
+        // This ensures graph loads even when all caches fail
         if (!data) {
-          // Phase 2: Pass repo_id explicitly (multi-repo support)
           const url = `/api/dependency_graph?repo_id=${currentRepoId}`;
-          console.log('📡 Fetching from:', url);
+          console.log('📡 API FALLBACK: Fetching from', url);
           const response = await API.get(url);
           data = response.data;
+          dataSource = 'API';
+          console.log(`✅ API fetch successful: ${data.nodes?.length || 0} nodes`);
         }
 
-        console.log('✅ Graph received:', {
-          nodes: data.nodes.length,
-          firstNode: data.nodes[0]?.id
+        console.log(`📊 GRAPH LOADED via ${dataSource}:`, {
+          nodes: data.nodes?.length,
+          edges: data.edges?.length,
+          firstNode: data.nodes?.[0]?.id
         });
         setLoadingState({ isLoading: true, message: 'Analyzing graph structure...', progress: 30 });
 

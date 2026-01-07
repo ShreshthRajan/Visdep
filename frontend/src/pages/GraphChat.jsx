@@ -1,6 +1,6 @@
 // frontend/src/pages/graphchat.jsx
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import DependencyGraph from '../components/DependencyGraph';
 import Chatbot from '../components/Chatbot';
@@ -38,6 +38,7 @@ const GraphChat = () => {
   const [progressSteps, setProgressSteps] = useState([]);
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // Sync ref with state (no re-render, just tracking)
   useEffect(() => {
@@ -76,16 +77,50 @@ const GraphChat = () => {
     };
   }, [isResizing]);
 
-  // Phase 3: Initialize currentRepo from sessionStorage after upload
+  // Phase 3: Initialize currentRepo from URL params (primary) or sessionStorage (fallback)
+  // URL params are reliable across all browsers; sessionStorage may fail on Chrome/Safari (quota)
   useEffect(() => {
-    const storedRepo = sessionStorage.getItem('visdep_current_repo');
-    if (storedRepo && !currentRepo) {
-      const repo = JSON.parse(storedRepo);
-      setCurrentRepo(repo);
-      sessionStorage.removeItem('visdep_current_repo');
-      console.log('✅ Initialized currentRepo:', repo.repo_name);
+    if (currentRepo) return; // Already initialized
+
+    const urlRepoId = searchParams.get('repo_id');
+
+    // PRIMARY: Read from URL params (works on all browsers)
+    if (urlRepoId) {
+      // Create minimal repo object with local_repo_id for DependencyGraph
+      // Full repo metadata will be fetched from API if needed for sessions
+      setCurrentRepo({ local_repo_id: urlRepoId, id: null, repo_name: 'Loading...' });
+      console.log('✅ Initialized currentRepo from URL:', urlRepoId);
+
+      // Fetch full repo metadata from API (async, non-blocking)
+      if (user) {
+        API.get(`/api/user/${user.id}/repos`).then(response => {
+          const repos = response.data;
+          const matchedRepo = repos?.find(r => r.local_repo_id === urlRepoId);
+          if (matchedRepo) {
+            setCurrentRepo(matchedRepo);
+            console.log('✅ Loaded full repo metadata:', matchedRepo.repo_name);
+          }
+        }).catch(err => {
+          console.warn('⚠️ Could not fetch repo metadata:', err.message);
+          // Non-fatal: graph still works with local_repo_id
+        });
+      }
+      return;
     }
-  }, [currentRepo]);
+
+    // FALLBACK: Read from sessionStorage (may fail on Chrome/Safari with large repos)
+    try {
+      const storedRepo = sessionStorage.getItem('visdep_current_repo');
+      if (storedRepo) {
+        const repo = JSON.parse(storedRepo);
+        setCurrentRepo(repo);
+        sessionStorage.removeItem('visdep_current_repo');
+        console.log('✅ Initialized currentRepo from sessionStorage:', repo.repo_name);
+      }
+    } catch (err) {
+      console.warn('⚠️ sessionStorage read failed:', err.message);
+    }
+  }, [currentRepo, searchParams, user]);
 
   // Phase 3: Auto-create first session when repo is loaded
   useEffect(() => {

@@ -4,6 +4,7 @@ import { Network, DataSet } from 'vis-network/standalone';
 import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
 import LZString from 'lz-string';
+import graphStorage from '../utils/graphStorage';
 
 const Loading = () => {
   const [progress, setProgress] = useState(0);
@@ -360,7 +361,13 @@ const Loading = () => {
 
                       if (repos && repos.length > 0) {
                         const justUploaded = repos[0];
-                        sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
+                        // Try sessionStorage with fallback (Chrome/Safari may have quota issues)
+                        try {
+                          sessionStorage.setItem('visdep_current_repo', JSON.stringify(justUploaded));
+                        } catch (storageErr) {
+                          console.warn('⚠️ sessionStorage quota exceeded for repo metadata:', storageErr.message);
+                          // Non-fatal: URL param fallback will be used
+                        }
                         repoId = justUploaded.local_repo_id;
                       }
                     } catch (err) {
@@ -717,17 +724,48 @@ const Loading = () => {
                         }
                       }
 
-                      // Compress and store graph data
+                      // Compress and store graph data with tiered fallback:
+                      // 1. sessionStorage (fast, 5MB limit)
+                      // 2. IndexedDB (slower, 50MB+ limit for mega repos)
+                      // 3. API fallback (slowest, always works)
                       const payload = JSON.stringify({
                         data: graphData,
                         repo_id: repoId,
                         timestamp: Date.now()
                       });
                       const compressed = LZString.compressToUTF16(payload);
-                      sessionStorage.setItem('visdep_prefetched_graph', compressed);
+                      const compressedSizeMB = (compressed.length * 2 / 1024 / 1024).toFixed(2);
 
-                      const compressionRatio = ((1 - compressed.length * 2 / payload.length) * 100).toFixed(1);
-                      console.log(`📦 Graph compressed: ${(payload.length / 1024).toFixed(1)}KB → ${(compressed.length * 2 / 1024).toFixed(1)}KB (${compressionRatio}% reduction)`);
+                      let storageUsed = 'none';
+
+                      // Try sessionStorage first (fast, but 5MB limit on Chrome/Safari)
+                      try {
+                        sessionStorage.setItem('visdep_prefetched_graph', compressed);
+                        const compressionRatio = ((1 - compressed.length * 2 / payload.length) * 100).toFixed(1);
+                        console.log(`📦 sessionStorage: ${compressedSizeMB}MB (${compressionRatio}% compression)`);
+                        storageUsed = 'sessionStorage';
+                      } catch (storageErr) {
+                        // QuotaExceededError - try IndexedDB for mega repos
+                        console.warn(`⚠️ sessionStorage quota exceeded (${compressedSizeMB}MB), trying IndexedDB...`);
+
+                        // IndexedDB fallback for large graphs (50MB+ capacity)
+                        if (graphStorage.isAvailable()) {
+                          try {
+                            await graphStorage.save(repoId, graphData);
+                            console.log(`📦 IndexedDB: Saved ${compressedSizeMB}MB graph for mega-repo`);
+                            setLogs(prev => [...prev, `-> Mega-repo: using IndexedDB cache`]);
+                            storageUsed = 'indexedDB';
+                          } catch (idbErr) {
+                            console.warn(`⚠️ IndexedDB save failed: ${idbErr.message}`);
+                            setLogs(prev => [...prev, `-> Large graph: using API fallback`]);
+                          }
+                        } else {
+                          console.warn('⚠️ IndexedDB not available, will use API fallback');
+                          setLogs(prev => [...prev, `-> Large graph: using API fallback`]);
+                        }
+                      }
+
+                      console.log(`📊 Graph cache: ${storageUsed} (${nodeCount.toLocaleString()} nodes, ${compressedSizeMB}MB)`);
                       setLogs(prev => [...prev, `-> Graph ready: ${nodeCount.toLocaleString()} nodes`]);
 
                     } catch (err) {
@@ -742,8 +780,9 @@ const Loading = () => {
                   setShowFlash(true);
                   await new Promise(resolve => setTimeout(resolve, 500));
 
-                  // Navigate to graph
-                  navigate('/graph-chat');
+                  // Navigate to graph with repo_id in URL (primary source, sessionStorage is fallback)
+                  // This ensures graph loads even if sessionStorage quota is exceeded
+                  navigate(repoId ? `/graph-chat?repo_id=${repoId}` : '/graph-chat');
                   break;
 
                 case 'error':
