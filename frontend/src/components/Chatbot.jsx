@@ -151,34 +151,79 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
           </div>
         ))}
 
-        {/* Live Progress - Terminal Output Style */}
+        {/* Live Progress - Real-time SSE Updates */}
         {isLoading && progressSteps.length > 0 && (
           <div style={{ padding: '10px 0 0 10px', borderLeft: '2px solid rgba(59, 130, 246, 0.4)' }}>
-            <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>
+            <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>
               &gt; AGENT
             </div>
-            {progressSteps
-              .filter(step => step.status === 'active')
-              .map(step => (
-                <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+            {progressSteps.map(step => (
+              <div key={step.id} style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                marginBottom: '6px',
+                opacity: step.status === 'complete' ? 0.5 : 1,
+                transition: 'opacity 0.3s ease'
+              }}>
+                {/* Status indicator */}
+                {step.status === 'active' ? (
                   <div
                     className="animate-pulse"
                     style={{
-                      width: '2px',
-                      height: '2px',
+                      width: '6px',
+                      height: '6px',
                       borderRadius: '50%',
-                      backgroundColor: '#3b82f6'
+                      backgroundColor: '#3b82f6',
+                      marginTop: '4px',
+                      flexShrink: 0
                     }}
                   />
+                ) : step.status === 'complete' ? (
+                  <div style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: '#22c55e',
+                    marginTop: '4px',
+                    flexShrink: 0
+                  }} />
+                ) : (
+                  <div style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: '#ef4444',
+                    marginTop: '4px',
+                    flexShrink: 0
+                  }} />
+                )}
+
+                {/* Message and detail */}
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{
                     fontSize: '11px',
-                    color: '#71717a',
+                    color: step.status === 'active' ? '#a1a1aa' : '#52525b',
                     fontFamily: "'JetBrains Mono', monospace"
                   }}>
                     {step.message}
                   </span>
+                  {step.detail && (
+                    <div style={{
+                      fontSize: '10px',
+                      color: '#3f3f46',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      marginTop: '2px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      → {step.detail}
+                    </div>
+                  )}
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
         )}
       </div>

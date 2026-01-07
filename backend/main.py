@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata
-from backend.api.langchain_integration import get_jamba_response, IndexingInProgressError
+from backend.api.langchain_integration import get_jamba_response, get_jamba_response_progress_stream, IndexingInProgressError
 from backend.api.ast_parser import parse_code_to_ast
 from backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks, cache_chunks_in_memory
 from backend.api.chunk_processor import process_repository_to_chunks, process_repository_to_chunks_with_progress, get_chunk_stats
@@ -1328,6 +1328,129 @@ async def query_jamba(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+
+@app.post("/api/query_stream")
+async def query_stream(request: QueryRequest):
+    """
+    SOTA: Query with real-time SSE progress streaming.
+
+    Streams progress events at each pipeline stage with REAL values,
+    then streams response tokens for typewriter effect.
+
+    This replaces the hardcoded fake progress animation with real-time
+    updates from the actual retrieval pipeline.
+
+    Event types:
+    - intent: Query intent language detection
+    - expand: Query expansion with terms
+    - decompose: Query decomposition (complex queries)
+    - search: Hybrid search results
+    - rerank: Cross-encoder reranking
+    - context: Context assembly
+    - llm_start: Claude generation starting
+    - token: Response token (streamed)
+    - done: Complete with citations and highlights
+    - error: Error occurred
+
+    Returns:
+        SSE stream of JSON events
+    """
+    def sse_event(data: dict) -> str:
+        """Format SSE event with JSON data."""
+        return f"data: {json.dumps(data)}\n\n"
+
+    async def event_generator():
+        try:
+            query = request.query
+
+            # Multi-tenant: Require explicit repo_id
+            if not request.repo_id:
+                yield sse_event({
+                    'type': 'error',
+                    'message': 'repo_id is required. Please select a repository first.'
+                })
+                return
+
+            target_repo_id = request.repo_id
+
+            # MEGA-REPO GUARD: Check if chunks are cached
+            from backend.api.data_storage import _chunks_cache
+            if target_repo_id not in _chunks_cache:
+                try:
+                    from backend.api.supabase_client import get_supabase_client
+                    supabase = get_supabase_client()
+                    preindexed = supabase.table('preindexed_repos')\
+                        .select('chunk_count')\
+                        .eq('repo_id', target_repo_id)\
+                        .limit(1)\
+                        .execute()
+
+                    if preindexed.data and preindexed.data[0].get('chunk_count', 0) > 50000:
+                        yield sse_event({
+                            'type': 'error',
+                            'message': 'Repository is still warming up. Please wait 30-60 seconds and try again.',
+                            'warming_up': True
+                        })
+                        return
+                except Exception as e:
+                    logging.debug(f"Pre-indexed check failed: {e}")
+
+            # Load chunks from database
+            chunks = retrieve_chunks(target_repo_id)
+
+            if not chunks:
+                yield sse_event({
+                    'type': 'error',
+                    'message': 'No chunks found for repository. Please re-upload.'
+                })
+                return
+
+            # Convert to context format
+            context = {chunk['chunk_id']: chunk for chunk in chunks}
+            logging.info(f"Loaded {len(chunks)} chunks for streaming query")
+
+            # Build node_contexts array
+            node_contexts_array = None
+            if request.node_contexts:
+                node_contexts_array = request.node_contexts
+            elif request.node_context:
+                node_contexts_array = [request.node_context]
+
+            # Stream progress events
+            async for event in get_jamba_response_progress_stream(
+                query=query,
+                context=context,
+                repo_id=target_repo_id,
+                node_contexts=node_contexts_array
+            ):
+                yield sse_event(event)
+                await asyncio.sleep(0)  # Allow event to be sent
+
+        except IndexingInProgressError as e:
+            yield sse_event({
+                'type': 'error',
+                'message': str(e),
+                'indexing_in_progress': True
+            })
+
+        except Exception as e:
+            logging.error(f"Error in query_stream: {e}", exc_info=True)
+            yield sse_event({
+                'type': 'error',
+                'message': f'An error occurred: {str(e)}'
+            })
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
 
 @app.get("/api/node_code/{chunk_id:path}")
 async def get_node_code(chunk_id: str, repo_id: Optional[int] = None):

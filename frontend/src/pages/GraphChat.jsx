@@ -120,7 +120,8 @@ const GraphChat = () => {
     }
   }, []);
 
-  // Main query handler with node context support
+  // Main query handler with REAL SSE progress streaming
+  // Replaces hardcoded fake progress with real-time updates from the retrieval pipeline
   const handleSubmitQuery = useCallback(async (queryText, nodeContext = null) => {
     if (!queryText.trim() || isLoading) return;
 
@@ -131,69 +132,229 @@ const GraphChat = () => {
     // Use selectedNodes if no explicit nodeContext provided
     const contextNodes = nodeContext ? [nodeContext] : selectedNodes;
 
-    // Generate progress steps - show node context if present
-    const keywords = queryText.replace(/[?.,]/g, '').split(' ').filter(w => w.length > 3).slice(0, 3);
-    const nodeCount = contextNodes.length;
-    const nodeName = nodeCount === 1 ? (contextNodes[0].label?.split('\n')[0] || contextNodes[0].id) : `${nodeCount} nodes`;
+    // Initialize progress with "Starting..." - will be replaced by real events
+    setProgressSteps([{ id: 0, message: 'Starting query...', status: 'active' }]);
 
-    const steps = [
-      { id: 1, message: nodeCount > 0 ? `Analyzing ${nodeName}...` : `Searching codebase${keywords[0] ? ` for "${keywords[0]}"` : ''}...`, status: 'active' },
-      { id: 2, message: 'Running semantic analysis...', status: 'pending' },
-      { id: 3, message: keywords[1] ? `Analyzing ${keywords[1]} patterns...` : 'Analyzing patterns...', status: 'pending' },
-      { id: 4, message: nodeCount > 0 ? `Fetching ${nodeName} context...` : 'Expanding dependency graph...', status: 'pending' },
-      { id: 5, message: 'Synthesizing answer...', status: 'pending' },
-      { id: 6, message: 'Generating citations...', status: 'pending' }
-    ];
+    // Build request payload
+    const payload = {
+      query: queryText,
+      repo_id: currentRepo?.local_repo_id
+    };
 
-    setProgressSteps(steps);
+    if (contextNodes.length > 0) {
+      payload.node_contexts = contextNodes.map(node => ({
+        chunk_id: node.id,
+        name: node.label?.split('\n')[0] || node.id,
+        type: node.type
+      }));
+    }
 
-    const progressInterval = setInterval(() => {
-      setProgressSteps(prev => {
-        const activeIndex = prev.findIndex(s => s.status === 'active');
-        if (activeIndex < prev.length - 1) {
-          return prev.map((s, i) => ({
-            ...s,
-            status: i <= activeIndex ? 'complete' : i === activeIndex + 1 ? 'active' : 'pending'
-          }));
-        }
-        return prev;
-      });
-    }, 1000);
+    let responseText = '';
+    let highlightedNodes = [];
+    let stepId = 0;
 
     try {
-      // OPTION C EXTENDED: Send node_contexts for multi-node queries
-      const payload = {
-        query: queryText,
-        repo_id: currentRepo?.local_repo_id  // Multi-tenant: Explicit repo for user isolation
-      };
+      // Use SSE streaming for real-time progress
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/query_stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-      if (contextNodes.length > 0) {
-        payload.node_contexts = contextNodes.map(node => ({
-          chunk_id: node.id,
-          name: node.label?.split('\n')[0] || node.id,
-          type: node.type
-        }));
+      if (!response.ok) {
+        throw new Error(`Query failed: ${response.statusText}`);
       }
 
-      const res = await API.post('/api/query', payload);
-      clearInterval(progressInterval);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const responseText = res.data.response || res.data;
-      const botMessage = { type: 'bot', text: responseText };
-      setChatHistory(prev => [...prev, botMessage]);
+      // Read SSE stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      if (res.data.highlighted_nodes) {
-        handleHighlightNodes(res.data.highlighted_nodes);
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split by SSE delimiter (double newline)
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            switch (event.type) {
+              case 'intent':
+                stepId++;
+                setProgressSteps([{
+                  id: stepId,
+                  message: event.message,
+                  status: 'active',
+                  detail: event.language !== event.codebase_language ? `${event.language} (cross-language)` : null
+                }]);
+                break;
+
+              case 'expand':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active',
+                    detail: event.terms?.slice(0, 4).join(', ')
+                  }
+                ]);
+                break;
+
+              case 'decompose':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active',
+                    detail: event.sub_queries?.[0]?.substring(0, 40)
+                  }
+                ]);
+                break;
+
+              case 'search':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active',
+                    detail: event.sample_files?.slice(0, 3).join(', ')
+                  }
+                ]);
+                break;
+
+              case 'rerank':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active',
+                    detail: event.top_file ? `Top: ${event.top_file}` : null
+                  }
+                ]);
+                break;
+
+              case 'context':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active',
+                    detail: `${event.chunk_count} chunks`
+                  }
+                ]);
+                break;
+
+              case 'llm_start':
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'active'
+                  }
+                ]);
+                break;
+
+              case 'token':
+                // Accumulate response tokens (typewriter effect in Chatbot)
+                responseText += event.token;
+                // Update the last message in chat history with streaming response
+                setChatHistory(prev => {
+                  const updated = [...prev];
+                  const lastIdx = updated.length - 1;
+                  if (lastIdx >= 0 && updated[lastIdx].type === 'bot' && updated[lastIdx].streaming) {
+                    updated[lastIdx] = { type: 'bot', text: responseText, streaming: true };
+                  } else {
+                    updated.push({ type: 'bot', text: responseText, streaming: true });
+                  }
+                  return updated;
+                });
+                break;
+
+              case 'truncated':
+                // Response was cut off at token limit - add warning
+                stepId++;
+                setProgressSteps(prev => [
+                  ...prev.map(s => ({ ...s, status: 'complete' })),
+                  {
+                    id: stepId,
+                    message: event.message,
+                    status: 'error',  // Show as warning/error
+                    detail: 'Response may be incomplete'
+                  }
+                ]);
+                // Append truncation notice to response
+                responseText += '\n\n---\n*⚠️ Response was truncated due to length limit. Try a more specific query for complete results.*';
+                setChatHistory(prev => {
+                  const updated = [...prev];
+                  const lastIdx = updated.length - 1;
+                  if (lastIdx >= 0 && updated[lastIdx].streaming) {
+                    updated[lastIdx] = { type: 'bot', text: responseText, streaming: true };
+                  }
+                  return updated;
+                });
+                break;
+
+              case 'done':
+                // Mark all steps complete
+                setProgressSteps(prev => prev.map(s => ({ ...s, status: 'complete' })));
+                highlightedNodes = event.highlighted_nodes || [];
+
+                // Finalize the response (remove streaming flag)
+                setChatHistory(prev => {
+                  const updated = [...prev];
+                  const lastIdx = updated.length - 1;
+                  if (lastIdx >= 0 && updated[lastIdx].streaming) {
+                    updated[lastIdx] = { type: 'bot', text: responseText };
+                  }
+                  return updated;
+                });
+
+                if (highlightedNodes.length > 0) {
+                  handleHighlightNodes(highlightedNodes);
+                }
+                break;
+
+              case 'error':
+                setProgressSteps([{ id: 999, message: event.message, status: 'error' }]);
+                setChatHistory(prev => [...prev, { type: 'bot', text: event.message }]);
+                break;
+
+              default:
+                console.log('Unknown event type:', event.type);
+            }
+          } catch (e) {
+            console.error('Error parsing SSE event:', e);
+          }
+        }
       }
 
-      // Phase 3: Auto-save session after query
-      if (currentSession && user) {
+      // Auto-save session after query
+      if (currentSession && user && responseText) {
+        const botMessage = { type: 'bot', text: responseText };
         const updatedMessages = [...chatHistory, newMessage, botMessage];
-
-        // Generate title from first query
         const sessionTitle = currentSession.title || queryText.substring(0, 50);
 
-        // Auto-save (debounced, non-blocking)
         setTimeout(async () => {
           try {
             await API.put(`/api/sessions/${currentSession.id}`, {
@@ -203,7 +364,7 @@ const GraphChat = () => {
                 name: n.label?.split('\n')[0],
                 type: n.type
               })),
-              highlighted_nodes: res.data.highlighted_nodes || [],  // Save graph state
+              highlighted_nodes: highlightedNodes,
               title: sessionTitle
             });
             console.log('💾 Session auto-saved');
@@ -212,20 +373,19 @@ const GraphChat = () => {
           }
         }, 500);
       }
+
     } catch (error) {
-      clearInterval(progressInterval);
-
+      console.error('Query error:', error);
       let errorMessage = 'Error querying Visdep';
-      if (error.response?.status === 400) {
-        errorMessage = error.response.data?.detail || 'Please upload a repository first.';
+      if (error.message) {
+        errorMessage = error.message;
       }
-
       setChatHistory(prev => [...prev, { type: 'bot', text: errorMessage }]);
     } finally {
       setIsLoading(false);
       setProgressSteps([]);
     }
-  }, [isLoading, handleHighlightNodes, selectedNodes]);
+  }, [isLoading, handleHighlightNodes, selectedNodes, currentRepo, currentSession, user, chatHistory]);
 
   const handleExplain = useCallback(async (node) => {
     setActiveTab('chat');

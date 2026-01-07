@@ -1312,8 +1312,11 @@ class ChatSession:
         # Build prompt
         prompt = self._build_claude_prompt(query, context_text, assembled)
 
-        # Stream Claude response
+        # Stream Claude response (filter out truncation markers)
         async for token in self._query_claude_stream(prompt):
+            # Skip truncation markers (dict), only yield text tokens (str)
+            if isinstance(token, dict):
+                continue
             yield token
 
     async def _chat_with_claude(self, query: str, node_contexts: List[dict] = None) -> str:
@@ -1698,6 +1701,331 @@ class ChatSession:
             'highlighted_nodes': highlighted_nodes
         }
 
+    async def _chat_with_progress_stream(self, query: str, node_contexts: List[dict] = None):
+        """
+        SOTA: Chat with real-time progress streaming for interactive UX.
+
+        Yields progress events at each pipeline stage with REAL values,
+        then streams response tokens for typewriter effect.
+
+        Event types:
+        - intent: Query intent language detection
+        - expand: Query expansion with terms
+        - decompose: Query decomposition (complex queries)
+        - search: Hybrid search results
+        - rerank: Cross-encoder reranking
+        - context: Context assembly
+        - llm_start: Claude generation starting
+        - token: Response token (streamed)
+        - done: Complete with citations and highlights
+
+        Args:
+            query: User query
+            node_contexts: Optional node contexts for per-node queries
+
+        Yields:
+            Dict with 'type' and event-specific data
+        """
+        import time
+        start_time = time.time()
+
+        # =====================================================================
+        # STEP 0: Query Analysis
+        # =====================================================================
+        query_lower = query.lower()
+        is_complex = any(word in query_lower for word in
+                        ['complete', 'entire', 'all', 'flow', 'trace', 'execution', 'how does'])
+        is_flow_query = any(phrase in query_lower for phrase in [
+            'trace', 'flow', 'execution', 'call chain', 'step by step',
+            'walk through', 'path from', 'sequence', 'what happens when',
+            'creation flow', 'how is', 'how are', 'how does'
+        ])
+        is_architectural = any(phrase in query_lower for phrase in [
+            'architecture', 'how does', 'interact', 'relationship', 'flow',
+            'where do i', 'hook in', 'structure', 'overview', 'main component'
+        ])
+
+        chunk_count = len(self.full_context) if isinstance(self.full_context, dict) else 0
+        is_mega_repo = chunk_count > 50000
+
+        if is_flow_query:
+            flow_top_k = 40 if is_mega_repo else 50
+            flow_expand_max = 60 if is_mega_repo else 100
+            flow_expand_depth = 3 if is_mega_repo else 4
+        else:
+            flow_top_k = 20
+            flow_expand_max = 30
+            flow_expand_depth = 3
+
+        # =====================================================================
+        # STEP 1: Query Intent Detection
+        # =====================================================================
+        chunks_list = list(self.full_context.values()) if isinstance(self.full_context, dict) else []
+
+        codebase_languages = {}
+        for chunk in chunks_list[:500]:
+            file_type = chunk.get('metadata', {}).get('file_type', 'unknown')
+            lang_map = {
+                'rs': 'rust', 'py': 'python', 'js': 'javascript', 'ts': 'typescript',
+                'c': 'c', 'cpp': 'cpp', 'go': 'go', 'java': 'java', 'jsx': 'javascript', 'tsx': 'typescript'
+            }
+            lang = lang_map.get(file_type, file_type)
+            codebase_languages[lang] = codebase_languages.get(lang, 0) + 1
+
+        codebase_language = max(codebase_languages.items(), key=lambda x: x[1])[0] if codebase_languages else "unknown"
+
+        try:
+            language = await detect_query_intent_language_llm(
+                query=query,
+                codebase_languages=codebase_languages,
+                anthropic_client=self.claude_client,
+                use_cache=True
+            )
+        except:
+            language = detect_query_intent_language(query, codebase_language)
+
+        yield {
+            'type': 'intent',
+            'message': f'Detected {language} query' + (f' (codebase is {codebase_language})' if language != codebase_language else ''),
+            'language': language,
+            'codebase_language': codebase_language,
+            'elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
+        # =====================================================================
+        # STEP 2: Query Expansion
+        # =====================================================================
+        expanded_query = await expand_query_with_llm(query, language, self.claude_client)
+
+        # Extract expansion terms (difference between expanded and original)
+        original_terms = set(query.lower().split())
+        expanded_terms = [t for t in expanded_query.lower().split() if t not in original_terms][:8]
+
+        yield {
+            'type': 'expand',
+            'message': f'Expanded with {len(expanded_terms)} technical terms',
+            'terms': expanded_terms,
+            'elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
+        # =====================================================================
+        # STEP 3: Query Decomposition (complex queries only)
+        # =====================================================================
+        if is_complex:
+            sub_queries = await decompose_query(query, self.claude_client)
+
+            yield {
+                'type': 'decompose',
+                'message': f'Split into {len(sub_queries)} sub-queries',
+                'sub_queries': sub_queries[:3],  # Show first 3
+                'elapsed_ms': int((time.time() - start_time) * 1000)
+            }
+
+            # Process sub-queries in parallel
+            async def process_sub_query(sq, idx):
+                try:
+                    sq_expanded = await expand_query_with_llm(sq, language, self.claude_client)
+                    return self.hybrid_retriever.hybrid_search(
+                        query=sq_expanded,
+                        top_k=flow_top_k // len(sub_queries) + 5,
+                        expand=True,
+                        expand_max=flow_expand_max // len(sub_queries),
+                        expand_depth=flow_expand_depth
+                    )
+                except:
+                    return []
+
+            tasks = [process_sub_query(sq, i) for i, sq in enumerate(sub_queries, 1)]
+            results = await asyncio.gather(*tasks)
+
+            all_chunks = [chunk for result in results for chunk in result]
+            seen = set()
+            deduped = []
+            for chunk in all_chunks:
+                if chunk['chunk_id'] not in seen:
+                    seen.add(chunk['chunk_id'])
+                    deduped.append(chunk)
+            top_chunks = deduped[:flow_top_k]
+        else:
+            # Agentic retrieval with reflection
+            top_chunks = await agentic_retrieval_with_reflection(
+                query=expanded_query,
+                hybrid_retriever=self.hybrid_retriever,
+                anthropic_client=self.claude_client,
+                language=language,
+                max_iterations=2,
+                top_k=flow_top_k
+            )
+
+        if not top_chunks:
+            yield {
+                'type': 'error',
+                'message': "No relevant code found",
+                'elapsed_ms': int((time.time() - start_time) * 1000)
+            }
+            return
+
+        # =====================================================================
+        # STEP 4: Search Results
+        # =====================================================================
+        # Get unique files from chunks
+        files_found = list(set(c.get('file_path', '').split('/')[-1] for c in top_chunks if c.get('file_path')))[:5]
+
+        yield {
+            'type': 'search',
+            'message': f'Found {len(top_chunks)} relevant chunks across {len(set(c.get("file_path") for c in top_chunks))} files',
+            'chunk_count': len(top_chunks),
+            'sample_files': files_found,
+            'elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
+        # Handle node contexts (force selected nodes into context)
+        if node_contexts and len(node_contexts) > 0:
+            forced_chunks = []
+            for node_ctx in node_contexts:
+                target_id = node_ctx.get('chunk_id')
+                node_type = node_ctx.get('type', 'unknown')
+
+                if node_type in ['file', 'directory']:
+                    file_chunks = [c for c in chunks_list
+                                   if c.get('file_path') == target_id or
+                                   c.get('chunk_id', '').startswith(target_id + '::')]
+                    forced_chunks.extend(file_chunks[:10])
+                else:
+                    target = next((c for c in chunks_list if c.get('chunk_id') == target_id), None)
+                    if target:
+                        forced_chunks.append(target)
+
+            forced_ids = {c['chunk_id'] for c in forced_chunks}
+            retrieval_filtered = [c for c in top_chunks if c['chunk_id'] not in forced_ids]
+            top_chunks = forced_chunks + retrieval_filtered[:5]
+
+        # =====================================================================
+        # STEP 5: Cross-encoder Reranking
+        # =====================================================================
+        if is_complex or is_flow_query:
+            rerank_k = 20 if is_flow_query else 15
+            reranked_chunks = self.reranker.rerank(query, top_chunks, top_k=rerank_k, max_chunks_to_rerank=15)
+
+            # Get top file from reranking
+            top_file = reranked_chunks[0].get('file_path', '').split('/')[-1] if reranked_chunks else None
+
+            yield {
+                'type': 'rerank',
+                'message': f'Reranked to top {len(reranked_chunks)} most relevant chunks',
+                'chunk_count': len(reranked_chunks),
+                'top_file': top_file,
+                'elapsed_ms': int((time.time() - start_time) * 1000)
+            }
+        else:
+            reranked_chunks = top_chunks[:15]
+            yield {
+                'type': 'rerank',
+                'message': f'Selected top {len(reranked_chunks)} chunks (simple query)',
+                'chunk_count': len(reranked_chunks),
+                'elapsed_ms': int((time.time() - start_time) * 1000)
+            }
+
+        # =====================================================================
+        # STEP 6: Context Assembly
+        # =====================================================================
+        max_tokens = self._calculate_dynamic_token_budget(is_complex)
+        avg_tokens_per_chunk = 500
+        include_full = min(len(reranked_chunks), max_tokens // avg_tokens_per_chunk, 30)
+
+        self.context_assembler.max_tokens = max_tokens
+        assembled = self.context_assembler.assemble_context(reranked_chunks, include_full_code_top_n=include_full)
+
+        # HCGS for architectural queries
+        hcgs_context = ""
+        if is_architectural and self.hierarchical_summaries:
+            relevant_summaries = await retrieve_relevant_summaries(
+                query, self.hierarchical_summaries, self.claude_client, top_packages=10, top_files=20
+            )
+            hcgs_parts = []
+            if relevant_summaries.get('repo'):
+                hcgs_parts.append("## Repository Overview\n" + relevant_summaries['repo'])
+            if relevant_summaries.get('packages'):
+                hcgs_parts.append("\n## Key Components\n")
+                for pkg_path, pkg_summary in relevant_summaries['packages'][:10]:
+                    hcgs_parts.append(f"**{pkg_path}**: {pkg_summary}\n")
+            hcgs_context = "\n".join(hcgs_parts)
+
+        context_text = hcgs_context + "\n" + "\n".join(assembled['context_parts'])
+
+        yield {
+            'type': 'context',
+            'message': f'Assembled {assembled["total_tokens"]:,} tokens of context',
+            'token_count': assembled['total_tokens'],
+            'chunk_count': assembled['chunks_included'],
+            'elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
+        # =====================================================================
+        # STEP 7: Claude LLM Generation (Streaming)
+        # =====================================================================
+        yield {
+            'type': 'llm_start',
+            'message': 'Generating answer with Claude...',
+            'elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
+        # Build prompt
+        prompt = self._build_claude_prompt(query, context_text, assembled, node_contexts)
+
+        # Stream response tokens
+        response_text = ""
+        was_truncated = False
+        truncation_limit = None
+        async for token in self._query_claude_stream(prompt):
+            # Check for truncation marker (dict) vs actual token (str)
+            if isinstance(token, dict) and token.get('_meta') == 'truncated':
+                was_truncated = True
+                truncation_limit = token.get('max_tokens')
+                continue
+            response_text += token
+            yield {
+                'type': 'token',
+                'token': token
+            }
+
+        # Emit truncation warning if response was cut off
+        if was_truncated:
+            yield {
+                'type': 'truncated',
+                'message': f'Response was truncated at {truncation_limit:,} tokens',
+                'max_tokens': truncation_limit,
+                'elapsed_ms': int((time.time() - start_time) * 1000)
+            }
+
+        # =====================================================================
+        # STEP 8: Citation Extraction & Completion
+        # =====================================================================
+        first_node_context = node_contexts[0] if node_contexts and len(node_contexts) > 0 else None
+        citations = extract_citations_from_response(response_text, first_node_context)
+
+        highlighted_nodes = []
+        if citations and self.repo_id:
+            from backend.api.data_storage import map_citations_to_chunk_ids
+            highlighted_nodes = map_citations_to_chunk_ids(citations, self.repo_id)
+
+            # Mega-repo: convert chunk IDs to file paths
+            if chunk_count > 50000 and highlighted_nodes:
+                file_paths = []
+                for chunk_id in highlighted_nodes:
+                    file_path = chunk_id.split('::')[0] if '::' in chunk_id else chunk_id
+                    if file_path not in file_paths:
+                        file_paths.append(file_path)
+                highlighted_nodes = file_paths
+
+        yield {
+            'type': 'done',
+            'message': 'Complete',
+            'citations': citations,
+            'highlighted_nodes': highlighted_nodes,
+            'total_elapsed_ms': int((time.time() - start_time) * 1000)
+        }
+
     async def _chat_with_claude_legacy(self, query: str) -> str:
         """
         Use Claude with old file-level context (no hybrid retrieval)
@@ -1911,9 +2239,10 @@ Your answer:"""
         try:
             # Use Claude 4.0 Sonnet with prompt caching
             # Cache system + context (1,129-6,642 tokens) for 90% cost savings
-            # Flow queries need more tokens for detailed step-by-step traces (4000 vs 2000)
+            # Flow queries need more tokens for detailed step-by-step traces
+            # Claude Sonnet 4 supports up to 64k output tokens - we use 16k for flow, 4k for normal
             is_flow_query = prompt_parts.get('is_flow_query', False)
-            max_tokens = 4000 if is_flow_query else 2000
+            max_tokens = 16000 if is_flow_query else 4000
             logging.info(f"🎯 Claude max_tokens={max_tokens} (is_flow_query={is_flow_query})")
 
             response = self.claude_client.messages.create(
@@ -1975,16 +2304,21 @@ Your answer:"""
                          and 'is_flow_query' (bool for token limit)
 
         Yields:
-            Token chunks from Claude
+            Token chunks (str) from Claude, then optionally a truncation marker (dict)
+            at the end if response was cut off at max_tokens limit.
+
+            Truncation marker format: {'_meta': 'truncated', 'max_tokens': <limit>}
         """
         try:
             # Use Claude 4.0 Sonnet with streaming + caching
-            # Flow queries need more tokens for detailed step-by-step traces (4000 vs 2000)
+            # Flow queries need more tokens for detailed step-by-step traces
+            # Claude Sonnet 4 supports up to 64k output tokens - we use 16k for flow, 4k for normal
             is_flow_query = prompt_parts.get('is_flow_query', False)
-            max_tokens = 4000 if is_flow_query else 2000
+            max_tokens = 16000 if is_flow_query else 4000
             logging.info(f"🎯 Claude stream max_tokens={max_tokens} (is_flow_query={is_flow_query})")
 
             full_response = ""
+            was_truncated = False
 
             with self.claude_client.messages.stream(
                 model="claude-sonnet-4-20250514",
@@ -2011,6 +2345,12 @@ Your answer:"""
                     full_response += text
                     yield text
 
+                # Check if response was truncated at token limit
+                final_message = stream.get_final_message()
+                if final_message.stop_reason == "max_tokens":
+                    was_truncated = True
+                    logging.warning(f"⚠️ Response truncated at {max_tokens} tokens (stop_reason=max_tokens)")
+
             # Reconstruct full prompt for memory
             full_prompt = prompt_parts['system_and_context'] + "\n" + prompt_parts['query_part']
 
@@ -2019,6 +2359,10 @@ Your answer:"""
                 {"input": full_prompt},
                 {"output": full_response}
             )
+
+            # Yield truncation marker at the end if response was cut off
+            if was_truncated:
+                yield {'_meta': 'truncated', 'max_tokens': max_tokens}
 
         except Exception as e:
             logging.error(f"Error in Claude streaming: {e}")
@@ -2063,6 +2407,76 @@ async def get_jamba_response_stream(query: str, context: Dict[str, Any], repo_id
     except Exception as e:
         logging.error(f"Error in streaming response: {e}")
         yield f"Error: {str(e)}"
+
+
+async def get_jamba_response_progress_stream(
+    query: str,
+    context: Dict[str, Any],
+    repo_id: int = None,
+    node_contexts: List[dict] = None
+):
+    """
+    SOTA: Streaming query with real-time progress events.
+
+    Yields progress events at each pipeline stage with REAL values,
+    then streams response tokens for typewriter effect.
+
+    This is used by /api/query_stream for interactive "agent thinking" UX.
+
+    Event types:
+    - intent: Query intent language detection
+    - expand: Query expansion with terms
+    - decompose: Query decomposition (complex queries)
+    - search: Hybrid search results
+    - rerank: Cross-encoder reranking
+    - context: Context assembly
+    - llm_start: Claude generation starting
+    - token: Response token (streamed)
+    - done: Complete with citations and highlights
+
+    Args:
+        query: User query
+        context: Code context
+        repo_id: Repository ID
+        node_contexts: Optional node contexts for per-node queries
+
+    Yields:
+        Dict with 'type' and event-specific data
+    """
+    try:
+        logging.info(f"🚀 Progress stream query: {query[:50]}...")
+
+        # Build session (same as batch)
+        context_string = json.dumps(context, sort_keys=True)
+        session_id = hashlib.md5(context_string.encode()).hexdigest()
+
+        if session_id not in chat_sessions:
+            chat_sessions[session_id] = ChatSession(repo_id=repo_id)
+            await chat_sessions[session_id].initialize_conversation_chain(context)
+
+        chat_session = chat_sessions[session_id]
+
+        # Update repo_id if needed
+        if repo_id and chat_session.repo_id != repo_id:
+            chat_session.repo_id = repo_id
+
+        # Check if hybrid retriever and reranker available
+        if not chat_session.claude_client or not chat_session.hybrid_retriever or not chat_session.reranker:
+            # Fallback to non-streaming response
+            response = await chat_session.chat(query, node_contexts=node_contexts)
+            yield {'type': 'token', 'token': response}
+            yield {'type': 'done', 'message': 'Complete', 'citations': [], 'highlighted_nodes': []}
+            return
+
+        # Stream progress events
+        async for event in chat_session._chat_with_progress_stream(query, node_contexts=node_contexts):
+            yield event
+
+    except IndexingInProgressError as e:
+        yield {'type': 'error', 'message': str(e), 'indexing_in_progress': True}
+    except Exception as e:
+        logging.error(f"Error in progress stream: {e}", exc_info=True)
+        yield {'type': 'error', 'message': f"Error: {str(e)}"}
 
 
 async def get_jamba_response(query: str, context: Dict[str, Any], repo_id: int = None, node_contexts: List[dict] = None) -> str:
