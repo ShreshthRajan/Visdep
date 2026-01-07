@@ -19,6 +19,11 @@ const GraphChat = () => {
   const [showHistory, setShowHistory] = useState(false);  // Phase 2: Repo history panel
   const [showChats, setShowChats] = useState(false);  // Phase 3: Chat history panel
 
+  // Resizable chat panel
+  const [chatPanelWidth, setChatPanelWidth] = useState(384);  // Default w-96 = 384px
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef(null);
+
   // Phase 3: Session management
   const [currentRepo, setCurrentRepo] = useState(null);  // Current repo metadata from Supabase
   const [currentSession, setCurrentSession] = useState(null);  // Current chat session
@@ -38,6 +43,38 @@ const GraphChat = () => {
   useEffect(() => {
     selectedNodesRef.current = selectedNodes;
   }, [selectedNodes]);
+
+  // Resizable panel handlers
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+
+      // Calculate new width based on mouse position from right edge
+      const newWidth = window.innerWidth - e.clientX;
+
+      // Clamp between min (320px) and max (800px)
+      const clampedWidth = Math.min(Math.max(newWidth, 320), 800);
+      setChatPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = 'default';
+      document.body.style.userSelect = 'auto';
+    };
+
+    if (isResizing) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
 
   // Phase 3: Initialize currentRepo from sessionStorage after upload
   useEffect(() => {
@@ -611,8 +648,10 @@ const GraphChat = () => {
 
       {/* Right HUD Glass Overlay - Glass Cockpit with Neural Blue Sync */}
       <div
-        className="absolute right-0 top-0 bottom-0 w-96 z-50 transition-all duration-300"
+        ref={resizeRef}
+        className="absolute right-0 top-0 bottom-0 z-50"
         style={{
+          width: `${chatPanelWidth}px`,
           backgroundColor: 'rgba(9, 9, 11, 0.75)',  // More transparent for ghosting
           backdropFilter: 'blur(48px) saturate(180%)',  // blur-3xl + saturation for node ghosts
           borderLeft: selectedNodes.length > 0
@@ -620,9 +659,27 @@ const GraphChat = () => {
             : '1px solid rgba(255, 255, 255, 0.1)',  // Default white/10
           boxShadow: selectedNodes.length > 0
             ? '-2px 0 8px rgba(34, 211, 238, 0.2)'  // Cyan glow when active
-            : 'none'
+            : 'none',
+          transition: isResizing ? 'none' : 'box-shadow 0.3s, border-color 0.3s'
         }}
       >
+        {/* Resize Handle */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-50 group"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setIsResizing(true);
+          }}
+          style={{
+            backgroundColor: isResizing ? 'rgba(59, 130, 246, 0.5)' : 'transparent'
+          }}
+        >
+          {/* Visual indicator on hover */}
+          <div
+            className="absolute left-0 top-0 bottom-0 w-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ backgroundColor: 'rgba(59, 130, 246, 0.3)' }}
+          />
+        </div>
         {/* Upload button in top-right */}
         <div className="absolute top-4 left-4 z-60">
           <button
