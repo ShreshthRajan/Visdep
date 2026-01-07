@@ -1590,8 +1590,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           onClick={() => handleNodeTypeToggle('directory')}
           className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
           style={{
-            backgroundColor: selectedNodeTypes['directory'] ? 'rgba(113, 113, 122, 0.2)' : 'transparent',
-            color: selectedNodeTypes['directory'] ? '#f4f4f5' : '#52525b',
+            backgroundColor: selectedNodeTypes['directory'] ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
+            color: selectedNodeTypes['directory'] ? '#10b981' : '#52525b',
             fontFamily: "'JetBrains Mono', monospace",
             textTransform: 'uppercase',
             letterSpacing: '0.5px'
@@ -1632,8 +1632,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           onClick={() => handleNodeTypeToggle('method')}
           className="px-2 py-1 text-[10px] font-medium transition-all rounded-md"
           style={{
-            backgroundColor: selectedNodeTypes['method'] ? 'rgba(167, 139, 250, 0.2)' : 'transparent',
-            color: selectedNodeTypes['method'] ? '#a78bfa' : '#52525b',
+            backgroundColor: selectedNodeTypes['method'] ? 'rgba(249, 115, 22, 0.2)' : 'transparent',
+            color: selectedNodeTypes['method'] ? '#f97316' : '#52525b',
             fontFamily: "'JetBrains Mono', monospace",
             textTransform: 'uppercase',
             letterSpacing: '0.5px'
@@ -1696,7 +1696,7 @@ const nodeTypes = {
   import: { border: '#52525b', background: '#18181b' },  // Muted
   package: { border: '#52525b', background: '#18181b' },  // Muted
   class_definition: { border: '#6366f1', background: '#18181b' },  // Indigo (matches blue vibrance)
-  function: { border: '#3b82f6', background: '#18181b' },  // Blue for functions
+  function: { border: '#eab308', background: '#18181b' },  // Yellow for functions (distinct from blue files)
   method: { border: '#f97316', background: '#18181b' },  // Orange (complements blue, distinct from class)
   module_variable: { border: '#52525b', background: '#18181b' },  // Muted
   default: { border: '#52525b', background: '#18181b' },  // Muted zinc gray
