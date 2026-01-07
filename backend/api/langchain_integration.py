@@ -1346,7 +1346,7 @@ class ChatSession:
         # FIX 4: Detect flow/trace queries specifically for deeper retrieval
         is_flow_query = any(phrase in query_lower for phrase in [
             'trace', 'flow', 'execution', 'call chain', 'step by step',
-            'walk through', 'path from', 'sequence', 'what happens when',
+            'walk through', 'walk me through', 'path from', 'sequence', 'what happens when',
             'creation flow', 'how is', 'how are', 'how does'
         ])
 
@@ -2114,6 +2114,13 @@ Your answer:"""
         # Part 1: System instructions + Code context (CACHEABLE - rarely changes per repo)
         system_and_context = f"""You are an expert software engineer analyzing a codebase. Your role is to help developers understand the code by providing clear, accurate, and insightful explanations.
 
+CRITICAL - RESPONSE FORMAT DETECTION:
+Before answering, analyze what the user is asking for and match your response format:
+- ENUMERATION (user wants a list/all/complete/every/each/show me): Extract and list EVERY literal instance found in the code. Never summarize into categories - list each item individually with its location.
+- EXPLANATION (user wants to understand how something works): Explain the mechanism with code examples.
+- FLOW TRACING (user wants to trace execution): Show step-by-step execution path.
+Use your semantic understanding of the query - this works even with typos or unusual phrasing.
+
 RELEVANT CODE CONTEXT:
 {context_text}
 """
@@ -2239,11 +2246,9 @@ Your answer:"""
         try:
             # Use Claude 4.0 Sonnet with prompt caching
             # Cache system + context (1,129-6,642 tokens) for 90% cost savings
-            # Flow queries need more tokens for detailed step-by-step traces
-            # Claude Sonnet 4 supports up to 64k output tokens - we use 16k for flow, 4k for normal
-            is_flow_query = prompt_parts.get('is_flow_query', False)
-            max_tokens = 16000 if is_flow_query else 4000
-            logging.info(f"🎯 Claude max_tokens={max_tokens} (is_flow_query={is_flow_query})")
+            # Claude Sonnet 4 supports 64k output - use 16k default to avoid truncation
+            max_tokens = 16000
+            logging.info(f"🎯 Claude max_tokens={max_tokens}")
 
             response = self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",
@@ -2311,11 +2316,10 @@ Your answer:"""
         """
         try:
             # Use Claude 4.0 Sonnet with streaming + caching
-            # Flow queries need more tokens for detailed step-by-step traces
-            # Claude Sonnet 4 supports up to 64k output tokens - we use 16k for flow, 4k for normal
-            is_flow_query = prompt_parts.get('is_flow_query', False)
-            max_tokens = 16000 if is_flow_query else 4000
-            logging.info(f"🎯 Claude stream max_tokens={max_tokens} (is_flow_query={is_flow_query})")
+            # Claude Sonnet 4 supports 64k output tokens - we use 16k as robust default
+            # No keyword-based detection needed: max_tokens is just a ceiling, cost is per actual output
+            max_tokens = 16000
+            logging.info(f"🎯 Claude stream max_tokens={max_tokens}")
 
             full_response = ""
             was_truncated = False
