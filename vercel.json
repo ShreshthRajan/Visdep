@@ -12,12 +12,11 @@
   ],
   "routes": [
     {
-      "src": "/(.+\\.[a-z0-9]+)$",
-      "dest": "/frontend/$1"
+      "handle": "filesystem"
     },
     {
       "src": "/(.*)",
-      "dest": "/frontend/index.html"
+      "dest": "/index.html"
     }
   ]
 }
