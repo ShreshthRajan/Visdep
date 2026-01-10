@@ -65,25 +65,31 @@ async def list_sessions(user_id: str, user_repo_id: str):
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, user_id: str):
     """
     Get full session data
+
+    Args:
+        session_id: Session UUID
+        user_id: User UUID (required for authorization)
 
     Returns: messages, context_nodes, title
     """
     try:
         supabase = get_supabase_client()
 
+        # Security: Validate user owns this session
         result = supabase.table('chat_sessions')\
             .select('*')\
             .eq('id', session_id)\
+            .eq('user_id', user_id)\
             .single()\
             .execute()
 
         if not result.data:
-            raise HTTPException(status_code=404, detail="Session not found")
+            raise HTTPException(status_code=404, detail="Session not found or access denied")
 
-        logging.info(f"✅ Loaded session {session_id}")
+        logging.info(f"✅ Loaded session {session_id} for user {user_id}")
 
         return result.data
 
@@ -122,9 +128,14 @@ async def create_session(session: SessionCreate):
 
 
 @router.put("/sessions/{session_id}")
-async def update_session(session_id: str, update: SessionUpdate):
+async def update_session(session_id: str, update: SessionUpdate, user_id: str):
     """
     Update session (auto-save)
+
+    Args:
+        session_id: Session UUID
+        user_id: User UUID (required for authorization)
+        update: Session data to update
 
     Updates: messages, context_nodes, title
     """
@@ -141,32 +152,57 @@ async def update_session(session_id: str, update: SessionUpdate):
         if update.title:
             update_data['title'] = update.title
 
+        # Security: Only update if user owns this session
         result = supabase.table('chat_sessions')\
             .update(update_data)\
             .eq('id', session_id)\
+            .eq('user_id', user_id)\
             .execute()
 
-        logging.info(f"✅ Updated session {session_id}")
+        # Check if any row was updated (empty data means no match)
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Session not found or access denied")
+
+        logging.info(f"✅ Updated session {session_id} for user {user_id}")
 
         return {'message': 'Session updated'}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"❌ Error updating session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
-    """Delete session"""
+async def delete_session(session_id: str, user_id: str):
+    """
+    Delete session
+
+    Args:
+        session_id: Session UUID
+        user_id: User UUID (required for authorization)
+    """
     try:
         supabase = get_supabase_client()
 
-        supabase.table('chat_sessions').delete().eq('id', session_id).execute()
+        # Security: Only delete if user owns this session
+        result = supabase.table('chat_sessions')\
+            .delete()\
+            .eq('id', session_id)\
+            .eq('user_id', user_id)\
+            .execute()
 
-        logging.info(f"✅ Deleted session {session_id}")
+        # Check if any row was deleted
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Session not found or access denied")
+
+        logging.info(f"✅ Deleted session {session_id} for user {user_id}")
 
         return {'message': 'Session deleted'}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"❌ Error deleting session: {e}")
         raise HTTPException(status_code=500, detail=str(e))

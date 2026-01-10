@@ -13,8 +13,10 @@ const supabaseUrl = process.env.REACT_APP_SUPABASE_URL
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('❌ Missing Supabase environment variables')
-  console.error('Required: REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY')
+  const errorMsg = 'Missing Supabase environment variables. Required: REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY'
+  console.error('❌ ' + errorMsg)
+  // Throw to fail fast with clear error instead of cryptic runtime failures
+  throw new Error(errorMsg)
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

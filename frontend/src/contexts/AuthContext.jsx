@@ -50,9 +50,13 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = () => {
-    // Redirect to backend OAuth endpoint
+    // Generate CSRF state token
+    const state = crypto.randomUUID();
+    sessionStorage.setItem('oauth_state', state);
+
+    // Redirect to backend OAuth endpoint with state
     const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-    window.location.href = `${apiUrl}/api/auth/github`;
+    window.location.href = `${apiUrl}/api/auth/github?state=${encodeURIComponent(state)}`;
   };
 
   const setUserData = (userData, token) => {

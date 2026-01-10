@@ -429,7 +429,7 @@ const GraphChat = () => {
 
         setTimeout(async () => {
           try {
-            await API.put(`/api/sessions/${currentSession.id}`, {
+            await API.put(`/api/sessions/${currentSession.id}?user_id=${user.id}`, {
               messages: updatedMessages,
               context_nodes: selectedNodes.map(n => ({
                 chunk_id: n.id,

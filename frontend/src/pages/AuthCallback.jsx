@@ -27,16 +27,29 @@ const AuthCallback = () => {
     const handleCallback = async () => {
       try {
         const code = searchParams.get('code');
+        const state = searchParams.get('state');
 
         if (!code) {
           setError('No authorization code received');
           return;
         }
 
+        // CSRF validation: Check state matches what we stored
+        const storedState = sessionStorage.getItem('oauth_state');
+        if (!state || !storedState || state !== storedState) {
+          console.error('❌ OAuth state mismatch - possible CSRF attack');
+          setError('Security validation failed. Please try logging in again.');
+          sessionStorage.removeItem('oauth_state');
+          return;
+        }
+
+        // Clear stored state (one-time use)
+        sessionStorage.removeItem('oauth_state');
+
         // Mark as processed immediately
         processedRef.current = true;
 
-        console.log('🔐 Processing OAuth callback...');
+        console.log('🔐 Processing OAuth callback (state validated)...');
 
         // Exchange code for user data via backend
         const response = await API.get(`/api/auth/callback?code=${code}`);

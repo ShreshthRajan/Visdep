@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
+import { toRelativeTime } from '../utils/dateUtils';
 
 const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewChat }) => {
   const [sessions, setSessions] = useState([]);
@@ -168,7 +169,7 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
                       fontFamily: "'JetBrains Mono', monospace"
                     }}
                   >
-                    {new Date(session.updated_at).toRelativeTime()}
+                    {toRelativeTime(session.updated_at)}
                   </span>
                 </div>
               </div>
@@ -228,16 +229,6 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
       `}</style>
     </>
   );
-};
-
-// Helper for relative time (same as HistoryPanel)
-Date.prototype.toRelativeTime = function() {
-  const seconds = Math.floor((new Date() - this) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 2592000) return `${Math.floor(seconds / 86400)}d ago`;
-  return `${Math.floor(seconds / 2592000)}mo ago`;
 };
 
 export default ChatHistoryPanel;

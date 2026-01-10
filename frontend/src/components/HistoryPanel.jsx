@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
+import { toRelativeTime } from '../utils/dateUtils';
 
 const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
   const [repos, setRepos] = useState([]);
@@ -183,7 +184,7 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
                     marginTop: '4px'
                   }}
                 >
-                  {new Date(repo.last_accessed).toRelativeTime()}
+                  {toRelativeTime(repo.last_accessed)}
                 </p>
               </div>
             ))
@@ -209,17 +210,6 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
       `}</style>
     </>
   );
-};
-
-// Helper for relative time display
-Date.prototype.toRelativeTime = function() {
-  const seconds = Math.floor((new Date() - this) / 1000);
-
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 2592000) return `${Math.floor(seconds / 86400)}d ago`;
-  return `${Math.floor(seconds / 2592000)}mo ago`;
 };
 
 export default HistoryPanel;

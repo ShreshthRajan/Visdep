@@ -12,9 +12,43 @@ DATABASE_PATH = os.getenv('DATABASE_PATH', 'data_storage.db')
 # FAISS indexes directory - also on persistent volume in production
 FAISS_DIR = os.getenv('FAISS_DIR', 'faiss_indexes')
 
-# In-memory chunks cache for production performance (eliminates repeated Supabase fetches)
-# Cleared on repo re-upload, persists across query sessions
-_chunks_cache = {}
+# In-memory chunks cache with LRU eviction for production performance
+# Prevents unbounded memory growth while eliminating repeated Supabase fetches
+from collections import OrderedDict
+
+class LRUCache(OrderedDict):
+    """
+    Thread-safe LRU cache with max size limit.
+
+    When cache exceeds maxsize, oldest entries are evicted.
+    Uses OrderedDict for O(1) access and LRU tracking.
+    """
+    def __init__(self, maxsize=50):
+        super().__init__()
+        self.maxsize = maxsize
+
+    def __getitem__(self, key):
+        # Move accessed item to end (most recently used)
+        self.move_to_end(key)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        # Evict oldest if over capacity
+        while len(self) > self.maxsize:
+            oldest = next(iter(self))
+            del self[oldest]
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        return default
+
+# Max 50 repos cached (each repo ~2-10MB for medium repos, ~50MB for mega-repos)
+# Total max memory: ~500MB-1GB which fits Railway's 8GB limit with headroom
+_chunks_cache = LRUCache(maxsize=50)
 
 
 def initialize_database():

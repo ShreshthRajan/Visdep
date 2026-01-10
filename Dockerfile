@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend ./backend
-COPY .env.example .env
+# Note: Environment variables are injected by Railway/Docker at runtime
+# Do NOT copy .env files - they would override production env vars
 
 # Copy startup script
 COPY start.sh /app/start.sh
