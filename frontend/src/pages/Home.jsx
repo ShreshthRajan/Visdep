@@ -88,10 +88,12 @@ const Home = () => {
 
   return (
     <div
-      className="relative w-screen h-screen overflow-hidden flex items-center justify-center"
+      className="relative w-screen min-h-screen overflow-y-auto flex items-center justify-center"
       style={{
         backgroundColor: isDragging ? '#0a0a0f' : '#050505',
-        transition: 'background-color 0.3s ease'
+        transition: 'background-color 0.3s ease',
+        paddingTop: 'clamp(20px, 4vh, 60px)',
+        paddingBottom: 'clamp(20px, 4vh, 60px)'
       }}
       onMouseMove={handleMouseMove}
     >
@@ -145,7 +147,7 @@ const Home = () => {
           style={{
             fontFamily: "'Inter Tight', 'Inter', sans-serif",
             color: '#ffffff',
-            fontSize: '104px',
+            fontSize: 'clamp(48px, 10vw, 104px)',
             letterSpacing: '-0.08em',
             lineHeight: 0.85,
             fontWeight: 900,
@@ -159,12 +161,13 @@ const Home = () => {
 
         {/* Technical Status - JetBrains Mono */}
         <div
-          className="text-xs mb-24"
+          className="text-xs"
           style={{
             fontFamily: "'JetBrains Mono', monospace",
             color: '#71717a',
             letterSpacing: '0.05em',
-            fontWeight: 500
+            fontWeight: 500,
+            marginBottom: 'clamp(40px, 8vh, 96px)'
           }}
         >
           [ STATUS: READY_FOR_INGESTION ]
@@ -172,8 +175,11 @@ const Home = () => {
 
         {/* The Aperture - Drop Zone */}
         <div
-          className="relative mb-10"
-          style={{ width: '520px' }}
+          className="relative"
+          style={{
+            width: 'clamp(320px, 80vw, 520px)',
+            marginBottom: 'clamp(24px, 4vh, 40px)'
+          }}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
@@ -182,7 +188,7 @@ const Home = () => {
           <div
             className="rounded-lg transition-all duration-300 cursor-pointer relative"
             style={{
-              padding: '70px 50px',
+              padding: 'clamp(40px, 6vh, 70px) clamp(30px, 4vw, 50px)',
               backgroundColor: 'transparent',
               border: isDragging
                 ? '1px dashed rgba(34, 211, 238, 0.95)'
@@ -355,7 +361,7 @@ const Home = () => {
         )}
 
         {/* Footer - Languages */}
-        <div className="text-center mt-24">
+        <div className="text-center" style={{ marginTop: 'clamp(40px, 8vh, 96px)' }}>
           <p
             className="text-xs"
             style={{
