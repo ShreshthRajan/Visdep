@@ -88,12 +88,12 @@ const Home = () => {
 
   return (
     <div
-      className="relative w-screen min-h-screen overflow-y-auto flex items-center justify-center"
+      className="relative w-screen min-h-screen overflow-y-auto flex justify-center"
       style={{
         backgroundColor: isDragging ? '#0a0a0f' : '#050505',
         transition: 'background-color 0.3s ease',
-        paddingTop: 'clamp(20px, 4vh, 60px)',
-        paddingBottom: 'clamp(20px, 4vh, 60px)'
+        paddingTop: 'clamp(40px, 8vh, 80px)',
+        paddingBottom: 'clamp(40px, 8vh, 80px)'
       }}
       onMouseMove={handleMouseMove}
     >
@@ -140,7 +140,7 @@ const Home = () => {
       )}
 
       {/* Center Stack - The Machine */}
-      <div className="relative z-10 flex flex-col items-center">
+      <div className="relative z-10 flex flex-col items-center" style={{ marginTop: 'auto', marginBottom: 'auto' }}>
         {/* Headline - Inter Tight 900, Maximum Compression */}
         <h1
           className="mb-2"
