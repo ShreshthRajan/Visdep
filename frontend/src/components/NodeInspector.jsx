@@ -188,7 +188,7 @@ const NodeInspector = ({ selectedNode, onExplain, onAskQuestion, currentRepoId =
                 marginTop: '6px',
                 fontStyle: 'italic'
               }}>
-                // Showing first 10 lines
+                Showing first 10 lines
               </div>
             )}
           </>

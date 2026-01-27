@@ -6,7 +6,6 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps = [], selectedNodes = [], onClearContext = null, onRemoveNode = null, draggedNode = null, onAddNodeToContext = null, onNewChat = null }) => {
   const [query, setQuery] = useState('');
-  const [isDragOver, setIsDragOver] = useState(false);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -395,7 +394,8 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
               textAlign: 'center',
               letterSpacing: '0.02em'
             }}>
-              // drop here to add to context
+              {/* drop here to add to context */}
+              drop here to add to context
             </div>
           </div>
         ) : null}

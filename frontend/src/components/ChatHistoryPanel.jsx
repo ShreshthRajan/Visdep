@@ -20,6 +20,7 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
     if (isOpen && user && currentRepo) {
       loadSessions();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, user, currentRepo]);
 
   const loadSessions = async () => {
@@ -130,7 +131,8 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
                 paddingTop: '32px'
               }}
             >
-              // No chats yet
+              {/* No chats yet */}
+              No chats yet
             </p>
           ) : (
             sessions.map(session => (

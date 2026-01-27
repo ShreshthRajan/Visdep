@@ -20,6 +20,7 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
     if (isOpen && user) {
       loadUserRepos();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, user]);
 
   const loadUserRepos = async () => {
@@ -128,7 +129,7 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
                   fontFamily: "'JetBrains Mono', monospace"
                 }}
               >
-                // No repositories uploaded yet
+                No repositories uploaded yet
               </p>
             </div>
           ) : (

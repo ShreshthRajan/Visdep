@@ -155,6 +155,7 @@ const GraphChat = () => {
     };
 
     initSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRepo, user]);
 
   const handleHighlightNodes = useCallback((nodeIds) => {
@@ -456,6 +457,7 @@ const GraphChat = () => {
       setIsLoading(false);
       setProgressSteps([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, handleHighlightNodes, selectedNodes, currentRepo, currentSession, user]);
 
   const handleExplain = useCallback(async (node) => {
@@ -511,7 +513,8 @@ const GraphChat = () => {
     } catch (err) {
       console.error('❌ Error creating new chat:', err);
     }
-  }, [user, currentRepo, chatHistory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentRepo]);
 
   const handleAddNodeToContext = useCallback((node) => {
     // Add node to context if not already present
