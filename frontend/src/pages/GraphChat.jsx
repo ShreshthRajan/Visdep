@@ -221,9 +221,8 @@ const GraphChat = () => {
       }));
     }
 
-    let responseText = '';
-    let highlightedNodes = [];
-    let stepId = 0;
+    // Use object to avoid closure issues in loops (ESLint no-loop-func)
+    const state = { responseText: '', highlightedNodes: [], stepId: 0 };
 
     try {
       // Use SSE streaming for real-time progress
@@ -261,9 +260,9 @@ const GraphChat = () => {
 
             switch (event.type) {
               case 'intent':
-                stepId++;
+                state.stepId++;
                 setProgressSteps([{
-                  id: stepId,
+                  id: state.stepId,
                   message: event.message,
                   status: 'active',
                   detail: event.language !== event.codebase_language ? `${event.language} (cross-language)` : null
@@ -271,11 +270,11 @@ const GraphChat = () => {
                 break;
 
               case 'expand':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active',
                     detail: event.terms?.slice(0, 4).join(', ')
@@ -284,11 +283,11 @@ const GraphChat = () => {
                 break;
 
               case 'decompose':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active',
                     detail: event.sub_queries?.[0]?.substring(0, 40)
@@ -297,11 +296,11 @@ const GraphChat = () => {
                 break;
 
               case 'search':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active',
                     detail: event.sample_files?.slice(0, 3).join(', ')
@@ -310,11 +309,11 @@ const GraphChat = () => {
                 break;
 
               case 'rerank':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active',
                     detail: event.top_file ? `Top: ${event.top_file}` : null
@@ -323,11 +322,11 @@ const GraphChat = () => {
                 break;
 
               case 'context':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active',
                     detail: `${event.chunk_count} chunks`
@@ -336,11 +335,11 @@ const GraphChat = () => {
                 break;
 
               case 'llm_start':
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'active'
                   }
@@ -349,15 +348,15 @@ const GraphChat = () => {
 
               case 'token':
                 // Accumulate response tokens (typewriter effect in Chatbot)
-                responseText += event.token;
+                state.responseText += event.token;
                 // Update the last message in chat history with streaming response
                 setChatHistory(prev => {
                   const updated = [...prev];
                   const lastIdx = updated.length - 1;
                   if (lastIdx >= 0 && updated[lastIdx].type === 'bot' && updated[lastIdx].streaming) {
-                    updated[lastIdx] = { type: 'bot', text: responseText, streaming: true };
+                    updated[lastIdx] = { type: 'bot', text: state.responseText, streaming: true };
                   } else {
-                    updated.push({ type: 'bot', text: responseText, streaming: true });
+                    updated.push({ type: 'bot', text: state.responseText, streaming: true });
                   }
                   return updated;
                 });
@@ -365,23 +364,23 @@ const GraphChat = () => {
 
               case 'truncated':
                 // Response was cut off at token limit - add warning
-                stepId++;
+                state.stepId++;
                 setProgressSteps(prev => [
                   ...prev.map(s => ({ ...s, status: 'complete' })),
                   {
-                    id: stepId,
+                    id: state.stepId,
                     message: event.message,
                     status: 'error',  // Show as warning/error
                     detail: 'Response may be incomplete'
                   }
                 ]);
                 // Append truncation notice to response
-                responseText += '\n\n---\n*⚠️ Response was truncated due to length limit. Try a more specific query for complete results.*';
+                state.responseText += '\n\n---\n*⚠️ Response was truncated due to length limit. Try a more specific query for complete results.*';
                 setChatHistory(prev => {
                   const updated = [...prev];
                   const lastIdx = updated.length - 1;
                   if (lastIdx >= 0 && updated[lastIdx].streaming) {
-                    updated[lastIdx] = { type: 'bot', text: responseText, streaming: true };
+                    updated[lastIdx] = { type: 'bot', text: state.responseText, streaming: true };
                   }
                   return updated;
                 });
@@ -390,20 +389,20 @@ const GraphChat = () => {
               case 'done':
                 // Mark all steps complete
                 setProgressSteps(prev => prev.map(s => ({ ...s, status: 'complete' })));
-                highlightedNodes = event.highlighted_nodes || [];
+                state.highlightedNodes = event.highlighted_nodes || [];
 
                 // Finalize the response (remove streaming flag)
                 setChatHistory(prev => {
                   const updated = [...prev];
                   const lastIdx = updated.length - 1;
                   if (lastIdx >= 0 && updated[lastIdx].streaming) {
-                    updated[lastIdx] = { type: 'bot', text: responseText };
+                    updated[lastIdx] = { type: 'bot', text: state.responseText };
                   }
                   return updated;
                 });
 
-                if (highlightedNodes.length > 0) {
-                  handleHighlightNodes(highlightedNodes);
+                if (state.highlightedNodes.length > 0) {
+                  handleHighlightNodes(state.highlightedNodes);
                 }
                 break;
 
@@ -422,8 +421,8 @@ const GraphChat = () => {
       }
 
       // Auto-save session after query
-      if (currentSession && user && responseText) {
-        const botMessage = { type: 'bot', text: responseText };
+      if (currentSession && user && state.responseText) {
+        const botMessage = { type: 'bot', text: state.responseText };
         const updatedMessages = [...chatHistory, newMessage, botMessage];
         const sessionTitle = currentSession.title || queryText.substring(0, 50);
 
@@ -436,7 +435,7 @@ const GraphChat = () => {
                 name: n.label?.split('\n')[0],
                 type: n.type
               })),
-              highlighted_nodes: highlightedNodes,
+              highlighted_nodes: state.highlightedNodes,
               title: sessionTitle
             });
             console.log('💾 Session auto-saved');
@@ -457,7 +456,7 @@ const GraphChat = () => {
       setIsLoading(false);
       setProgressSteps([]);
     }
-  }, [isLoading, handleHighlightNodes, selectedNodes, currentRepo, currentSession, user, chatHistory]);
+  }, [isLoading, handleHighlightNodes, selectedNodes, currentRepo, currentSession, user]);
 
   const handleExplain = useCallback(async (node) => {
     setActiveTab('chat');

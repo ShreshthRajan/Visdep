@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Network, DataSet } from 'vis-network/standalone';
 import { useAuth } from '../contexts/AuthContext';
 import API from '../api';
@@ -9,8 +9,6 @@ import graphStorage from '../utils/graphStorage';
 const Loading = () => {
   const [progress, setProgress] = useState(0);
   const [logs, setLogs] = useState([]);
-  const [currentStep, setCurrentStep] = useState('Initializing...');
-  const [ghostNodes, setGhostNodes] = useState([]);
   const [showFlash, setShowFlash] = useState(false);
   const networkRef = useRef(null);
   const networkInstance = useRef(null);
@@ -111,7 +109,6 @@ const Loading = () => {
 
     const uploadRepo = async () => {
       const repoName = repoUrl.split('/').pop() || 'repository';
-      let eventSource = null;
 
       try {
         // Build upload payload
@@ -147,8 +144,8 @@ const Loading = () => {
         const decoder = new TextDecoder();
         let buffer = '';
 
-        // Node tracking for ghost graph
-        let nodeCounter = 0;
+        // Node tracking for ghost graph (use object to avoid closure issues in loops)
+        const counters = { node: 0 };
         const addedNodes = new Set();
 
         // Read SSE stream
@@ -222,7 +219,7 @@ const Loading = () => {
 
                     event.sample_files.slice(0, 5).forEach((filePath, idx) => {
                       const fileName = filePath.split('/').pop();
-                      const nodeId = `file_${nodeCounter++}`;
+                      const nodeId = `file_${counters.node++}`;
 
                       if (!addedNodes.has(nodeId)) {
                         const angle = (idx / 5) * Math.PI * 2;
@@ -413,7 +410,6 @@ const Loading = () => {
                         const MEGA_THRESHOLD = 20000;
                         let layoutNodes = graphData.nodes;
                         let layoutEdges = graphData.edges;
-                        let isFiltered = false;
 
                         if (nodeCount > MEGA_THRESHOLD) {
                           const structureTypes = new Set(['directory', 'file']);
@@ -422,7 +418,6 @@ const Loading = () => {
                           layoutEdges = graphData.edges.filter(e =>
                             layoutNodeIds.has(e.source) && layoutNodeIds.has(e.target)
                           );
-                          isFiltered = true;
                           setLogs(prev => [...prev, `-> Mega-repo: layouting ${layoutNodes.length.toLocaleString()} file nodes`]);
                         }
 
