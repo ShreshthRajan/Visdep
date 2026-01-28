@@ -88,12 +88,12 @@ const Home = () => {
 
   return (
     <div
-      className="relative w-screen min-h-screen overflow-y-auto flex justify-center"
+      className="relative w-screen h-screen overflow-hidden flex justify-center"
       style={{
         backgroundColor: isDragging ? '#0a0a0f' : '#050505',
         transition: 'background-color 0.3s ease',
-        paddingTop: 'clamp(40px, 8vh, 80px)',
-        paddingBottom: 'clamp(40px, 8vh, 80px)'
+        paddingTop: 'clamp(16px, 3vh, 32px)',
+        paddingBottom: 'clamp(16px, 3vh, 32px)'
       }}
       onMouseMove={handleMouseMove}
     >
@@ -167,7 +167,7 @@ const Home = () => {
             color: '#71717a',
             letterSpacing: '0.05em',
             fontWeight: 500,
-            marginBottom: 'clamp(40px, 8vh, 96px)'
+            marginBottom: 'clamp(16px, 3vh, 32px)'
           }}
         >
           [ STATUS: READY_FOR_INGESTION ]
@@ -177,8 +177,8 @@ const Home = () => {
         <div
           className="relative"
           style={{
-            width: 'clamp(320px, 80vw, 520px)',
-            marginBottom: 'clamp(24px, 4vh, 40px)'
+            width: 'clamp(320px, 70vw, 480px)',
+            marginBottom: 'clamp(12px, 2vh, 20px)'
           }}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
@@ -188,7 +188,7 @@ const Home = () => {
           <div
             className="rounded-lg transition-all duration-300 cursor-pointer relative"
             style={{
-              padding: 'clamp(40px, 6vh, 70px) clamp(30px, 4vw, 50px)',
+              padding: 'clamp(20px, 3vh, 36px) clamp(24px, 3vw, 40px)',
               backgroundColor: 'transparent',
               border: isDragging
                 ? '1px dashed rgba(34, 211, 238, 0.95)'
@@ -211,10 +211,10 @@ const Home = () => {
             />
 
             {/* Technical Crosshair */}
-            <div className="flex justify-center mb-12 relative">
+            <div className="flex justify-center mb-4 relative">
               <svg
-                width="56"
-                height="56"
+                width="40"
+                height="40"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke={isDragging ? '#22d3ee' : '#27272a'}
@@ -264,7 +264,7 @@ const Home = () => {
             />
 
             {/* Technical Prompt */}
-            <div className="text-center mt-10 mb-8">
+            <div className="text-center mt-4 mb-3">
               <p
                 className="text-xs"
                 style={{
@@ -282,7 +282,7 @@ const Home = () => {
             <button
               onClick={handleUpload}
               disabled={!repoUrl.trim()}
-              className="w-full py-3.5 rounded transition-all text-xs disabled:opacity-15 disabled:cursor-not-allowed"
+              className="w-full py-2.5 rounded transition-all text-xs disabled:opacity-15 disabled:cursor-not-allowed"
               style={{
                 backgroundColor: 'transparent',
                 color: repoUrl.trim() ? '#e5e5e7' : '#27272a',
@@ -316,7 +316,7 @@ const Home = () => {
         {user ? (
           // Logged in - show user info
           <div
-            className="px-5 py-2.5 rounded text-xs font-medium flex items-center gap-2 mt-6"
+            className="px-5 py-2 rounded text-xs font-medium flex items-center gap-2 mt-3"
             style={{
               backgroundColor: 'transparent',
               border: '1px solid rgba(39, 39, 42, 0.8)',
@@ -336,7 +336,7 @@ const Home = () => {
           // Not logged in - show connect button
           <button
             onClick={login}
-            className="px-5 py-2.5 rounded text-xs font-medium transition-all flex items-center gap-2 mt-6"
+            className="px-5 py-2 rounded text-xs font-medium transition-all flex items-center gap-2 mt-3"
             style={{
               backgroundColor: 'transparent',
               border: '1px solid rgba(39, 39, 42, 0.8)',
@@ -361,7 +361,7 @@ const Home = () => {
         )}
 
         {/* Footer - Languages */}
-        <div className="text-center" style={{ marginTop: 'clamp(40px, 8vh, 96px)' }}>
+        <div className="text-center" style={{ marginTop: 'clamp(16px, 3vh, 32px)' }}>
           <p
             className="text-xs"
             style={{
