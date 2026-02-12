@@ -125,7 +125,7 @@ const GraphChat = () => {
   // Phase 3: Auto-create first session when repo is loaded
   useEffect(() => {
     const initSession = async () => {
-      if (!currentRepo || !user || currentSession) return;
+      if (!currentRepo || !currentRepo.id || !user || currentSession) return;
 
       try {
         // Check if any sessions exist for this repo
@@ -489,7 +489,7 @@ const GraphChat = () => {
   }, []);
 
   const handleNewChat = useCallback(async () => {
-    if (!user || !currentRepo) return;
+    if (!user || !currentRepo || !currentRepo.id) return;
 
     try {
       // Create new session in Supabase
