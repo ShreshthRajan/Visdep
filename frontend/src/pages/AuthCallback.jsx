@@ -49,8 +49,6 @@ const AuthCallback = () => {
         // Mark as processed immediately
         processedRef.current = true;
 
-        console.log('🔐 Processing OAuth callback (state validated)...');
-
         // Exchange code for user data via backend
         const response = await API.get(`/api/auth/callback?code=${code}`);
 
@@ -58,8 +56,6 @@ const AuthCallback = () => {
 
         // Store user data and GitHub token
         setUserData(user, access_token);
-
-        console.log('✅ Authentication successful');
 
         // Redirect to landing (user is now logged in, can upload repos)
         navigate('/');

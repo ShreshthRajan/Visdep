@@ -28,7 +28,6 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
       setLoading(true);
       const response = await API.get(`/api/user/${user.id}/repos`);
       setRepos(response.data);
-      console.log(`✅ Loaded ${response.data.length} repos for user`);
     } catch (error) {
       console.error('Error loading repos:', error);
     } finally {
@@ -40,8 +39,6 @@ const HistoryPanel = ({ isOpen, onClose, onLoadRepo }) => {
     try {
       // Activate this repo as the current one
       await API.post(`/api/repos/${repo.local_repo_id}/activate`);
-
-      console.log(`✅ Activated repo: ${repo.repo_name}`);
 
       // Notify parent to load this repo
       onLoadRepo(repo);

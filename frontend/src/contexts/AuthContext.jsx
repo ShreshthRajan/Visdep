@@ -36,7 +36,7 @@ export const AuthProvider = ({ children }) => {
           setUser(userData);
           setGithubToken(storedToken);
           setIsAuthenticated(true);
-          console.log('✅ Restored user session:', userData.username);
+
         }
       } catch (error) {
         console.error('Error checking auth:', error);
@@ -67,7 +67,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('visdep_user', JSON.stringify(userData));
     localStorage.setItem('visdep_github_token', token);
 
-    console.log('✅ User authenticated:', userData.username);
+
   };
 
   const logout = async () => {
@@ -79,8 +79,6 @@ export const AuthProvider = ({ children }) => {
     // Clear localStorage
     localStorage.removeItem('visdep_user');
     localStorage.removeItem('visdep_github_token');
-
-    console.log('✅ User logged out');
 
     // Redirect to landing
     window.location.href = '/';

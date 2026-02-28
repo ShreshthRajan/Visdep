@@ -63,7 +63,6 @@ async function save(repoId, graphData) {
       const request = store.put(record);
 
       request.onsuccess = () => {
-        console.log(`✅ IndexedDB: Saved graph for repo ${repoId}`);
         resolve(true);
       };
 
@@ -101,10 +100,8 @@ async function load(repoId) {
           // Check freshness (5 minute expiry, same as sessionStorage logic)
           const isFresh = Date.now() - record.timestamp < 5 * 60 * 1000;
           if (isFresh && record.data) {
-            console.log(`✅ IndexedDB: Loaded graph for repo ${repoId}`);
             resolve(record.data);
           } else {
-            console.log(`⏭️ IndexedDB: Data expired for repo ${repoId}`);
             resolve(null);
           }
         } else {
@@ -141,7 +138,6 @@ async function clear(repoId) {
       const request = store.delete(repoId);
 
       request.onsuccess = () => {
-        console.log(`🗑️ IndexedDB: Cleared graph for repo ${repoId}`);
         resolve(true);
       };
 

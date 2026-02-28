@@ -89,8 +89,6 @@ const GraphChat = () => {
       // Create minimal repo object with local_repo_id for DependencyGraph
       // Full repo metadata will be fetched from API if needed for sessions
       setCurrentRepo({ local_repo_id: urlRepoId, id: null, repo_name: 'Loading...' });
-      console.log('✅ Initialized currentRepo from URL:', urlRepoId);
-
       // Fetch full repo metadata from API (async, non-blocking)
       if (user) {
         API.get(`/api/user/${user.id}/repos`).then(response => {
@@ -98,7 +96,7 @@ const GraphChat = () => {
           const matchedRepo = repos?.find(r => r.local_repo_id === urlRepoId);
           if (matchedRepo) {
             setCurrentRepo(matchedRepo);
-            console.log('✅ Loaded full repo metadata:', matchedRepo.repo_name);
+
           }
         }).catch(err => {
           console.warn('⚠️ Could not fetch repo metadata:', err.message);
@@ -115,7 +113,7 @@ const GraphChat = () => {
         const repo = JSON.parse(storedRepo);
         setCurrentRepo(repo);
         sessionStorage.removeItem('visdep_current_repo');
-        console.log('✅ Initialized currentRepo from sessionStorage:', repo.repo_name);
+
       }
     } catch (err) {
       console.warn('⚠️ sessionStorage read failed:', err.message);
@@ -139,7 +137,7 @@ const GraphChat = () => {
           setChatHistory(mostRecent.messages || []);
           setSelectedNodes(mostRecent.context_nodes || []);
           setHighlightedNodes(mostRecent.highlighted_nodes || []);
-          console.log('✅ Loaded existing session');
+
         } else {
           // No sessions exist, create first one
           const response = await API.post('/api/sessions', {
@@ -147,7 +145,7 @@ const GraphChat = () => {
             user_repo_id: currentRepo.id
           });
           setCurrentSession(response.data.session);
-          console.log('✅ Auto-created first session');
+
         }
       } catch (err) {
         console.error('⚠️ Session initialization failed:', err);
@@ -413,7 +411,7 @@ const GraphChat = () => {
                 break;
 
               default:
-                console.log('Unknown event type:', event.type);
+
             }
           } catch (e) {
             console.error('Error parsing SSE event:', e);
@@ -439,7 +437,7 @@ const GraphChat = () => {
               highlighted_nodes: state.highlightedNodes,
               title: sessionTitle
             });
-            console.log('💾 Session auto-saved');
+
           } catch (err) {
             console.error('⚠️ Auto-save failed:', err);
           }
@@ -509,7 +507,7 @@ const GraphChat = () => {
       // Set new session as current
       setCurrentSession(newSession);
 
-      console.log('✅ New chat created:', newSession.id);
+
     } catch (err) {
       console.error('❌ Error creating new chat:', err);
     }
@@ -552,10 +550,7 @@ const GraphChat = () => {
       const isOverChat = e.clientX >= chatAreaLeft;
 
       if (isOverChat) {
-        console.log('✅ Dropped on chat area, adding to context');
         handleAddNodeToContext(node);
-      } else {
-        console.log('❌ Dropped outside chat area');
       }
 
       // Cleanup: Remove ghost and listeners
@@ -605,23 +600,13 @@ const GraphChat = () => {
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
         onLoadRepo={async (repo) => {
-          console.log('🔄 LOAD REPO FROM HISTORY:', {
-            repoName: repo.repo_name,
-            localRepoId: repo.local_repo_id,
-            repoId: repo.id
-          });
-
           // Activate repo in backend (sets global latest_repo_id)
           await API.post(`/api/repos/${repo.local_repo_id}/activate`);
-          console.log('✅ Activate endpoint called');
-
           // Clear old highlighted nodes (from previous repo)
           setHighlightedNodes([]);
-          console.log('✅ Cleared old highlights');
 
           // Set as current repo
           setCurrentRepo(repo);
-          console.log('✅ currentRepo set, will trigger graph refetch');
 
           // Load most recent session for this repo (if user logged in)
           if (user) {
@@ -635,7 +620,7 @@ const GraphChat = () => {
                 setSelectedNodes(mostRecent.context_nodes || []);
                 setHighlightedNodes(mostRecent.highlighted_nodes || []);
                 setCurrentSession(mostRecent);
-                console.log('✅ Loaded most recent session');
+
               } else {
                 // No sessions, clear chat
                 setChatHistory([]);
@@ -649,7 +634,7 @@ const GraphChat = () => {
           }
 
           // Graph will refetch automatically when backend repo changes
-          console.log('✅ Repo loaded:', repo.repo_name);
+
         }}
       />
 
@@ -659,26 +644,11 @@ const GraphChat = () => {
         onClose={() => setShowChats(false)}
         currentRepo={currentRepo}
         onLoadSession={async (session) => {
-          console.log('💬 LOAD SESSION:', {
-            sessionId: session.id,
-            title: session.title,
-            messages: session.messages?.length,
-            contextNodes: session.context_nodes?.length,
-            highlights: session.highlighted_nodes?.length
-          });
-
           // Restore full chat state
           setChatHistory(session.messages || []);
-          console.log('✅ Chat history set');
-
           setSelectedNodes(session.context_nodes || []);
-          console.log('✅ Context nodes set');
-
           setHighlightedNodes(session.highlighted_nodes || []);
-          console.log('✅ Highlighted nodes set - should trigger canvas update');
-
           setCurrentSession(session);
-          console.log('✅ Session restored');
         }}
         onNewChat={handleNewChat}
       />

@@ -74,7 +74,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           filter: (edge) => edge.id && edge.id.startsWith('edge_query_')
         });
 
-        console.log(`💾 Preserving ${existingQueryNodes.length} query nodes and ${existingQueryEdges.length} query edges`);
       }
     }
 
@@ -125,7 +124,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     const effectiveMode = getPhysicsMode(data.nodes.length, hasPrecomputedPositions);
     const stabilizationIterations = getStabilizationIterations(data.nodes.length, effectiveMode);
 
-    console.log(`🚀 GRAPH: ${data.nodes.length} nodes, mode=${effectiveMode}, precomputed=${hasPrecomputedPositions}`);
 
     // Dual-mode filtering: Full structure view vs Highlight-focused view
     const filteredNodes = data.nodes.filter(node => {
@@ -231,7 +229,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     // RE-ADD preserved query nodes after creating base nodes
     if (existingQueryNodes.length > 0) {
       nodes.add(existingQueryNodes);
-      console.log(`✅ Re-added ${existingQueryNodes.length} query nodes`);
     }
 
     const filteredEdges = data.edges.filter(edge => {
@@ -275,7 +272,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     // RE-ADD preserved query edges after creating base edges
     if (existingQueryEdges.length > 0) {
       edges.add(existingQueryEdges);
-      console.log(`✅ Re-added ${existingQueryEdges.length} query edges`);
     }
 
     const container = networkRef.current;
@@ -458,14 +454,12 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
     // HYBRID MODE: Skip stabilization (instant render with pre-computed positions)
     if (effectiveMode === PHYSICS_MODE.HYBRID) {
-      console.log('✅ GRAPH: HYBRID mode - using pre-computed positions (instant render)');
       setLoadingState({ isLoading: true, message: 'Rendering graph...', progress: 80 });
       
       // Fit view after short delay to ensure all nodes are positioned
       setTimeout(() => {
         newNetwork.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
         setLoadingState({ isLoading: false, message: '', progress: 100 });
-        console.log('✅ GRAPH: HYBRID mode render complete');
       }, 200);
     } else {
       // Show progress during stabilization (live updates)
@@ -477,13 +471,11 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           progress: 50 + (progress / 2)  // 50-100% range
         });
         if (progress % 20 === 0) {  // Log every 20%
-          console.log(`📊 GRAPH: Organizing clusters... ${progress}% (${effectiveMode})`);
         }
       });
 
       // Force-Atlas2/Barnes-Hut clustering: Let physics organize, then lock positions
       newNetwork.once('stabilizationIterationsDone', () => {
-        console.log(`✅ GRAPH: Clustering complete (${effectiveMode}), locking positions`);
         setLoadingState({ isLoading: true, message: 'Finalizing layout...', progress: 95 });
         newNetwork.setOptions({ physics: { enabled: false } });  // Lock positions (no more movement)
         newNetwork.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
@@ -491,7 +483,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         // MEGA-REPO: Save positions after stabilization for instant future loads
         // Only save for large repos (>3000 nodes) that don't already have pre-computed positions
         if (data.nodes.length > 3000 && !hasPrecomputedPositions && currentRepoId) {
-          console.log(`💾 MEGA-REPO: Saving ${data.nodes.length} node positions for instant future loads...`);
           
           // Get all positions from vis-network
           const allPositions = newNetwork.getPositions();
@@ -507,7 +498,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
             repo_id: currentRepoId,
             positions: positionsToSave
           }).then(() => {
-            console.log(`✅ MEGA-REPO: Saved ${Object.keys(positionsToSave).length} positions to backend`);
           }).catch(err => {
             console.warn(`⚠️ Failed to save positions: ${err.message}`);
           });
@@ -555,7 +545,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
           // Enable physics for local simulation
           newNetwork.setOptions({ physics: { enabled: true } });
-          console.log(`🔧 HYBRID: Enabled local physics for ${affectedNodes.size} nodes`);
         }
 
         // Create ghost DOM element for drag-to-chat (if handler provided)
@@ -583,7 +572,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
           // Pass node + ghost to parent
           onNodeDragStart({ node: draggedNode, ghostElement: ghost });
-          console.log('🎯 Drag started:', nodeName);
         }
       }
     });
@@ -604,7 +592,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           }));
           nodes.update(updates);
 
-          console.log('🔧 HYBRID: Physics disabled, positions locked');
         }, 500);  // 500ms for physics to settle
       }
     });
@@ -642,8 +629,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         }
 
         // Log for debugging
-        console.log('🖱️ Node clicked:', clickedNode.label, clickedNode.type);
-        console.log('📊 Connected:', connectedNodeIds.length, 'nodes,', connectedEdgeIds.length, 'edges');
 
         // Send to HUD Inspector
         if (onNodeSelect) {
@@ -693,29 +678,21 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
   // Auto-switch to focused mode when highlights appear
   useEffect(() => {
     if (highlightedNodes.length > 0) {
-      console.log('🎯 AUTO-SWITCH: Switching to focused view (highlighting detected)');
       setViewMode('focused');
     }
   }, [highlightedNodes]);
 
   // Re-render graph when highlighted nodes change
   useEffect(() => {
-    console.log('🎨 GRAPH DEBUG: highlightedNodes changed:', highlightedNodes);
 
     if (!graphData) {
-      console.log('ℹ️ GRAPH: No graph data yet');
       return;
     }
 
     if (highlightedNodes.length > 0) {
-      console.log('✅ GRAPH: Processing highlights...');
-      console.log('   Graph has', graphData.nodes.length, 'nodes');
-      console.log('   View mode:', viewMode);
-      console.log('   Attempting to highlight:', highlightedNodes);
 
       // Check if any highlighted nodes exist in graph
       const matchingNodes = graphData.nodes.filter(node => highlightedNodes.includes(node.id));
-      console.log('   Matching nodes found:', matchingNodes.length);
 
       if (matchingNodes.length === 0) {
         console.warn('⚠️ GRAPH: No matching nodes found! Highlighted IDs don\'t match graph node IDs');
@@ -723,8 +700,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         console.warn('   Sample graph node ID:', graphData.nodes[0]?.id);
         console.warn('   Total graph nodes:', graphData.nodes.length);
       } else {
-        console.log('✅ GRAPH: Found matching nodes:', matchingNodes.map(n => n.id));
-        console.log('💡 TIP: Gold nodes are now visible in the graph - use Fit Graph button or zoom to see them');
 
         // Note: Auto-zoom removed for reliability
         // Gold highlighting makes nodes easy to find visually
@@ -737,32 +712,22 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       // Note: Don't call renderGraph here - it's already in the renderGraph useCallback dependencies
       // The graph will re-render automatically when highlightedNodes changes via the renderGraph callback
     } else {
-      console.log('ℹ️ GRAPH: No nodes to highlight (empty array)');
     }
   }, [highlightedNodes, graphData, network, viewMode]);  // Added viewMode to fix focused view rendering
 
   // Option B: Update canvas highlighting directly (performant, no full re-render)
   useEffect(() => {
-    console.log('🔵 HIGHLIGHT UPDATE TRIGGERED:', {
-      hasNetwork: !!network,
-      hasGraphData: !!graphData,
-      highlightCount: highlightedNodes.length
-    });
-
     if (!network || !graphData) {
-      console.log('⏭️ Skipping: Network or graphData not ready');
       return;
     }
 
     const nodes = network.body.data.nodes;
     if (!nodes) {
-      console.log('⏭️ Skipping: Nodes DataSet not ready');
       return;
     }
 
     try {
       const allNodeIds = nodes.getIds();
-      console.log(`🔄 Updating ${allNodeIds.length} total nodes, ${highlightedNodes.length} to highlight`);
 
       const updates = allNodeIds.map(nodeId => {
         const graphNode = graphData.nodes.find(n => n.id === nodeId);
@@ -796,7 +761,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
       requestAnimationFrame(() => {
         nodes.update(updates);
         const highlightedCount = updates.filter(u => highlightedNodes.includes(u.id)).length;
-        console.log(`✅ Canvas updated: ${highlightedCount} cyan, ${updates.length - highlightedCount} normal`);
       });
     } catch (err) {
       console.error('❌ Canvas update error:', err);
@@ -806,7 +770,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
   // Render graph when data or filters change (but not when searching)
   useEffect(() => {
     if (graphData && !searchTerm) {
-      console.log('🎨 Re-rendering graph with current filters');
       renderGraph(graphData, currentLevel);
     }
   }, [graphData, selectedNodeTypes, currentLevel, nodeFading, renderGraph, searchTerm, viewMode]);
@@ -816,12 +779,10 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
     const fetchGraphData = async () => {
       // MULTI-TENANT FIX: Don't fetch until we have a repo (prevents race condition)
       if (!currentRepoId) {
-        console.log('⏭️ GRAPH: Waiting for currentRepoId (will retry when available)');
         return;
       }
 
       try {
-        console.log('📡 GRAPH FETCH START:', { currentRepoId, browser: navigator.userAgent.split(' ').pop() });
 
         setLoadingState({ isLoading: true, message: 'Loading graph data...', progress: 10 });
 
@@ -834,7 +795,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         try {
           const compressedData = sessionStorage.getItem('visdep_prefetched_graph');
           if (compressedData) {
-            console.log(`📦 Found pre-fetched data: ${(compressedData.length * 2 / 1024).toFixed(1)}KB compressed`);
             // Decompress LZ-string data (compressed in Loading.jsx)
             const decompressed = LZString.decompressFromUTF16(compressedData);
             if (decompressed) {
@@ -844,19 +804,16 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
               const isCorrectRepo = prefetched.repo_id === currentRepoId;
 
               if (isFresh && isCorrectRepo && prefetched.data) {
-                console.log('⚡ INSTANT LOAD: Using pre-fetched graph data');
                 data = prefetched.data;
                 dataSource = 'sessionStorage';
                 // Clear after use (one-time optimization)
                 sessionStorage.removeItem('visdep_prefetched_graph');
               } else {
-                console.log(`⏭️ Pre-fetched data invalid: fresh=${isFresh}, correctRepo=${isCorrectRepo}`);
               }
             } else {
               console.warn('⚠️ LZString decompression returned null');
             }
           } else {
-            console.log('📭 No pre-fetched data in sessionStorage (quota may have been exceeded)');
           }
         } catch (storageErr) {
           console.warn('⚠️ sessionStorage read/decompress failed:', storageErr.message);
@@ -866,16 +823,13 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         // TIER 2: Try IndexedDB (for mega repos that exceed sessionStorage quota)
         if (!data && graphStorage.isAvailable()) {
           try {
-            console.log('📦 Checking IndexedDB for mega-repo cache...');
             const idbData = await graphStorage.load(currentRepoId);
             if (idbData) {
-              console.log(`⚡ IndexedDB LOAD: Found cached graph (${idbData.nodes?.length || 0} nodes)`);
               data = idbData;
               dataSource = 'IndexedDB';
               // Clear after use (one-time optimization)
               graphStorage.clear(currentRepoId);
             } else {
-              console.log('📭 No IndexedDB cache found');
             }
           } catch (idbErr) {
             console.warn('⚠️ IndexedDB read failed:', idbErr.message);
@@ -887,18 +841,11 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         // This ensures graph loads even when all caches fail
         if (!data) {
           const url = `/api/dependency_graph?repo_id=${currentRepoId}`;
-          console.log('📡 API FALLBACK: Fetching from', url);
           const response = await API.get(url);
           data = response.data;
           dataSource = 'API';
-          console.log(`✅ API fetch successful: ${data.nodes?.length || 0} nodes`);
         }
 
-        console.log(`📊 GRAPH LOADED via ${dataSource}:`, {
-          nodes: data.nodes?.length,
-          edges: data.edges?.length,
-          firstNode: data.nodes?.[0]?.id
-        });
         setLoadingState({ isLoading: true, message: 'Analyzing graph structure...', progress: 30 });
 
         // Check for mega-repo warning from backend
@@ -926,10 +873,8 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
         if (data.nodes.length > MEGA_REPO_THRESHOLD) {
           if (positionedRatio > 0.9) {
             // >90% have positions: render all (full graph with positions)
-            console.log(`✅ MEGA-REPO: ${data.nodes.length} nodes, ${(positionedRatio * 100).toFixed(0)}% have positions - rendering full graph`);
           } else if (nodesWithPositions.length > 0) {
             // Some have positions: render only positioned nodes (file structure)
-            console.log(`📁 MEGA-REPO: ${data.nodes.length} nodes, only ${nodesWithPositions.length} have positions - showing file structure`);
 
             const positionedIds = new Set(nodesWithPositions.map(n => n.id));
             const filteredEdges = data.edges.filter(e =>
@@ -968,7 +913,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
 
         // Adaptive defaults based on repository size
         const totalNodes = data.nodes.length;
-        console.log(`📊 Repository size: ${totalNodes} nodes`);
 
         if (totalNodes < 200) {
           // Small repo: Show everything
@@ -980,7 +924,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           }));
           setNodeFading({ class_definition: false, function: false });
           setCurrentLevel(4);
-          console.log('✅ Small repo detected: Showing all details');
         } else if (totalNodes < 1000) {
           // Medium repo: Show files + faded classes/functions
           setRepoSize('medium');
@@ -991,7 +934,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           }));
           setNodeFading({ class_definition: true, function: true });
           setCurrentLevel(4);
-          console.log('✅ Medium repo detected: Showing files + faded classes/functions');
         } else {
           // Large repo: Files only, hide classes/functions
           setRepoSize('large');
@@ -1002,7 +944,6 @@ const DependencyGraph = ({ highlightedNodes = [], onNodeSelect, onNodeDragStart,
           }));
           setNodeFading({ class_definition: false, function: false });
           setCurrentLevel(3);
-          console.log('✅ Large repo detected: Showing files only');
         }
 
         // Don't call renderGraph here - it will be called by the renderGraph useEffect

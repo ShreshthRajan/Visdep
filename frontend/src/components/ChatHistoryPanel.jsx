@@ -28,7 +28,6 @@ const ChatHistoryPanel = ({ isOpen, onClose, currentRepo, onLoadSession, onNewCh
       setLoading(true);
       const response = await API.get(`/api/user/${user.id}/repo/${currentRepo.id}/sessions`);
       setSessions(response.data);
-      console.log(`✅ Loaded ${response.data.length} chats for ${currentRepo.repo_name}`);
     } catch (error) {
       console.error('Error loading sessions:', error);
     } finally {

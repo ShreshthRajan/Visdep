@@ -478,7 +478,6 @@ const Loading = () => {
                           }
                         };
                         const forceAtlas2Params = getForceAtlas2Params(layoutNodes.length);
-                        console.log(`🎨 ForceAtlas2 params for ${layoutNodes.length} nodes:`, forceAtlas2Params);
 
                         // Create hidden container for layout computation
                         const layoutContainer = document.createElement('div');
@@ -597,10 +596,8 @@ const Loading = () => {
                             }
 
                             const newDensity = (positionValues.length / (targetSpan * targetSpan)) * 1e6;
-                            console.log(`📐 SCALE NORMALIZATION: ${currentDensity.toFixed(1)} → ${newDensity.toFixed(1)} nodes/M-unit² (${scaleFactor.toFixed(2)}x scale)`);
                             setLogs(prev => [...prev, `-> Optimizing layout density for smooth rendering...`]);
                           } else {
-                            console.log(`✅ Density OK: ${currentDensity.toFixed(1)} nodes/M-unit² (target: ${TARGET_DENSITY})`);
                           }
                         }
 
@@ -668,7 +665,6 @@ const Loading = () => {
 
                           // Normalize if density exceeds 1.5x target (same threshold as fresh layout)
                           if (currentDensity > TARGET_DENSITY * 1.5) {
-                            console.log(`⚠️ CACHED POSITIONS: High density detected (${currentDensity.toFixed(1)} nodes/M-unit²)`);
                             setLogs(prev => [...prev, `-> Optimizing cached layout density...`]);
 
                             const targetArea = (nodesWithPositions.length / TARGET_DENSITY) * 1e6;
@@ -694,7 +690,6 @@ const Loading = () => {
                             };
 
                             const newDensity = (nodesWithPositions.length / (targetSpan * targetSpan)) * 1e6;
-                            console.log(`📐 CACHED NORMALIZATION: ${currentDensity.toFixed(1)} → ${newDensity.toFixed(1)} nodes/M-unit² (${scaleFactor.toFixed(2)}x scale)`);
                             setLogs(prev => [...prev, `-> Density optimized for smooth rendering`]);
 
                             // Save normalized positions back to backend for future loads
@@ -709,12 +704,10 @@ const Loading = () => {
                               repo_id: repoId,
                               positions: normalizedPositions
                             }).then(() => {
-                              console.log(`✅ Saved normalized positions for future loads`);
                             }).catch(err => {
                               console.warn(`⚠️ Failed to save normalized positions: ${err.message}`);
                             });
                           } else {
-                            console.log(`✅ Cached density OK: ${currentDensity.toFixed(1)} nodes/M-unit²`);
                           }
                         }
                       }
@@ -737,7 +730,6 @@ const Loading = () => {
                       try {
                         sessionStorage.setItem('visdep_prefetched_graph', compressed);
                         const compressionRatio = ((1 - compressed.length * 2 / payload.length) * 100).toFixed(1);
-                        console.log(`📦 sessionStorage: ${compressedSizeMB}MB (${compressionRatio}% compression)`);
                         storageUsed = 'sessionStorage';
                       } catch (storageErr) {
                         // QuotaExceededError - try IndexedDB for mega repos
@@ -747,7 +739,6 @@ const Loading = () => {
                         if (graphStorage.isAvailable()) {
                           try {
                             await graphStorage.save(repoId, graphData);
-                            console.log(`📦 IndexedDB: Saved ${compressedSizeMB}MB graph for mega-repo`);
                             setLogs(prev => [...prev, `-> Mega-repo: using IndexedDB cache`]);
                             storageUsed = 'indexedDB';
                           } catch (idbErr) {
@@ -760,7 +751,6 @@ const Loading = () => {
                         }
                       }
 
-                      console.log(`📊 Graph cache: ${storageUsed} (${nodeCount.toLocaleString()} nodes, ${compressedSizeMB}MB)`);
                       setLogs(prev => [...prev, `-> Graph ready: ${nodeCount.toLocaleString()} nodes`]);
 
                     } catch (err) {
