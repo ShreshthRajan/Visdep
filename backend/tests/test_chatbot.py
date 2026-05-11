@@ -5,7 +5,6 @@ from backend.main import app
 
 client = TestClient(app)
 
-
 @pytest.fixture
 def test_data():
     return {
