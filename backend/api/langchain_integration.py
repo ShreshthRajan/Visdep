@@ -784,11 +784,11 @@ class ChatSession:
 
         logging.info(f"Creating FAISS index with {len(documents)} documents using parallel micro-batching")
 
-        # STATE-OF-THE-ART: Parallel micro-batching optimized for method-level chunks
-        # With method-level chunking (avg 300 tokens): Can use larger batches safely
-        # BATCH_SIZE=300 guarantees safety: 300 docs × 800 tokens/doc = 240K tokens < 300K limit
-        # Process batches in parallel (max 10 concurrent) for 10x speedup
-        BATCH_SIZE = 300
+        # Parallel micro-batching for OpenAI text-embedding-3-small (300K tokens/request limit)
+        # Conservative BATCH_SIZE=50 handles worst-case chunks (file-fallback can be ~3000 tokens)
+        # Math: 50 docs × 3000 tokens = 150K tokens (50% safety margin under 300K limit)
+        # MAX_CONCURRENT=10 keeps throughput high despite smaller batches
+        BATCH_SIZE = 50
         MAX_CONCURRENT = 10
 
         # Split documents into micro-batches
