@@ -15,7 +15,8 @@
       "WebFetch(domain:docs.langchain.com)",
       "Bash(python3 -c \"\nimport langchain\nprint\\('langchain version:', langchain.__version__\\)\nfrom langchain.chains import LLMChain, ConversationChain\nprint\\('LLMChain:', LLMChain\\)\nprint\\('ConversationChain:', ConversationChain\\)\nfrom langchain.memory import ConversationBufferMemory\nprint\\('ConversationBufferMemory:', ConversationBufferMemory\\)\nfrom langchain.chains.combine_documents import create_stuff_documents_chain\nprint\\('create_stuff_documents_chain:', create_stuff_documents_chain\\)\n\" 2>&1)",
       "Bash(python3 -c \"\nimport sys\nprint\\(f'Python: {sys.version}'\\)\n\n# Simulate the exact import chain from main.py\nprint\\('Importing backend.api.data_storage...'\\)\nfrom backend.api.data_storage import initialize_database, store_repository_metadata, store_chunks_batch, retrieve_chunks, cache_chunks_in_memory\n\nprint\\('Importing backend.api.github_api...'\\)\nfrom backend.api.github_api import fetch_repo_content, fetch_repo_content_via_git, fetch_repo_metadata\n\nprint\\('Importing backend.api.ast_parser...'\\)\nfrom backend.api.ast_parser import parse_code_to_ast\n\nprint\\('Importing backend.api.chunk_processor...'\\)\nfrom backend.api.chunk_processor import process_repository_to_chunks, process_repository_to_chunks_with_progress, get_chunk_stats\n\nprint\\('Importing backend.api.graph_generator...'\\)\nfrom backend.api.graph_generator import create_dependency_graph, create_chunk_level_graph, save_graph_as_json, load_graph_from_json, load_graph_positions, precompute_graph_with_positions\n\nprint\\('Importing backend.api.chatbot...'\\)\nfrom backend.api.chatbot import router as chatbot_router\n\nprint\\('ALL IMPORTS SUCCEEDED'\\)\n\" 2>&1)",
-      "WebFetch(domain:pythonspeed.com)"
+      "WebFetch(domain:pythonspeed.com)",
+      "Bash(npx react-scripts *)"
     ]
   }
 }

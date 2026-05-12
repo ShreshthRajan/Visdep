@@ -34,12 +34,23 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
 
     onSubmit(query);
     setQuery('');
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+    }
+  };
+
+  const handleInputChange = (e) => {
+    setQuery(e.target.value);
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 200) + 'px';
     }
   };
 
@@ -400,21 +411,23 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-start gap-2">
           <span style={{
             color: '#3b82f6',
             fontSize: '13px',
             fontFamily: "'JetBrains Mono', monospace",
             fontWeight: 600,
-            lineHeight: 1
+            lineHeight: 1.5,
+            paddingTop: '4px',
+            flexShrink: 0
           }}>
             &gt;
           </span>
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
             placeholder={selectedNodes.length === 1 ? `query: ${selectedNodes[0].label?.split('\n')[0]}` : selectedNodes.length > 1 ? `query: ${selectedNodes.length} nodes` : 'query codebase'}
@@ -426,7 +439,12 @@ const Chatbot = ({ onSubmit, chatHistory = [], isLoading = false, progressSteps 
               fontSize: '12px',
               opacity: isLoading ? 0.4 : 1,
               caretColor: '#3b82f6',
-              letterSpacing: '-0.01em'
+              letterSpacing: '-0.01em',
+              resize: 'none',
+              overflowY: 'auto',
+              lineHeight: '1.5',
+              minHeight: '20px',
+              maxHeight: '200px'
             }}
           />
         </div>
