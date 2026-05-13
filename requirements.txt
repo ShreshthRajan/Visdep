@@ -1,10 +1,14 @@
 fastapi
 uvicorn
 requests
-langchain
-langchain-core
-langchain-text-splitters
-langchain-ai21
+# LangChain stack: pinned to known-working versions (0.3.x series).
+# Compatible with langchain-ai21 (which caps langchain-core at <0.4).
+# Unpinning these previously caused docker container startup failures
+# when langchain 1.x was released with breaking import path changes.
+langchain==0.3.27
+langchain-core==0.3.83
+langchain-text-splitters==0.3.11
+langchain-ai21==1.2.0
 python-dotenv
 pydantic
 pytest
@@ -12,8 +16,8 @@ requests-mock
 fastapi[test]
 bs4
 clang
-langchain-community
-langchain-openai
+langchain-community==0.3.31
+langchain-openai==0.3.35
 faiss-cpu
 javalang
 esprima
@@ -25,6 +29,13 @@ anthropic
 sentence-transformers
 tiktoken
 psycopg2-binary
-tree-sitter-language-pack
+# Tree-sitter stack: pinned to fix production parser failures.
+# tree-sitter-language-pack 1.x rewrote bindings as Rust extension where
+# the Parser object no longer exposes .parse() the same way, causing
+# 'builtins.Parser object has no attribute parse' across all six
+# tree-sitter languages (JS/TS, Go, Java, C++, Rust, PHP).
+# 0.9.1 uses ABI3 manylinux2014 wheels - compatible with Python 3.9+.
+tree-sitter==0.23.2
+tree-sitter-language-pack==0.9.1
 supabase
 playwright==1.40.0
